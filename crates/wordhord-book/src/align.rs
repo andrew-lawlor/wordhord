@@ -63,17 +63,26 @@ pub fn align(translation: &Book, original: &Book) -> Alignment {
         );
         return out;
     };
-    if ts.prefix != os.prefix || ts.unit != os.unit {
+    if ts.unit != os.unit {
         report(
             Severity::Error,
             "book.toml",
             0,
             format!(
-                "the schemes differ: `{}` {:?} here, `{}` {:?} in the original",
-                ts.prefix, ts.unit, os.prefix, os.unit
+                "the units differ: {:?} here, {:?} in the original",
+                ts.unit, os.unit
             ),
         );
         return out;
+    }
+    let mine_works: Vec<&str> = ts.prefixes();
+    if let Some(w) = mine_works.iter().find(|w| !os.prefixes().contains(w)) {
+        report(
+            Severity::Error,
+            "book.toml",
+            0,
+            format!("the original has no work `{w}`"),
+        );
     }
     let by_line = ts.unit.as_deref().unwrap_or("line") == "line";
 
@@ -110,9 +119,16 @@ pub fn align(translation: &Book, original: &Book) -> Alignment {
             original: original_lines,
         });
     }
+    // Only within works the translation has: an anthology may leave whole
+    // works out.
+    let works: HashSet<&str> = mine
+        .iter()
+        .filter_map(|u| u.reference.split('.').next())
+        .collect();
     let mut skipped: Vec<&Unit> = theirs
         .values()
         .filter(|o| !seen.contains(&o.reference))
+        .filter(|o| works.contains(o.reference.split('.').next().unwrap_or_default()))
         .collect();
     skipped.sort_by_key(|o| (o.file.clone(), o.line));
     for o in skipped {

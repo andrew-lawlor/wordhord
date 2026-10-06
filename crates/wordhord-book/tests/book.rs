@@ -291,3 +291,55 @@ fn alignment_reports_skips_and_overruns() {
         "{msgs:#?}"
     );
 }
+
+#[test]
+fn a_book_can_hold_several_works() {
+    let toml = "id = \"edda\"\ntitle = \"Edda\"\nlang = \"eng\"\n[refs]\nunit = \"stanza.line\"\nworks = { vsp = \"Völuspá\", hav = \"Hávamál\" }\n";
+    let b = book(&[
+        ("book.toml", toml),
+        (
+            "text/01.dj",
+            "{#ch01-0001 ref=\"vsp.1\"}\n::: stanza\nHearing I ask\n:::\n\n{#ch02-0001 ref=\"hav.1\"}\n::: stanza\nThe gateways all\n:::\n\n{#ch03-0001 ref=\"grm.1\"}\n::: stanza\nHot art thou\n:::\n",
+        ),
+    ]);
+    let refs: Vec<_> = verse_lines(&b)
+        .into_iter()
+        .filter_map(|l| l.reference)
+        .collect();
+    assert_eq!(refs, ["vsp.1.1", "hav.1.1"]);
+    assert!(
+        has(
+            &b,
+            Severity::Error,
+            "`ref=grm.1` should be a work and a stanza number"
+        ),
+        "{:#?}",
+        b.diagnostics
+    );
+}
+
+#[test]
+fn counted_verse_can_sit_under_a_book_or_canto() {
+    let toml = "id = \"od\"\ntitle = \"Odyssey\"\nlang = \"eng\"\n[refs]\nprefix = \"od\"\nunit = \"line\"\n";
+    let b = book(&[
+        ("book.toml", toml),
+        ("text/01.dj", "{#ch01-0001 ref=\"od.1\" start=1}\n::: verse\nTell me about a complicated man.\nMuse, tell me how he wandered\n:::\n\n{#ch01-0002 ref=\"od.x\" start=1}\n::: verse\nBad\n:::\n"),
+    ]);
+    let refs: Vec<_> = verse_lines(&b)
+        .into_iter()
+        .filter_map(|l| l.reference)
+        .collect();
+    assert_eq!(refs, ["od.1.1", "od.1.2"]);
+    assert!(
+        has(&b, Severity::Error, "not `od.x`"),
+        "{:#?}",
+        b.diagnostics
+    );
+}
+
+#[test]
+fn a_scheme_has_one_prefix_or_several_works() {
+    let toml = "id = \"x\"\ntitle = \"X\"\nlang = \"eng\"\n[refs]\nprefix = \"bw\"\nworks = { vsp = \"Völuspá\" }\n";
+    let b = book(&[("book.toml", toml), ("text/01.dj", "{#ch01-0001}\nText.\n")]);
+    assert!(has(&b, Severity::Error, "either `prefix`"));
+}

@@ -93,6 +93,25 @@ prefix = "bw"
 unit = "line"        # or "stanza", or "stanza.line"
 ```
 
+A book of several works (an anthology, the Poetic Edda) lists them instead of one prefix:
+
+```toml
+[refs]
+unit = "stanza.line"
+works = { vsp = "Völuspá", hav = "Hávamál", grm = "Grímnismál" }
+```
+
+Counted verse can sit under a book or canto of the work. Homer is cited by book and line, Dante by canto and line:
+
+```
+{#ch01-0001 ref="od.1" start=1}
+::: verse
+Tell me about a complicated man.
+:::
+```
+
+numbers its lines `od.1.1`, `od.1.2`, and so on.
+
 For prose, list the levels:
 
 ```toml
@@ -104,6 +123,8 @@ levels = ["book", "section"]
 Forms:
 - `bw.1`: line 1.
 - `bw.4-5`: lines 4 to 5.
+- `od.1.1`: *Odyssey*, book 1, line 1.
+- `inf.34.139`: *Inferno*, canto 34, line 139.
 - `vsp.1`: stanza 1 of *Völuspá*.
 - `vsp.1.3`: stanza 1, line 3.
 - `nh.12.42`: Pliny, *Natural History*, book 12, section 42.

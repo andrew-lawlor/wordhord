@@ -65,11 +65,39 @@ pub struct Meta {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RefScheme {
-    pub prefix: String,
+    /// The work's abbreviation, for a book of one work: `bw`.
+    pub prefix: Option<String>,
+    /// Several works in one book, by abbreviation: `vsp = "Völuspá"`.
+    pub works: Option<BTreeMap<String, String>>,
     /// `line`, `stanza` or `stanza.line`, for verse.
     pub unit: Option<String>,
     /// For prose: the levels after the prefix, e.g. `["book", "section"]`.
     pub levels: Option<Vec<String>>,
+}
+
+impl RefScheme {
+    /// Every work's abbreviation.
+    pub fn prefixes(&self) -> Vec<&str> {
+        let mut out: Vec<&str> = self.prefix.iter().map(String::as_str).collect();
+        if let Some(w) = &self.works {
+            out.extend(w.keys().map(String::as_str));
+        }
+        out
+    }
+
+    /// Whether a reference starts with one of the book's works.
+    pub fn owns(&self, reference: &str) -> bool {
+        let first = reference.split('.').next().unwrap_or_default();
+        self.prefixes().contains(&first)
+    }
+
+    fn named(&self) -> String {
+        self.prefixes()
+            .iter()
+            .map(|p| format!("`{p}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 /// The printed edition a book came from.
@@ -277,7 +305,17 @@ impl Book {
 
         // Names, links, references and source pages, inline by inline.
         let mut used = HashSet::new();
-        let prefix = self.meta.refs.as_ref().map(|r| r.prefix.clone());
+        let prefix = self.meta.refs.as_ref().map(|r| r.prefixes().len());
+        if let Some(r) = &self.meta.refs {
+            if r.prefix.is_some() == r.works.is_some() {
+                push(
+                    Severity::Error,
+                    "book.toml",
+                    0,
+                    "[refs] needs either `prefix` (one work) or `works` (several), not both or neither".into(),
+                );
+            }
+        }
         for (file, b) in self.blocks() {
             if let (Some(r), BlockKind::Paragraph(_)) = (&b.reference, &b.kind) {
                 check_prose_ref(r, self.meta.refs.as_ref(), file, b.line, &mut push);
@@ -435,20 +473,19 @@ fn check_prose_ref(
         );
         return;
     };
-    let mut parts = r.split('.');
-    if parts.next() != Some(scheme.prefix.as_str()) {
+    if !scheme.owns(r) {
         push(
             Severity::Error,
             file,
             line,
             format!(
-                "`{r}` doesn't start with the book's prefix `{}`",
-                scheme.prefix
+                "`{r}` doesn't start with one of the book's works: {}",
+                scheme.named()
             ),
         );
         return;
     }
-    let numbers: Vec<&str> = parts.collect();
+    let numbers: Vec<&str> = r.split('.').skip(1).collect();
     if let Some(levels) = &scheme.levels {
         if numbers.len() != levels.len() || !numbers.iter().all(|n| n.parse::<u32>().is_ok()) {
             push(
@@ -504,10 +541,11 @@ fn number_verse(
     let mut err = |m: String| found.push((file.to_string(), line, m));
     match scheme.unit.as_deref().unwrap_or("line") {
         "line" => {
-            if r != scheme.prefix {
+            // `bw`, or a book or canto within the work: `od.1`, `inf.34`.
+            if !scheme.owns(r) || !r.split('.').skip(1).all(|n| n.parse::<u32>().is_ok()) {
                 err(format!(
-                    "counted verse takes the book's prefix, `ref={}`, not `{r}`",
-                    scheme.prefix
+                    "counted verse takes a work, or a work with book numbers (`od.1`): not `{r}`; the works are {}",
+                    scheme.named()
                 ));
                 return;
             }
@@ -528,10 +566,10 @@ fn number_verse(
             }
         }
         unit @ ("stanza" | "stanza.line") => {
-            if !r.starts_with(&format!("{}.", scheme.prefix)) {
+            if !scheme.owns(r) || !r.contains('.') {
                 err(format!(
-                    "`ref={r}` doesn't start with the book's prefix `{}.`",
-                    scheme.prefix
+                    "`ref={r}` should be a work and a stanza number (`vsp.1`); the works are {}",
+                    scheme.named()
                 ));
                 return;
             }
