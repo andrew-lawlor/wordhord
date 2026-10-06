@@ -33,6 +33,9 @@ pub struct Recipe {
     /// Classes that are only styling: not reported as unmapped.
     #[serde(default)]
     pub styling: Vec<String>,
+    /// Keep the languages elements name (`lang="it"`) as language spans.
+    #[serde(default)]
+    pub languages: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -99,6 +102,16 @@ pub enum Kind {
     /// of the chapter; a reference stays where it was. Labelled by its
     /// `n` attribute, or counted.
     Note,
+    /// Inline: a link to a note elsewhere (an endnote). The note it links
+    /// to becomes a footnote here, labelled by the link's text.
+    NoteRef,
+    /// A poem, or a canto or book of one: groups of lines (`<p>`), after
+    /// its heading. Numbered with `number`, its lines are counted.
+    Poem,
+    /// A block quotation.
+    Quote,
+    /// A table.
+    Table,
     Drop,
 }
 

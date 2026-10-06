@@ -9,7 +9,7 @@ pub mod recipe;
 use std::fmt::Write as _;
 use std::path::Path;
 
-use wordhord_book::model::{plain_text, BlockKind, Inline};
+use wordhord_book::model::{plain_text, Block, BlockKind, Inline};
 use wordhord_book::Book;
 
 use convert::{Chapter, Converter, Out, Report};
@@ -32,18 +32,27 @@ pub fn import(epub: &Path, recipe: &Recipe) -> Result<Imported, String> {
 /// Imports XHTML or XML documents in reading order. `import` gives it an
 /// EPUB's spine; anything else that yields documents can too.
 pub fn import_documents(docs: Vec<epub::Doc>, recipe: &Recipe) -> Result<Imported, String> {
-    let mut c = Converter::new(recipe)?;
-    for doc in docs {
-        let text = epub::xml_entities(&doc.text);
-        let parsed = roxmltree::Document::parse_with_options(
-            &text,
+    // Every document is parsed before the walk, so a note reference can
+    // reach a note in a later file.
+    let texts: Vec<(String, String)> = docs
+        .into_iter()
+        .map(|d| (d.href, epub::xml_entities(&d.text)))
+        .collect();
+    let mut parsed = Vec::with_capacity(texts.len());
+    for (href, text) in &texts {
+        let doc = roxmltree::Document::parse_with_options(
+            text,
             roxmltree::ParsingOptions {
                 allow_dtd: true,
                 ..Default::default()
             },
         )
-        .map_err(|e| format!("{}: {e}", doc.href))?;
-        c.document(&parsed);
+        .map_err(|e| format!("{href}: {e}"))?;
+        parsed.push(doc);
+    }
+    let mut c = Converter::new(recipe, &parsed)?;
+    for k in 0..parsed.len() {
+        c.document(k);
         if c.finished() {
             break;
         }
@@ -110,86 +119,135 @@ pub fn write(imported: &Imported, recipe: &Recipe, out: &Path) -> Result<(), Str
     Ok(())
 }
 
-/// One chapter as Djot in the vocabulary.
+/// One chapter as Djot in the vocabulary: its blocks, each with an ID,
+/// then its footnotes.
 pub fn chapter_source(number: usize, ch: &Chapter) -> String {
     let mut s = String::new();
     for (k, b) in ch.blocks.iter().enumerate() {
         let id = format!("ch{number:02}-{:04}", k + 1);
-        match b {
-            Out::Heading { level, inlines } => {
-                let _ = writeln!(
-                    s,
-                    "{{#{id}}}\n{} {}\n",
-                    "#".repeat(*level as usize),
-                    line(inlines)
-                );
-            }
-            Out::Paragraph(inlines) => {
-                let _ = writeln!(s, "{{#{id}}}\n{}\n", line(inlines));
-            }
-            Out::Stanza { number, lines } => {
-                match number {
-                    Some(n) => {
-                        let _ = writeln!(s, "{{#{id} ref=\"{}.{n}\"}}\n::: stanza", ch.prefix);
-                    }
-                    None => {
-                        let _ = writeln!(s, "{{#{id}}}\n::: verse");
-                    }
-                }
-                for l in lines {
-                    let _ = writeln!(s, "{}{}", "  ".repeat(l.indent as usize), line(&l.inlines));
-                }
-                s.push_str(":::\n\n");
-            }
-            Out::Break => s.push_str("* * *\n\n"),
-            Out::Commentary { on, blocks } => {
-                // More colons than quoted verse's three, so it nests inside.
-                let _ = writeln!(s, "{{#{id} on=\"{on}\"}}\n::::: commentary");
-                let mut parts = Vec::new();
-                for b in blocks {
-                    match b {
-                        Out::Paragraph(p) => parts.push(line(p)),
-                        Out::Stanza { lines, .. } => {
-                            let body: Vec<String> = lines
-                                .iter()
-                                .map(|l| {
-                                    format!(
-                                        "{}{}",
-                                        "  ".repeat(l.indent as usize),
-                                        line(&l.inlines)
-                                    )
-                                })
-                                .collect();
-                            parts.push(format!("::: verse\n{}\n:::", body.join("\n")));
-                        }
-                        _ => {}
-                    }
-                }
-                let _ = writeln!(s, "{}\n:::::\n", parts.join("\n\n"));
-            }
-        }
+        s.push_str(&block(b, Some((&id, &ch.prefix))));
+        s.push_str("\n\n");
     }
     s.push_str(&footnotes(ch));
     s
 }
 
-/// A chapter's footnotes, after its blocks. Later paragraphs of a note
-/// are indented, so they stay in it.
+/// One block as Djot. A top-level block gets its ID (and its reference);
+/// a nested one, in a quotation or a note, gets neither.
+fn block(b: &Out, top: Option<(&str, &str)>) -> String {
+    let attrs = |extra: String| match top {
+        Some((id, _)) => format!("{{#{id}{extra}}}\n"),
+        None => String::new(),
+    };
+    let verse_lines = |lines: &[convert::Line]| -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| format!("{}{}", "  ".repeat(l.indent as usize), line(&l.inlines)))
+            .collect()
+    };
+    match b {
+        Out::Heading { level, inlines } => {
+            format!(
+                "{}{} {}",
+                attrs(String::new()),
+                "#".repeat(*level as usize),
+                line(inlines)
+            )
+        }
+        Out::Paragraph(inlines) => format!("{}{}", attrs(String::new()), line(inlines)),
+        Out::Stanza { number, lines } => {
+            let head = match (number, top) {
+                (Some(n), Some((_, prefix))) => {
+                    format!("{}::: stanza", attrs(format!(" ref=\"{prefix}.{n}\"")))
+                }
+                _ => format!("{}::: verse", attrs(String::new())),
+            };
+            format!("{head}\n{}\n:::", verse_lines(lines).join("\n"))
+        }
+        Out::Verse {
+            reference,
+            start,
+            groups,
+        } => {
+            let mut extra = String::new();
+            if let Some(r) = reference {
+                let _ = write!(extra, " ref=\"{r}\"");
+            }
+            if let Some(n) = start {
+                let _ = write!(extra, " start={n}");
+            }
+            let body: Vec<String> = groups.iter().map(|g| verse_lines(g).join("\n")).collect();
+            format!("{}::: verse\n{}\n:::", attrs(extra), body.join("\n\n"))
+        }
+        Out::Break => "* * *".to_string(),
+        Out::Commentary { on, blocks } => {
+            // More colons than quoted verse's three, so it nests inside.
+            let parts: Vec<String> = blocks.iter().map(|b| block(b, None)).collect();
+            format!(
+                "{}::::: commentary\n{}\n:::::",
+                attrs(format!(" on=\"{on}\"")),
+                parts.join("\n\n")
+            )
+        }
+        Out::Quote(blocks) => {
+            let parts: Vec<String> = blocks.iter().map(|b| block(b, None)).collect();
+            let quoted: Vec<String> = parts
+                .join("\n\n")
+                .lines()
+                .map(|l| {
+                    if l.is_empty() {
+                        ">".to_string()
+                    } else {
+                        format!("> {l}")
+                    }
+                })
+                .collect();
+            format!("{}{}", attrs(String::new()), quoted.join("\n"))
+        }
+        Out::Table(rows) => {
+            let lines: Vec<String> = rows
+                .iter()
+                .map(|r| {
+                    let cells: Vec<String> = r.iter().map(|c| line(c)).collect();
+                    format!("| {} |", cells.join(" | "))
+                })
+                .collect();
+            format!("{}{}", attrs(String::new()), lines.join("\n"))
+        }
+    }
+}
+
+/// A chapter's footnotes, after its blocks. A note's first paragraph
+/// follows its label; everything after is indented, so it stays in it.
 fn footnotes(ch: &Chapter) -> String {
     let mut s = String::new();
-    for (label, paragraphs) in &ch.notes {
-        let body: Vec<String> = paragraphs
-            .iter()
-            .enumerate()
-            .map(|(k, p)| {
-                if k == 0 {
-                    line(p)
-                } else {
-                    format!("  {}", line(p))
-                }
-            })
-            .collect();
-        let _ = writeln!(s, "[^{label}]: {}\n", body.join("\n\n"));
+    for (label, body) in &ch.notes {
+        let parts: Vec<String> = body.iter().map(|b| block(b, None)).collect();
+        let indent = |p: &String| -> String {
+            p.lines()
+                .map(|l| {
+                    if l.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  {l}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let first_is_paragraph = matches!(body.first(), Some(Out::Paragraph(_)));
+        let text = match parts.split_first() {
+            Some((first, rest)) if first_is_paragraph => {
+                let mut all = vec![first.clone()];
+                all.extend(rest.iter().map(indent));
+                all.join("\n\n")
+            }
+            _ => format!(
+                "\n\n{}",
+                parts.iter().map(indent).collect::<Vec<_>>().join("\n\n")
+            ),
+        };
+        let _ = writeln!(s, "[^{label}]: {}\n", text);
     }
     s
 }
@@ -243,6 +301,15 @@ fn write_inlines(s: &mut String, inlines: &[Inline]) {
                 s.push('[');
                 write_inlines(s, inlines);
                 s.push_str("]{.gap}");
+            }
+            Inline::Span {
+                kind: wordhord_book::model::SpanKind::Foreign,
+                lang: Some(lang),
+                inlines,
+            } => {
+                s.push('[');
+                write_inlines(s, inlines);
+                let _ = write!(s, "]{{lang={lang}}}");
             }
             other => {
                 let _ = write!(s, "{}", escape(&plain_text(std::slice::from_ref(other))));
@@ -305,14 +372,15 @@ fn escape_line_start(s: &str) -> String {
     }
 }
 
-/// Reads the written book back and compares each block's text with what
-/// was meant. Returns the differences.
+/// Reads the written book back and compares each block with what was
+/// meant: its kind, its text, and the markers text can't show. Returns
+/// the differences.
 pub fn verify(imported: &Imported, out: &Path) -> Result<(Book, Vec<String>), String> {
     let book = Book::load(out).map_err(|d| d.to_string())?;
     let mut problems = Vec::new();
     for (k, (ch, read)) in imported.chapters.iter().zip(&book.chapters).enumerate() {
         // Footnote definitions are compared below.
-        let read_blocks: Vec<&wordhord_book::model::Block> = read
+        let read_blocks: Vec<&Block> = read
             .blocks
             .iter()
             .filter(|b| !matches!(b.kind, BlockKind::Note { .. }))
@@ -327,60 +395,10 @@ pub fn verify(imported: &Imported, out: &Path) -> Result<(Book, Vec<String>), St
         }
         for (b, r) in ch.blocks.iter().zip(read_blocks) {
             let id = r.id.clone().unwrap_or_default();
-            match (b, &r.kind) {
-                (Out::Break, BlockKind::SceneBreak) => {}
-                (Out::Heading { inlines, .. }, BlockKind::Heading { text, .. }) => {
-                    problems.extend(differ(&id, inlines, text))
-                }
-                (Out::Paragraph(i), BlockKind::Paragraph(t)) => problems.extend(differ(&id, i, t)),
-                (Out::Stanza { lines, .. }, BlockKind::Stanza(v) | BlockKind::Verse(v)) => {
-                    if lines.len() != v.lines.len() {
-                        problems.push(format!(
-                            "#{id}: wrote {} lines, read {}",
-                            lines.len(),
-                            v.lines.len()
-                        ));
-                    }
-                    for (l, rl) in lines.iter().zip(&v.lines) {
-                        problems.extend(differ(&id, &l.inlines, &rl.inlines));
-                        if l.indent != rl.indent {
-                            problems.push(format!(
-                                "#{id}: wrote indent {}, read {}",
-                                l.indent, rl.indent
-                            ));
-                        }
-                    }
-                }
-                (Out::Commentary { blocks: meant, .. }, BlockKind::Commentary { blocks, .. }) => {
-                    if meant.len() != blocks.len() {
-                        problems.push(format!(
-                            "#{id}: wrote {} parts of the note, read {}",
-                            meant.len(),
-                            blocks.len()
-                        ));
-                    }
-                    for (m, rb) in meant.iter().zip(blocks) {
-                        match (m, &rb.kind) {
-                            (Out::Paragraph(p), BlockKind::Paragraph(t)) => {
-                                problems.extend(differ(&id, p, t))
-                            }
-                            (Out::Stanza { lines, .. }, BlockKind::Verse(v)) => {
-                                for (l, rl) in lines.iter().zip(&v.lines) {
-                                    problems.extend(differ(&id, &l.inlines, &rl.inlines));
-                                }
-                            }
-                            _ => problems
-                                .push(format!("#{id}: part of the note read back differently")),
-                        }
-                    }
-                }
-                _ => problems.push(format!("#{id}: read back as a different kind of block")),
-            }
+            compare(b, r, &id, &mut problems);
         }
-    }
-    // Footnotes: the same labels, with the same paragraphs.
-    for (ch, read) in imported.chapters.iter().zip(&book.chapters) {
-        let got: Vec<(&String, &Vec<wordhord_book::model::Block>)> = read
+        // Footnotes: the same labels, with the same contents.
+        let got: Vec<(&String, &Vec<Block>)> = read
             .blocks
             .iter()
             .filter_map(|b| match &b.kind {
@@ -396,29 +414,117 @@ pub fn verify(imported: &Imported, out: &Path) -> Result<(Book, Vec<String>), St
                 got.len()
             ));
         }
-        for ((label, paragraphs), (read_label, blocks)) in ch.notes.iter().zip(got) {
+        for ((label, body), (read_label, blocks)) in ch.notes.iter().zip(got) {
             if label != read_label {
                 problems.push(format!(
                     "{}: wrote footnote [^{label}], read [^{read_label}]",
                     read.file
                 ));
             }
-            if paragraphs.len() != blocks.len() {
-                problems.push(format!(
-                    "{}: [^{label}] has {} paragraphs, read {}",
-                    read.file,
-                    paragraphs.len(),
-                    blocks.len()
-                ));
-            }
-            for (p, b) in paragraphs.iter().zip(blocks) {
-                if let BlockKind::Paragraph(t) = &b.kind {
-                    problems.extend(differ(&format!("[^{label}]"), p, t));
-                }
-            }
+            compare_all(
+                body,
+                blocks,
+                &format!("{} [^{label}]", read.file),
+                &mut problems,
+            );
         }
     }
     Ok((book, problems))
+}
+
+fn compare_all(meant: &[Out], got: &[Block], id: &str, problems: &mut Vec<String>) {
+    if meant.len() != got.len() {
+        problems.push(format!(
+            "{id}: wrote {} blocks, read {}",
+            meant.len(),
+            got.len()
+        ));
+    }
+    for (m, g) in meant.iter().zip(got) {
+        compare(m, g, id, problems);
+    }
+}
+
+fn compare(meant: &Out, got: &Block, id: &str, problems: &mut Vec<String>) {
+    let lines_match = |problems: &mut Vec<String>,
+                       lines: Vec<(usize, &convert::Line)>,
+                       read: &[wordhord_book::model::VerseLine]| {
+        if lines.len() != read.len() {
+            problems.push(format!(
+                "{id}: wrote {} lines, read {}",
+                lines.len(),
+                read.len()
+            ));
+        }
+        for ((group, l), rl) in lines.into_iter().zip(read) {
+            problems.extend(differ(id, &l.inlines, &rl.inlines));
+            if l.indent != rl.indent {
+                problems.push(format!(
+                    "{id}: wrote indent {}, read {}",
+                    l.indent, rl.indent
+                ));
+            }
+            if group != rl.group {
+                problems.push(format!(
+                    "{id}: wrote a line in group {group}, read group {}",
+                    rl.group
+                ));
+            }
+        }
+    };
+    match (meant, &got.kind) {
+        (Out::Break, BlockKind::SceneBreak) => {}
+        (Out::Heading { inlines, .. }, BlockKind::Heading { text, .. }) => {
+            problems.extend(differ(id, inlines, text))
+        }
+        (Out::Paragraph(i), BlockKind::Paragraph(t)) => problems.extend(differ(id, i, t)),
+        (Out::Stanza { lines, .. }, BlockKind::Stanza(v) | BlockKind::Verse(v)) => {
+            lines_match(problems, lines.iter().map(|l| (0, l)).collect(), &v.lines)
+        }
+        (
+            Out::Verse {
+                reference,
+                start,
+                groups,
+            },
+            BlockKind::Verse(v),
+        ) => {
+            let lines = groups
+                .iter()
+                .enumerate()
+                .flat_map(|(g, ls)| ls.iter().map(move |l| (g, l)))
+                .collect();
+            lines_match(problems, lines, &v.lines);
+            if reference.is_some() && (got.reference != *reference || v.start != *start) {
+                problems.push(format!(
+                    "{id}: wrote ref {reference:?} start {start:?}, read {:?} {:?}",
+                    got.reference, v.start
+                ));
+            }
+        }
+        (Out::Commentary { blocks: m, .. }, BlockKind::Commentary { blocks, .. }) => {
+            compare_all(m, blocks, id, problems)
+        }
+        (Out::Quote(m), BlockKind::Quote(blocks)) => compare_all(m, blocks, id, problems),
+        (Out::Table(rows), BlockKind::Table(read)) => {
+            if rows.len() != read.len() {
+                problems.push(format!(
+                    "{id}: wrote {} rows, read {}",
+                    rows.len(),
+                    read.len()
+                ));
+            }
+            for (r, rr) in rows.iter().zip(read) {
+                if r.len() != rr.len() {
+                    problems.push(format!("{id}: wrote {} cells, read {}", r.len(), rr.len()));
+                }
+                for (c, rc) in r.iter().zip(rr) {
+                    problems.extend(differ(id, c, rc));
+                }
+            }
+        }
+        _ => problems.push(format!("{id}: read back as a different kind of block")),
+    }
 }
 
 /// The difference between what was written and what was read, if any:
@@ -446,6 +552,9 @@ fn markers(inlines: &[Inline]) -> Vec<String> {
             Inline::Caesura => Some("|".to_string()),
             Inline::PageBreak { n, .. } => Some(format!("p{n}")),
             Inline::NoteRef(label) => Some(format!("^{label}")),
+            Inline::Span {
+                lang: Some(lang), ..
+            } => Some(format!("lang={lang}")),
             _ => None,
         })
         .collect()

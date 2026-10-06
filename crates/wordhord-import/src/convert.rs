@@ -29,6 +29,17 @@ pub enum Out {
     },
     /// A thematic break: a rule or row of dots between sections.
     Break,
+    /// A poem or part of one (a canto, a book): groups of lines, counted
+    /// from `start` under `reference` when the work numbers its lines.
+    Verse {
+        reference: Option<String>,
+        start: Option<u32>,
+        groups: Vec<Vec<Line>>,
+    },
+    /// A block quotation.
+    Quote(Vec<Out>),
+    /// A table: rows of cells.
+    Table(Vec<Vec<Vec<Inline>>>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -42,8 +53,8 @@ pub struct Line {
 pub struct Chapter {
     pub prefix: String,
     pub blocks: Vec<Out>,
-    /// Footnotes, by label, in order: each a list of paragraphs.
-    pub notes: Vec<(String, Vec<Vec<Inline>>)>,
+    /// Footnotes, by label, in order: each a list of blocks.
+    pub notes: Vec<(String, Vec<Out>)>,
 }
 
 /// What the import found that the recipe doesn't explain.
@@ -69,8 +80,16 @@ struct CompiledRole<'r> {
     target: Option<Selector>,
 }
 
-pub struct Converter<'r> {
+pub struct Converter<'r, 'd> {
     recipe: &'r Recipe,
+    /// Every document, parsed up front, so a note reference can reach a
+    /// note in another file.
+    docs: &'d [roxmltree::Document<'d>],
+    /// Element IDs, to their document and node.
+    ids: std::collections::HashMap<&'d str, (usize, NodeId)>,
+    /// Inside a footnote or quotation: blocks go to a capture, and source
+    /// IDs aren't recorded as targets.
+    capturing: usize,
     roles: Vec<CompiledRole<'r>>,
     pub chapters: Vec<Chapter>,
     pub report: Report,
@@ -92,8 +111,8 @@ const CONTAINERS: &[&str] = &[
     "body", "div", "section", "article", "header", "hgroup", "main", "aside", "footer",
 ];
 
-impl<'r> Converter<'r> {
-    pub fn new(recipe: &'r Recipe) -> Result<Self, String> {
+impl<'r, 'd> Converter<'r, 'd> {
+    pub fn new(recipe: &'r Recipe, docs: &'d [roxmltree::Document<'d>]) -> Result<Self, String> {
         if let Some(p) = &recipe.caesura_pattern {
             Regex::new(p).map_err(|e| format!("caesura_pattern `{p}`: {e}"))?;
         }
@@ -119,8 +138,19 @@ impl<'r> Converter<'r> {
                 target,
             });
         }
+        let mut ids = std::collections::HashMap::new();
+        for (k, doc) in docs.iter().enumerate() {
+            for n in doc.descendants() {
+                if let Some(id) = n.attribute("id") {
+                    ids.entry(id).or_insert((k, n.id()));
+                }
+            }
+        }
         Ok(Converter {
             recipe,
+            docs,
+            ids,
+            capturing: 0,
             roles,
             chapters: Vec::new(),
             report: Report::default(),
@@ -141,7 +171,7 @@ impl<'r> Converter<'r> {
         self.done
     }
 
-    fn role(&self, node: Node) -> Option<&CompiledRole<'r>> {
+    fn role(&self, node: Node<'d, 'd>) -> Option<&CompiledRole<'r>> {
         self.roles.iter().find(|r| r.selector.matches(node))
     }
 
@@ -163,7 +193,7 @@ impl<'r> Converter<'r> {
     }
 
     /// Records classes the recipe neither maps nor calls styling.
-    fn unmapped(&mut self, node: Node) {
+    fn unmapped(&mut self, node: Node<'d, 'd>) {
         if !self.active {
             return;
         }
@@ -190,22 +220,52 @@ impl<'r> Converter<'r> {
     }
 
     /// Pushes a block made from `node`, remembering where its source ID went.
-    fn push_from(&mut self, node: Node, block: Out) {
+    fn push_from(&mut self, node: Node<'d, 'd>, block: Out) {
         self.push(block);
+        if self.capturing > 0 {
+            return;
+        }
         if let (Some(id), Some(c)) = (node.attribute("id"), self.chapters.last()) {
             let target = format!("#ch{:02}-{:04}", self.chapters.len(), c.blocks.len());
             self.targets.insert(id.to_string(), target);
         }
     }
 
-    /// Walks a document's body.
-    pub fn document(&mut self, doc: &roxmltree::Document) {
+    /// Walks the `k`th document's body.
+    pub fn document(&mut self, k: usize) {
+        let doc: &'d roxmltree::Document<'d> = &self.docs[k];
         if let Some(body) = doc.descendants().find(|n| n.has_tag_name("body")) {
             self.blocks(body);
         }
     }
 
-    fn blocks(&mut self, node: Node) {
+    /// The blocks `f` makes, taken aside instead of into the chapter: a
+    /// footnote's body, a quotation's contents.
+    fn capture(&mut self, f: impl FnOnce(&mut Self)) -> Vec<Out> {
+        let Some(chapter) = self.chapters.last_mut() else {
+            return Vec::new();
+        };
+        let saved = std::mem::take(&mut chapter.blocks);
+        let loose = self.loose_open;
+        let page = std::mem::take(&mut self.pending_page);
+        let active = self.active;
+        self.active = true;
+        self.capturing += 1;
+        f(self);
+        self.capturing -= 1;
+        self.active = active;
+        self.loose_open = loose;
+        let leftover = std::mem::replace(&mut self.pending_page, page);
+        let chapter = self.chapters.last_mut().expect("still there");
+        let mut got = std::mem::replace(&mut chapter.blocks, saved);
+        // A page marker at the very end of a capture stays in it.
+        if !leftover.is_empty() {
+            got.push(Out::Paragraph(leftover));
+        }
+        got
+    }
+
+    fn blocks(&mut self, node: Node<'d, 'd>) {
         for child in node.children() {
             if self.done {
                 return;
@@ -227,6 +287,8 @@ impl<'r> Converter<'r> {
             let kind = self.role(child).map(|r| r.role.kind).or_else(|| match tag {
                 "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => Some(Kind::Heading),
                 "p" => Some(Kind::Paragraph),
+                "blockquote" => Some(Kind::Quote),
+                "table" => Some(Kind::Table),
                 t if CONTAINERS.contains(&t) => Some(Kind::Container),
                 _ => None,
             });
@@ -254,33 +316,80 @@ impl<'r> Converter<'r> {
                         self.pending_page.push(p);
                     }
                 }
-                Some(Kind::Emphasis | Kind::Strong | Kind::Corr | Kind::Note) => Self::note(
-                    &mut self.report.unhandled,
-                    format!("an inline role between blocks: <{tag}>"),
-                    child,
-                ),
+                Some(Kind::Poem) => self.poem(child),
+                Some(Kind::Quote) => {
+                    let inner = self.capture(|c| c.blocks(child));
+                    if !inner.is_empty() {
+                        let mut page = std::mem::take(&mut self.pending_page);
+                        if !page.is_empty() {
+                            page.extend(Vec::<Inline>::new());
+                            self.push(Out::Paragraph(page));
+                        }
+                        self.push(Out::Quote(inner));
+                    }
+                }
+                Some(Kind::Table) => {
+                    let rows = self.table(child);
+                    self.push(Out::Table(rows));
+                }
+                Some(Kind::Emphasis | Kind::Strong | Kind::Corr | Kind::Note | Kind::NoteRef) => {
+                    Self::note(
+                        &mut self.report.unhandled,
+                        format!("an inline role between blocks: <{tag}>"),
+                        child,
+                    )
+                }
                 None => Self::note(&mut self.report.unhandled, format!("<{tag}>"), child),
             }
         }
     }
 
-    /// A footnote: its paragraphs go to the chapter's notes, and a
+    /// A footnote in the text: its body goes to the chapter's notes, and a
     /// reference to it is returned for the text.
-    fn footnote(&mut self, node: Node) -> Option<Inline> {
-        let paragraphs: Vec<Node> = node.children().filter(|n| n.has_tag_name("p")).collect();
-        let body: Vec<Vec<Inline>> = if paragraphs.is_empty() {
-            vec![tidy(self.inlines(node, None))]
+    fn footnote(&mut self, node: Node<'d, 'd>) -> Option<Inline> {
+        let blockish = node.children().any(|n| {
+            n.is_element()
+                && matches!(
+                    n.tag_name().name(),
+                    "p" | "blockquote" | "table" | "div" | "ol" | "ul"
+                )
+        });
+        let body = if blockish {
+            self.capture(|c| c.blocks(node))
         } else {
-            paragraphs
-                .into_iter()
-                .map(|p| tidy(self.inlines(p, None)))
-                .collect()
+            vec![Out::Paragraph(tidy(self.inlines(node, None)))]
         };
+        let wanted = node.attribute("n").map(String::from);
+        self.add_note(wanted, body)
+    }
+
+    /// A reference to a note elsewhere (an endnote): the note it links to
+    /// becomes a footnote here.
+    fn endnote(&mut self, node: Node<'d, 'd>) -> Option<Inline> {
+        let href = node.attribute("href").unwrap_or_default();
+        let fragment = href.split_once('#').map_or(href, |(_, f)| f);
+        let Some(&(k, id)) = self.ids.get(fragment) else {
+            self.report.problems.push(format!(
+                "a note reference to #{fragment}, which isn't in the book"
+            ));
+            return None;
+        };
+        let doc: &'d roxmltree::Document<'d> = &self.docs[k];
+        let target = doc.get_node(id)?;
+        let body = self.capture(|c| c.blocks(target));
+        let label = collapse(
+            &node
+                .descendants()
+                .filter_map(|n| n.text())
+                .collect::<String>(),
+        );
+        let wanted = (!label.is_empty()).then_some(label);
+        self.add_note(wanted, body)
+    }
+
+    fn add_note(&mut self, wanted: Option<String>, body: Vec<Out>) -> Option<Inline> {
         let chapter = self.chapters.last_mut()?;
-        let wanted = node
-            .attribute("n")
-            .map(String::from)
-            .unwrap_or_else(|| (chapter.notes.len() + 1).to_string());
+        let wanted = wanted.unwrap_or_else(|| (chapter.notes.len() + 1).to_string());
         // Labels are unique within a chapter.
         let mut label = wanted.clone();
         let mut k = 1;
@@ -292,13 +401,129 @@ impl<'r> Converter<'r> {
         Some(Inline::NoteRef(label))
     }
 
+    /// A poem, or a canto or book of one: its heading, then groups of
+    /// lines. Numbered if the recipe gives it a `number` (the canto's).
+    fn poem(&mut self, node: Node<'d, 'd>) {
+        let selector = self.role(node).and_then(|r| r.number.clone());
+        let (text, _) = self.number(node, selector.as_ref());
+        let number = text.as_deref().and_then(first_number);
+        if selector.is_some() && number.is_none() {
+            self.report
+                .problems
+                .push(format!("a poem without a number: {}", sample(node)));
+        }
+        let prefix = self
+            .chapters
+            .last()
+            .map(|c| c.prefix.clone())
+            .unwrap_or_default();
+        let reference = number.map(|n| format!("{prefix}.{n}"));
+        let mut groups: Vec<Vec<Line>> = Vec::new();
+        // Lines gathered so far become a verse block. Only the poem's first
+        // block carries its reference; a heading in between splits it.
+        let mut numbered = false;
+        let mut flush = |c: &mut Self, groups: &mut Vec<Vec<Line>>| {
+            if groups.is_empty() {
+                return;
+            }
+            let (r, s) = match &reference {
+                Some(r) if !numbered => (Some(r.clone()), Some(1)),
+                _ => (None, None),
+            };
+            numbered = true;
+            c.push_from(
+                node,
+                Out::Verse {
+                    reference: r,
+                    start: s,
+                    groups: std::mem::take(groups),
+                },
+            );
+        };
+        for child in node.children() {
+            if !child.is_element() {
+                if child.text().is_some_and(|t| !t.trim().is_empty()) {
+                    Self::note(
+                        &mut self.report.unhandled,
+                        "text in a poem, outside its lines".into(),
+                        node,
+                    );
+                }
+                continue;
+            }
+            let tag = child.tag_name().name();
+            match self.role(child).map(|r| r.role.kind) {
+                Some(Kind::Drop) => {}
+                Some(Kind::Page) => {
+                    if let Some(p) = self.page(child) {
+                        self.pending_page.push(p);
+                    }
+                }
+                Some(Kind::Heading) => {
+                    flush(self, &mut groups);
+                    self.heading(child);
+                }
+                _ if matches!(
+                    tag,
+                    "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "header" | "hgroup"
+                ) =>
+                {
+                    flush(self, &mut groups);
+                    self.unmapped(child);
+                    self.blocks(child);
+                }
+                Some(Kind::Paragraph) | None if tag == "p" => {
+                    self.unmapped(child);
+                    let lines = self.lines_of(child, None);
+                    if lines.is_empty() {
+                        Self::note(
+                            &mut self.report.unhandled,
+                            "a group of lines with no lines".into(),
+                            child,
+                        );
+                    } else {
+                        groups.push(lines);
+                    }
+                }
+                other => {
+                    flush(self, &mut groups);
+                    Self::note(
+                        &mut self.report.unhandled,
+                        format!("{other:?} in a poem: <{tag}>"),
+                        child,
+                    );
+                }
+            }
+        }
+        flush(self, &mut groups);
+    }
+
+    /// A table's rows and cells.
+    fn table(&mut self, node: Node<'d, 'd>) -> Vec<Vec<Vec<Inline>>> {
+        let rows: Vec<Node> = node
+            .descendants()
+            .filter(|n| {
+                n.has_tag_name("tr")
+                    && n.ancestors().find(|a| a.has_tag_name("table")) == Some(node)
+            })
+            .collect();
+        rows.into_iter()
+            .map(|r| {
+                r.children()
+                    .filter(|c| c.has_tag_name("td") || c.has_tag_name("th"))
+                    .map(|cell| tidy(self.inlines(cell, None)))
+                    .collect()
+            })
+            .collect()
+    }
+
     /// A heading's text for matching, leaving out what the recipe drops
     /// and any footnote in it.
-    fn heading_text(&self, node: Node) -> String {
+    fn heading_text(&self, node: Node<'d, 'd>) -> String {
         let dropped = |n: &Node| {
             n.ancestors().any(|a| {
                 self.role(a)
-                    .is_some_and(|r| matches!(r.role.kind, Kind::Drop | Kind::Note))
+                    .is_some_and(|r| matches!(r.role.kind, Kind::Drop | Kind::Note | Kind::NoteRef))
             })
         };
         collapse(
@@ -310,7 +535,7 @@ impl<'r> Converter<'r> {
         )
     }
 
-    fn heading(&mut self, node: Node) {
+    fn heading(&mut self, node: Node<'d, 'd>) {
         // Only the edition's section headings start or end works, not a
         // chapter title or a synopsis subheading that shares the name.
         let text = if self.starts.as_ref().is_none_or(|s| s.matches(node)) {
@@ -367,7 +592,7 @@ impl<'r> Converter<'r> {
         });
     }
 
-    fn paragraph(&mut self, node: Node) {
+    fn paragraph(&mut self, node: Node<'d, 'd>) {
         let inlines = tidy(self.inlines(node, None));
         if inlines
             .iter()
@@ -384,7 +609,11 @@ impl<'r> Converter<'r> {
     /// The number an element carries, its node (to leave out of the text),
     /// and the target of any link in it: Bellows' note labels link to what
     /// they're about.
-    fn number(&self, node: Node, selector: Option<&Selector>) -> (Option<String>, Option<NodeId>) {
+    fn number(
+        &self,
+        node: Node<'d, 'd>,
+        selector: Option<&Selector>,
+    ) -> (Option<String>, Option<NodeId>) {
         let Some(sel) = selector else {
             return (None, None);
         };
@@ -402,7 +631,7 @@ impl<'r> Converter<'r> {
         }
     }
 
-    fn stanza(&mut self, node: Node) {
+    fn stanza(&mut self, node: Node<'d, 'd>) {
         let role = self.role(node).expect("a stanza has a role");
         let selector = role.number.clone();
         let (text, skip) = self.number(node, selector.as_ref());
@@ -446,7 +675,7 @@ impl<'r> Converter<'r> {
 
     /// Lines with no stanza number: verse quoted in a note goes into the
     /// note; elsewhere it's a verse block of its own.
-    fn quoted_verse(&mut self, node: Node) {
+    fn quoted_verse(&mut self, node: Node<'d, 'd>) {
         let lines = self.lines_of(node, None);
         if lines.is_empty() {
             self.report.problems.push(format!(
@@ -466,7 +695,7 @@ impl<'r> Converter<'r> {
     }
 
     /// The lines inside an element, not counting lines inside lines.
-    fn lines_of(&mut self, node: Node, skip: Option<NodeId>) -> Vec<Line> {
+    fn lines_of(&mut self, node: Node<'d, 'd>, skip: Option<NodeId>) -> Vec<Line> {
         let mut lines = Vec::new();
         self.walk_lines(node, skip, &mut lines);
         lines
@@ -475,7 +704,7 @@ impl<'r> Converter<'r> {
     /// A stanza's contents in order. Lines become lines; a source page
     /// goes on the next line; a gap is a line of its own; anything else
     /// is reported, so nothing in a stanza is dropped unseen.
-    fn walk_lines(&mut self, node: Node, skip: Option<NodeId>, lines: &mut Vec<Line>) {
+    fn walk_lines(&mut self, node: Node<'d, 'd>, skip: Option<NodeId>, lines: &mut Vec<Line>) {
         for child in node.children() {
             if Some(child.id()) == skip {
                 continue;
@@ -530,7 +759,7 @@ impl<'r> Converter<'r> {
 
     /// Text lost from the source, as the edition marks it: the mark in a
     /// gap span, with any source page inside it moved out in front.
-    fn gap(&mut self, node: Node) -> Vec<Inline> {
+    fn gap(&mut self, node: Node<'d, 'd>) -> Vec<Inline> {
         let inlines = tidy(self.inlines(node, None));
         let (pages, mark): (Vec<Inline>, Vec<Inline>) = inlines
             .into_iter()
@@ -547,7 +776,7 @@ impl<'r> Converter<'r> {
     /// A line outside any stanza element. If it carries a number (the
     /// recipe's `number` on its line role), it opens a new stanza;
     /// otherwise it joins the open one.
-    fn loose_line(&mut self, node: Node) {
+    fn loose_line(&mut self, node: Node<'d, 'd>) {
         let selector = self.role(node).and_then(|r| r.number.clone());
         let (text, skip) = self.number(node, selector.as_ref());
         let number = text.as_deref().and_then(first_number);
@@ -582,7 +811,7 @@ impl<'r> Converter<'r> {
         }
     }
 
-    fn commentary(&mut self, node: Node) {
+    fn commentary(&mut self, node: Node<'d, 'd>) {
         let role = self.role(node).expect("a commentary has a role");
         let selector = role.number.clone();
         let role_target = role.target.clone();
@@ -644,7 +873,7 @@ impl<'r> Converter<'r> {
         }
     }
 
-    fn page(&mut self, node: Node) -> Option<Inline> {
+    fn page(&mut self, node: Node<'d, 'd>) -> Option<Inline> {
         let role = self.role(node)?;
         let source = match role.role.from.as_deref() {
             None | Some("text") => collapse(
@@ -669,7 +898,7 @@ impl<'r> Converter<'r> {
         Some(Inline::PageBreak { n, edition: None })
     }
 
-    fn indent(&self, node: Node) -> u8 {
+    fn indent(&self, node: Node<'d, 'd>) -> u8 {
         node.attribute("class")
             .unwrap_or_default()
             .split_whitespace()
@@ -712,7 +941,7 @@ impl<'r> Converter<'r> {
 
     /// An element's inline content. `skip` leaves out a number already
     /// taken from it.
-    fn inlines(&mut self, node: Node, skip: Option<NodeId>) -> Vec<Inline> {
+    fn inlines(&mut self, node: Node<'d, 'd>, skip: Option<NodeId>) -> Vec<Inline> {
         let mut out = Vec::new();
         for child in node.children() {
             if Some(child.id()) == skip {
@@ -741,6 +970,11 @@ impl<'r> Converter<'r> {
                         out.push(r);
                     }
                 }
+                Some(Kind::NoteRef) => {
+                    if let Some(r) = self.endnote(child) {
+                        out.push(r);
+                    }
+                }
                 Some(Kind::Corr) => out.push(Inline::Span {
                     kind: wordhord_book::model::SpanKind::Corr,
                     lang: None,
@@ -757,16 +991,25 @@ impl<'r> Converter<'r> {
                 None => match child.tag_name().name() {
                     "i" | "em" | "cite" => {
                         self.unmapped(child);
-                        out.push(Inline::Emphasis(self.inlines(child, skip)));
+                        let i = Inline::Emphasis(self.inlines(child, skip));
+                        out.push(self.in_language(child, i));
                     }
                     "b" | "strong" => {
                         self.unmapped(child);
                         out.push(Inline::Strong(self.inlines(child, skip)));
                     }
                     "br" => out.push(Inline::Text(" ".into())),
-                    "a" | "span" | "small" | "abbr" => {
+                    "a" | "span" | "small" | "abbr" | "q" => {
                         self.unmapped(child);
-                        out.extend(self.inlines(child, skip));
+                        let inner = self.inlines(child, skip);
+                        match self.language(child) {
+                            Some(lang) => out.push(Inline::Span {
+                                kind: wordhord_book::model::SpanKind::Foreign,
+                                lang: Some(lang),
+                                inlines: inner,
+                            }),
+                            None => out.extend(inner),
+                        }
                     }
                     other => {
                         Self::note(
@@ -781,6 +1024,74 @@ impl<'r> Converter<'r> {
         }
         out
     }
+}
+
+impl<'r, 'd> Converter<'r, 'd> {
+    /// An element's language, as ISO 639-3, when the recipe asks for
+    /// languages and the element names one.
+    fn language(&mut self, node: Node<'d, 'd>) -> Option<String> {
+        if !self.recipe.languages {
+            return None;
+        }
+        let code = node
+            .attribute(("http://www.w3.org/XML/1998/namespace", "lang"))
+            .or_else(|| node.attribute("lang"))?;
+        match iso639_3(code) {
+            Some(c) => Some(c.to_string()),
+            None => {
+                Self::note(
+                    &mut self.report.unhandled,
+                    format!("language {code:?}"),
+                    node,
+                );
+                None
+            }
+        }
+    }
+
+    fn in_language(&mut self, node: Node<'d, 'd>, inline: Inline) -> Inline {
+        match self.language(node) {
+            Some(lang) => Inline::Span {
+                kind: wordhord_book::model::SpanKind::Foreign,
+                lang: Some(lang),
+                inlines: vec![inline],
+            },
+            None => inline,
+        }
+    }
+}
+
+/// Language tags as EPUBs write them (BCP 47, usually two letters), as the
+/// vocabulary's ISO 639-3. Unknown ones are reported, not guessed.
+fn iso639_3(tag: &str) -> Option<&'static str> {
+    let primary = tag
+        .split('-')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    Some(match primary.as_str() {
+        "en" | "eng" => "eng",
+        "it" | "ita" => "ita",
+        "la" | "lat" => "lat",
+        "fr" | "fra" | "fre" => "fra",
+        "de" | "deu" | "ger" => "deu",
+        "es" | "spa" => "spa",
+        "pt" | "por" => "por",
+        "el" | "ell" => "ell",
+        "grc" => "grc",
+        "he" | "heb" => "heb",
+        "ar" | "ara" => "ara",
+        "enm" => "enm",
+        "ang" => "ang",
+        "frm" => "frm",
+        "fro" => "fro",
+        "pro" => "pro",
+        "oc" | "oci" => "oci",
+        "non" => "non",
+        "is" | "isl" => "isl",
+        "nl" | "nld" => "nld",
+        _ => return None,
+    })
 }
 
 /// Whitespace runs as one space, and trimmed.
@@ -898,13 +1209,47 @@ fn target_link(node: Node, selector: Option<&Selector>) -> Option<(NodeId, Strin
     Some((label.id(), fragment.to_string()))
 }
 
+/// The first number in a label: digits, or a Roman numeral ("Canto IV").
 fn first_number(s: &str) -> Option<u32> {
     let digits: String = s
         .chars()
         .skip_while(|c| !c.is_ascii_digit())
         .take_while(|c| c.is_ascii_digit())
         .collect();
-    digits.parse().ok()
+    if let Ok(n) = digits.parse() {
+        return Some(n);
+    }
+    s.split(|c: char| !c.is_ascii_alphabetic()).find_map(roman)
+}
+
+/// `XXXIV` → 34. Only Roman letters: "I" counts, other words don't.
+fn roman(word: &str) -> Option<u32> {
+    if word.is_empty() || !word.chars().all(|c| "IVXLCDM".contains(c)) {
+        return None;
+    }
+    let value = |c| match c {
+        'I' => 1,
+        'V' => 5,
+        'X' => 10,
+        'L' => 50,
+        'C' => 100,
+        'D' => 500,
+        _ => 1000,
+    };
+    let digits: Vec<i64> = word.chars().map(value).collect();
+    // A smaller digit before a larger one is subtracted: IV, XC.
+    let sum: i64 = digits
+        .iter()
+        .enumerate()
+        .map(|(k, &d)| {
+            if digits.get(k + 1).is_some_and(|&next| next > d) {
+                -d
+            } else {
+                d
+            }
+        })
+        .sum();
+    u32::try_from(sum).ok().filter(|&n| n > 0)
 }
 
 /// `5.` → `5`; `5–6.` → `5-6`.
