@@ -1,0 +1,8 @@
+id = "beowulf-ang"
+title = "Beowulf"
+lang = "ang"
+source = "Old English text, lines 1-11. Check against Klaeber (1922, public domain) before use."
+
+[refs]
+prefix = "bw"
+unit = "line"

@@ -1,0 +1,11 @@
+[heimdallr]
+name = "Heimdallr"
+kind = "person"
+also = ["Heimdall", "Heimdallar"]
+note = "Watchman of the gods."
+
+[odinn]
+name = "Óðinn"
+kind = "person"
+also = ["Odin", "Valfather", "Valfǫðr"]
+note = "Valfǫðr, 'father of the slain', is one of his names."

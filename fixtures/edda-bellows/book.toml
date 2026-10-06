@@ -1,0 +1,11 @@
+id = "edda-bellows"
+title = "The Poetic Edda"
+translator = "Henry Adams Bellows"
+year = 1923
+lang = "eng"
+license = "public domain"
+original = "edda-non"
+
+[refs]
+prefix = "vsp"
+unit = "stanza.line"

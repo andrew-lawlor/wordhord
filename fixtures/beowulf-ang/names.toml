@@ -1,0 +1,10 @@
+[spear-danes]
+name = "Spear-Danes"
+kind = "group"
+also = ["Gār-Dene", "Danes"]
+
+[scyld]
+name = "Scyld Scefing"
+kind = "person"
+also = ["Scyld the Scefing"]
+note = "Founder of the Danish royal line."

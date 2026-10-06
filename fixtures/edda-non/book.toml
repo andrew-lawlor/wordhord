@@ -1,0 +1,8 @@
+id = "edda-non"
+title = "Völuspá"
+lang = "non"
+source = "Normalised Old Norse, stanza 1. Check against Bugge (1867, public domain) before use."
+
+[refs]
+prefix = "vsp"
+unit = "stanza.line"

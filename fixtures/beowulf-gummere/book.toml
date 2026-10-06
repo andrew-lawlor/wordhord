@@ -1,0 +1,11 @@
+id = "beowulf-gummere"
+title = "Beowulf"
+translator = "Francis B. Gummere"
+year = 1910
+lang = "eng"
+license = "public domain"
+original = "beowulf-ang"
+
+[refs]
+prefix = "bw"
+unit = "line"
