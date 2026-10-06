@@ -1253,18 +1253,19 @@ pub fn tidy(inlines: Vec<Inline>) -> Vec<Inline> {
             *t = s;
         }
     }
-    // Trim the ends of the whole run.
-    if let Some(Inline::Text(t)) = merged
-        .iter_mut()
-        .find(|i| matches!(i, Inline::Text(_) | Inline::Emphasis(_) | Inline::Strong(_)))
-    {
+    // Trim the ends of the whole run: its first and last inline that
+    // shows, past empty markers. A span or link there is the end, and
+    // the text beside it keeps its space.
+    let marker = |i: &&mut Inline| {
+        matches!(
+            i,
+            Inline::PageBreak { .. } | Inline::SectionStart { .. } | Inline::NoteRef(_)
+        )
+    };
+    if let Some(Inline::Text(t)) = merged.iter_mut().find(|i| !marker(i)) {
         *t = t.trim_start().to_string();
     }
-    if let Some(Inline::Text(t)) = merged
-        .iter_mut()
-        .rev()
-        .find(|i| matches!(i, Inline::Text(_) | Inline::Emphasis(_) | Inline::Strong(_)))
-    {
+    if let Some(Inline::Text(t)) = merged.iter_mut().rev().find(|i| !marker(i)) {
         *t = t.trim_end().to_string();
     }
     merged.retain(|i| !matches!(i, Inline::Text(t) if t.is_empty()));
@@ -1350,4 +1351,30 @@ fn sample(node: Node) -> String {
     .chars()
     .take(60)
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wordhord_book::model::SpanKind;
+
+    fn latin(text: &str) -> Inline {
+        Inline::Span {
+            kind: SpanKind::Foreign,
+            lang: Some("lat".into()),
+            inlines: vec![Inline::Emphasis(vec![Inline::Text(text.into())])],
+        }
+    }
+
+    #[test]
+    fn text_beside_a_span_at_either_end_keeps_its_space() {
+        // `<i lang="la">Sub Julio</i> was I born`
+        let start = tidy(vec![
+            latin("Sub Julio"),
+            Inline::Text(" was I born ".into()),
+        ]);
+        assert_eq!(start[1], Inline::Text(" was I born".into()));
+        let end = tidy(vec![Inline::Text(" the name of ".into()), latin("El")]);
+        assert_eq!(end[0], Inline::Text("the name of ".into()));
+    }
 }
