@@ -1,10 +1,12 @@
 # Henry Adams Bellows, The Poetic Edda (1923). Project Gutenberg #73533.
-# Völuspá only, for now.
+# All 35 works, in Bellows' order. Abbreviations follow Neckel–Kuhn, in
+# lowercase ASCII; `svip` (Bellows joins Grógaldr and Fjölsvinnsmál) and
+# `oddr` are our own.
 
-end = "HOVAMOL"
+end = "PRONOUNCING INDEX OF PROPER NAMES"
 caesura = true
 # Structural wrappers and type styling.
-styling = ["div1", "div2", "divHead", "divBody", "section", "introduction", "introNote", "endNotes", "last-child", "first", "main", "sc"]
+styling = ["div0", "div1", "div2", "divHead", "divBody", "section", "introduction", "introNote", "endNotes", "last-child", "first", "main", "sc", "body", "volume", "back", "appendix", "pginternal"]
 
 [book]
 id = "edda-bellows"
@@ -18,7 +20,43 @@ source = "Project Gutenberg #73533"
 
 [book.refs]
 unit = "stanza.line"
-works = { vsp = "Völuspá" }
+
+[book.refs.works]
+vsp = "Völuspá"
+hav = "Hávamál"
+vm = "Vafþrúðnismál"
+grm = "Grímnismál"
+skm = "Skírnismál"
+hrbl = "Hárbarðsljóð"
+hym = "Hymiskviða"
+ls = "Lokasenna"
+thrk = "Þrymskviða"
+alv = "Alvíssmál"
+bdr = "Baldrs draumar"
+rth = "Rígsþula"
+hdl = "Hyndluljóð"
+svip = "Svipdagsmál (Grógaldr and Fjölsvinnsmál)"
+vkv = "Völundarkviða"
+hhj = "Helgakviða Hjörvarðssonar"
+hh1 = "Helgakviða Hundingsbana I"
+hh2 = "Helgakviða Hundingsbana II"
+sf = "Frá dauða Sinfjötla"
+grp = "Grípisspá"
+rm = "Reginsmál"
+fm = "Fáfnismál"
+sd = "Sigrdrífumál"
+brot = "Brot af Sigurðarkviðu"
+gdr1 = "Guðrúnarkviða I"
+sg = "Sigurðarkviða in skamma"
+hlr = "Helreið Brynhildar"
+drp = "Dráp Niflunga"
+gdr2 = "Guðrúnarkviða II"
+gdr3 = "Guðrúnarkviða III"
+oddr = "Oddrúnargrátr"
+akv = "Atlakviða"
+am = "Atlamál in grænlenzku"
+ghv = "Guðrúnarhvöt"
+hm = "Hamðismál"
 
 [book.edition]
 key = "bellows-1923"
@@ -29,6 +67,148 @@ year = 1923
 [[work]]
 prefix = "vsp"
 start = "VOLUSPO"
+
+[[work]]
+prefix = "hav"
+start = "HOVAMOL"
+
+[[work]]
+prefix = "vm"
+start = "VAFTHRUTHNISMOL"
+
+[[work]]
+prefix = "grm"
+start = "GRIMNISMOL"
+
+[[work]]
+prefix = "skm"
+start = "SKIRNISMOL"
+
+[[work]]
+prefix = "hrbl"
+start = "HARBARTHSLJOTH"
+
+[[work]]
+prefix = "hym"
+start = "HYMISKVITHA"
+
+[[work]]
+prefix = "ls"
+start = "LOKASENNA"
+
+[[work]]
+prefix = "thrk"
+start = "THRYMSKVITHA"
+
+[[work]]
+prefix = "alv"
+start = "ALVISSMOL"
+
+[[work]]
+prefix = "bdr"
+start = "BALDRS DRAUMAR"
+
+[[work]]
+prefix = "rth"
+start = "RIGSTHULA"
+
+[[work]]
+prefix = "hdl"
+start = "HYNDLULJOTH"
+
+[[work]]
+prefix = "svip"
+start = "SVIPDAGSMOL"
+
+[[work]]
+prefix = "vkv"
+start = "VÖLUNDARKVITHA"
+
+[[work]]
+prefix = "hhj"
+start = "HELGAKVITHA HJORVARTHSSONAR"
+
+[[work]]
+prefix = "hh1"
+start = "HELGAKVITHA HUNDINGSBANA I"
+
+[[work]]
+prefix = "hh2"
+start = "HELGAKVITHA HUNDINGSBANA II"
+
+[[work]]
+prefix = "sf"
+start = "FRA DAUTHA SINFJOTLA"
+
+[[work]]
+prefix = "grp"
+start = "GRIPISSPO"
+
+[[work]]
+prefix = "rm"
+start = "REGINSMOL"
+
+[[work]]
+prefix = "fm"
+start = "FAFNISMOL"
+
+[[work]]
+prefix = "sd"
+start = "SIGRDRIFUMOL"
+
+[[work]]
+prefix = "brot"
+start = "BROT AF SIGURTHARKVITHU"
+
+[[work]]
+prefix = "gdr1"
+start = "GUTHRUNARKVITHA I"
+
+[[work]]
+prefix = "sg"
+start = "SIGURTHARKVITHA EN SKAMMA"
+
+[[work]]
+prefix = "hlr"
+start = "HELREITH BRYNHILDAR"
+
+[[work]]
+prefix = "drp"
+start = "DRAP NIFLUNGA"
+
+[[work]]
+prefix = "gdr2"
+start = "GUTHRUNARKVITHA II, EN FORNA"
+
+[[work]]
+prefix = "gdr3"
+start = "GUTHRUNARKVITHA III"
+
+[[work]]
+prefix = "oddr"
+start = "ODDRUNARGRATR"
+
+[[work]]
+prefix = "akv"
+start = "ATLAKVITHA EN GRÖNLENZKA"
+
+[[work]]
+prefix = "am"
+start = "ATLAMOL EN GRÖNLENZKU"
+
+[[work]]
+prefix = "ghv"
+start = "GUTHRUNARHVOT"
+
+[[work]]
+prefix = "hm"
+start = "HAMTHESMOL"
+
+# The volume headings ("LAYS OF THE HEROES") sit directly in the volume;
+# poem titles sit in each poem's own heading block.
+[[role]]
+select = "div.volume > h2"
+as = "drop"
 
 # Page numbers of the print edition, "[3]". Links back to the contents
 # share the class: they don't match the pattern, so they're dropped.
@@ -57,10 +237,13 @@ as = "line"
 select = "div.endNotes h3"
 as = "drop"
 
+# Notes on prose have no number: their italic label ("Prose.") links to
+# the passage.
 [[role]]
 select = "div.endNotes p"
 as = "commentary"
 number = "span.parNum"
+target = "i"
 
 [[role]]
 select = "h2.main"
@@ -71,6 +254,22 @@ level = 1
 select = "h2.sub"
 as = "heading"
 level = 2
+
+# Alvíssmál's subtitle.
+[[role]]
+select = "h2.label"
+as = "heading"
+level = 2
+
+# Bellows' marks for lines or stanzas lost from the manuscripts.
+[[role]]
+select = "p.verseStars"
+as = "gap"
+
+# Gutenberg's thematic break: a rule, sometimes drawn as dots.
+[[role]]
+select = "p.tb"
+as = "break"
 
 # "Introductory Note", before the poem.
 [[role]]

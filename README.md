@@ -20,6 +20,6 @@ cargo test --workspace
 cargo run -q -- import <book.epub> recipes/edda-bellows.toml <new folder>
 ```
 
-`books/` holds converted public-domain editions: Bellows' *Völuspá* so far.
+`books/` holds converted public-domain editions: Bellows' *Poetic Edda* (1923), all 35 works.
 
 `check` reports anything outside the vocabulary, missing or repeated IDs, unknown names, bad references, and Djot syntax that silently became text. `align` matches a translation to its original by canonical reference, line to line or stanza to stanza.

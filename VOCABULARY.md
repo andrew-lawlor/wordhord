@@ -33,7 +33,7 @@ Checked against jotdown 0.7, the Rust Djot parser.
 | Figure | `::: figure` | An image, with an optional caption paragraph | `<figure>`, `<head>` |
 | Table | Djot table | A table | `<table>` |
 | Note | `[^id]` and its definition | Footnote or endnote | `<note>` |
-| Commentary | `::: commentary` | A note on a passage, with `on=` its reference: `on="vsp.1"`, `on="vsp.5-6"` | `<note type="commentary" target>` |
+| Commentary | `::: commentary` | A note on a passage, with `on=` its reference (`on="vsp.1"`, `on="vsp.5-6"`) or a block's ID (`on="#ch04-0011"`, for prose) | `<note type="commentary" target>` |
 
 ## Inlines
 
@@ -64,7 +64,7 @@ Checked against jotdown 0.7, the Rust Djot parser.
 | `start=` | verse | Number of the first line. Later lines are counted. |
 | `original=` | verse, stanza | ID of the original book this aligns to (from its `book.toml`). |
 | `speaker=` | speech | Who speaks. |
-| `on=` | commentary | The reference of the passage it's about. Ranges allowed. |
+| `on=` | commentary | The reference of the passage it's about (ranges allowed), or `#id` of a block. |
 | `indent=` | verse | Extra indent for the whole block, in steps. |
 | `key=` | name spans | Entry in the book's name register. |
 | `type=` | `.named` | What kind of thing: `ship`, `weapon`, `hall`, … |
@@ -143,6 +143,27 @@ A prose reference covers text until the next one starts.
 - When it starts mid-block, put an empty span where it starts: `[]{.ref n="nh.12.42"}`.
 
 Both forms can mix in one book. The compiler turns them into one list of ranges.
+
+### Stanzas in parts
+
+A stanza can be split across blocks, as editions do at a change of speaker:
+
+```
+{#ch07-0015 ref="hym.6"}
+::: stanza
+“May we win, dost thou think, | this whirler of water?”
+:::
+
+{#ch07-0016}
+Tyr spake:
+
+{#ch07-0017 ref="hym.6"}
+::: stanza
+“Aye, friend, we can, | if cunning we are.”
+:::
+```
+
+Blocks with the same stanza reference are one stanza. Its lines number on (`hym.6.1` to `hym.6.4`), and alignment treats it as one unit.
 
 ## Alignment
 

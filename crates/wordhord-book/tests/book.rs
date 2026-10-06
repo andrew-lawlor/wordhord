@@ -385,3 +385,30 @@ fn text_that_starts_and_ends_with_braces_is_not_an_attribute_line() {
         b.diagnostics
     );
 }
+
+#[test]
+fn a_stanza_can_continue_after_a_change_of_speaker() {
+    let toml = "id = \"e\"\ntitle = \"E\"\nlang = \"eng\"\noriginal = \"o\"\n[refs]\nunit = \"stanza.line\"\nworks = { hym = \"Hymiskviða\" }\n";
+    let b = book(&[
+        ("book.toml", toml),
+        (
+            "text/01.dj",
+            "{#ch01-0001 ref=\"hym.6\"}\n::: stanza\nMay we win, dost thou think,\nthis whirler of water?\n:::\n\n{#ch01-0002}\nTyr spake:\n\n{#ch01-0003 ref=\"hym.6\"}\n::: stanza\nAye, friend, we can,\nif cunning we are.\n:::\n\n{#ch01-0004 on=\"#ch01-0002\"}\n::: commentary\nOn the speaker cue.\n:::\n\n{#ch01-0005 on=\"#ch09-0001\"}\n::: commentary\nOn nothing.\n:::\n",
+        ),
+    ]);
+    let refs: Vec<_> = verse_lines(&b)
+        .into_iter()
+        .filter_map(|l| l.reference)
+        .collect();
+    assert_eq!(refs, ["hym.6.1", "hym.6.2", "hym.6.3", "hym.6.4"]);
+    assert_eq!(b.errors(), 1, "{:#?}", b.diagnostics);
+    assert!(has(&b, Severity::Error, "a commentary on #ch09-0001"));
+    let original = book(&[
+        ("book.toml", "id = \"o\"\ntitle = \"O\"\nlang = \"non\"\n[refs]\nunit = \"stanza.line\"\nworks = { hym = \"Hymiskviða\" }\n"),
+        ("text/01.dj", "{#ch01-0001 ref=\"hym.6\"}\n::: stanza\nOne\nTwo\nThree\nFour\n:::\n"),
+    ]);
+    let a = align(&b, &original);
+    assert!(a.diagnostics.is_empty(), "{:#?}", a.diagnostics);
+    assert_eq!(a.pairs.len(), 1);
+    assert_eq!(a.pairs[0].translation.len(), 4);
+}

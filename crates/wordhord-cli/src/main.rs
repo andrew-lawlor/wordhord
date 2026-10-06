@@ -150,7 +150,10 @@ fn import(epub: &str, recipe: &str, out: &str) -> ExitCode {
                 ch.blocks.len()
             );
         }
-        println!("{} source pages", r.pages);
+        println!(
+            "{} source pages; {} stanzas continue after a change of speaker; {} passages of verse the edition didn't number",
+            r.pages, r.continued, r.unnumbered
+        );
         for (key, (n, sample)) in &r.unmapped {
             println!("unmapped class {key} ×{n}: {sample}");
         }

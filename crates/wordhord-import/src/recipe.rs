@@ -49,6 +49,9 @@ pub struct Role {
     pub level: Option<u16>,
     /// For stanzas and commentary: the child holding the number.
     pub number: Option<String>,
+    /// For commentary without a number: the element at its start that
+    /// links to its subject, such as a passage of prose.
+    pub target: Option<String>,
     /// For pages: a regex whose first group is the page number, matched
     /// against `from` (the text by default). No match: dropped.
     pub pattern: Option<String>,
@@ -71,6 +74,11 @@ pub enum Kind {
     Container,
     /// An inline element whose text stays, without meaning.
     Unwrap,
+    /// Text lost from the source, marked by the edition (rows of
+    /// asterisks).
+    Gap,
+    /// A thematic break between sections: a rule, or a row of dots.
+    Break,
     Drop,
 }
 
@@ -80,9 +88,13 @@ pub struct Simple {
     pub tag: Option<String>,
     pub classes: Vec<String>,
     pub attrs: Vec<(String, bool, String)>,
+    /// The step before this one must be its parent (`>`), not just an
+    /// ancestor.
+    pub child: bool,
 }
 
-/// `div.endNotes p`: steps from ancestor to the element itself.
+/// `div.endNotes p`, `div.volume > h2`: steps from ancestor to the element
+/// itself.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Selector(pub Vec<Simple>);
 
@@ -91,11 +103,20 @@ const EPUB_NS: &str = "http://www.idpf.org/2007/ops";
 impl Selector {
     pub fn parse(s: &str) -> Result<Selector, String> {
         let mut steps = Vec::new();
+        let mut child = false;
         for part in s.split_whitespace() {
+            if part == ">" {
+                if steps.is_empty() || child {
+                    return Err(format!("`{s}`: `>` needs a step on each side"));
+                }
+                child = true;
+                continue;
+            }
             let mut simple = Simple {
                 tag: None,
                 classes: Vec::new(),
                 attrs: Vec::new(),
+                child: std::mem::take(&mut child),
             };
             let (head, attrs) = part.split_once('[').map_or((part, ""), |(h, a)| (h, a));
             let mut pieces = head.split('.');
@@ -127,26 +148,37 @@ impl Selector {
             }
             steps.push(simple);
         }
-        if steps.is_empty() {
-            return Err("an empty selector".into());
+        if steps.is_empty() || child {
+            return Err(format!("`{s}`: an empty or unfinished selector"));
         }
         Ok(Selector(steps))
     }
 
     pub fn matches(&self, node: roxmltree::Node) -> bool {
-        let (last, ancestors) = self.0.split_last().expect("selectors aren't empty");
-        if !matches_simple(last, node) {
-            return false;
-        }
-        let mut wanted = ancestors.iter().rev().peekable();
-        let mut up = node.parent_element();
-        while let (Some(s), Some(n)) = (wanted.peek(), up) {
-            if matches_simple(s, n) {
-                wanted.next();
-            }
-            up = n.parent_element();
-        }
-        wanted.peek().is_none()
+        matches_from(&self.0, node)
+    }
+}
+
+/// Whether the last step matches `node`, and the steps before it match its
+/// parent or some ancestor, as each step's `child` says.
+fn matches_from(steps: &[Simple], node: roxmltree::Node) -> bool {
+    let Some((last, before)) = steps.split_last() else {
+        return true;
+    };
+    if !matches_simple(last, node) {
+        return false;
+    }
+    if before.is_empty() {
+        return true;
+    }
+    if last.child {
+        node.parent_element()
+            .is_some_and(|p| matches_from(before, p))
+    } else {
+        node.ancestors()
+            .skip(1)
+            .filter(|a| a.is_element())
+            .any(|a| matches_from(before, a))
     }
 }
 
@@ -213,5 +245,9 @@ mod tests {
             .unwrap()
             .matches(page));
         assert!(Selector::parse("[id^=page]").unwrap().matches(page));
+        assert!(Selector::parse("body > p.line").unwrap().matches(line));
+        assert!(!Selector::parse("body > p.first").unwrap().matches(note));
+        assert!(Selector::parse("body > div p.first").unwrap().matches(note));
+        assert!(Selector::parse("div >").is_err());
     }
 }

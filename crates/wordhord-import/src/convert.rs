@@ -27,6 +27,8 @@ pub enum Out {
         on: String,
         blocks: Vec<Out>,
     },
+    /// A thematic break: a rule or row of dots between sections.
+    Break,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -51,6 +53,10 @@ pub struct Report {
     pub unhandled: BTreeMap<String, (usize, String)>,
     pub problems: Vec<String>,
     pub pages: usize,
+    /// Stanzas that continue the one before, after a change of speaker.
+    pub continued: usize,
+    /// Verse the edition didn't number: kept as verse, with no reference.
+    pub unnumbered: usize,
 }
 
 struct CompiledRole<'r> {
@@ -58,6 +64,7 @@ struct CompiledRole<'r> {
     role: &'r Role,
     pattern: Option<Regex>,
     number: Option<Selector>,
+    target: Option<Selector>,
 }
 
 pub struct Converter<'r> {
@@ -71,6 +78,8 @@ pub struct Converter<'r> {
     pending_page: Vec<Inline>,
     /// Lines outside any stanza element, gathered into the open group.
     loose_open: bool,
+    /// Source element IDs, to the output block they became: `#ch04-0007`.
+    pub targets: std::collections::HashMap<String, String>,
 }
 
 const CONTAINERS: &[&str] = &[
@@ -89,11 +98,16 @@ impl<'r> Converter<'r> {
                 Some(s) => Some(Selector::parse(s)?),
                 None => None,
             };
+            let target = match &role.target {
+                Some(s) => Some(Selector::parse(s)?),
+                None => None,
+            };
             roles.push(CompiledRole {
                 selector: Selector::parse(&role.select)?,
                 role,
                 pattern,
                 number,
+                target,
             });
         }
         Ok(Converter {
@@ -105,6 +119,7 @@ impl<'r> Converter<'r> {
             done: false,
             pending_page: Vec::new(),
             loose_open: false,
+            targets: std::collections::HashMap::new(),
         })
     }
 
@@ -160,6 +175,15 @@ impl<'r> Converter<'r> {
         self.loose_open = false;
     }
 
+    /// Pushes a block made from `node`, remembering where its source ID went.
+    fn push_from(&mut self, node: Node, block: Out) {
+        self.push(block);
+        if let (Some(id), Some(c)) = (node.attribute("id"), self.chapters.last()) {
+            let target = format!("#ch{:02}-{:04}", self.chapters.len(), c.blocks.len());
+            self.targets.insert(id.to_string(), target);
+        }
+    }
+
     /// Walks a document's body.
     pub fn document(&mut self, doc: &roxmltree::Document) {
         if let Some(body) = doc.descendants().find(|n| n.has_tag_name("body")) {
@@ -203,6 +227,12 @@ impl<'r> Converter<'r> {
                 Some(Kind::Paragraph) => self.paragraph(child),
                 Some(Kind::Stanza) => self.stanza(child),
                 Some(Kind::Verse) => self.quoted_verse(child),
+                Some(Kind::Gap) => {
+                    let mut inlines = std::mem::take(&mut self.pending_page);
+                    inlines.extend(self.gap(child));
+                    self.push(Out::Paragraph(inlines));
+                }
+                Some(Kind::Break) => self.push(Out::Break),
                 Some(Kind::Line) => self.loose_line(child),
                 Some(Kind::Commentary) => self.commentary(child),
                 Some(Kind::Page) => {
@@ -267,9 +297,12 @@ impl<'r> Converter<'r> {
         }
         let mut all = std::mem::take(&mut self.pending_page);
         all.extend(inlines);
-        self.push(Out::Paragraph(all));
+        self.push_from(node, Out::Paragraph(all));
     }
 
+    /// The number an element carries, its node (to leave out of the text),
+    /// and the target of any link in it: Bellows' note labels link to what
+    /// they're about.
     fn number(&self, node: Node, selector: Option<&Selector>) -> (Option<String>, Option<NodeId>) {
         let Some(sel) = selector else {
             return (None, None);
@@ -292,11 +325,19 @@ impl<'r> Converter<'r> {
         let role = self.role(node).expect("a stanza has a role");
         let selector = role.number.clone();
         let (text, skip) = self.number(node, selector.as_ref());
-        let number = text.as_deref().and_then(first_number);
+        let mut number = text.as_deref().and_then(first_number);
         if selector.is_some() && number.is_none() {
-            self.report
-                .problems
-                .push(format!("a stanza without a number: {}", sample(node)));
+            // Bellows splits a stanza at a change of speaker: the second
+            // part has no number of its own.
+            match self.last_number() {
+                Some(n) => {
+                    number = Some(n);
+                    self.report.continued += 1;
+                }
+                // Verse quoted in prose, before the poem's first stanza:
+                // the editor didn't number it, so it gets no reference.
+                None => self.report.unnumbered += 1,
+            }
         }
         let lines = self.lines_of(node, skip);
         if lines.is_empty() {
@@ -306,7 +347,20 @@ impl<'r> Converter<'r> {
             ));
             return;
         }
-        self.push(Out::Stanza { number, lines });
+        self.push_from(node, Out::Stanza { number, lines });
+    }
+
+    /// The number of the last numbered stanza in this work.
+    fn last_number(&self) -> Option<u32> {
+        self.chapters
+            .last()?
+            .blocks
+            .iter()
+            .rev()
+            .find_map(|b| match b {
+                Out::Stanza { number, .. } => *number,
+                _ => None,
+            })
     }
 
     /// Lines with no stanza number: verse quoted in a note goes into the
@@ -332,31 +386,81 @@ impl<'r> Converter<'r> {
 
     /// The lines inside an element, not counting lines inside lines.
     fn lines_of(&mut self, node: Node, skip: Option<NodeId>) -> Vec<Line> {
-        let line_nodes: Vec<Node> = node
-            .descendants()
-            .filter(|n| n.id() != node.id())
-            .filter(|n| self.role(*n).is_some_and(|r| r.role.kind == Kind::Line))
-            .filter(|n| {
-                !n.ancestors()
-                    .skip(1)
-                    .take_while(|a| a.id() != node.id())
-                    .any(|a| self.role(a).is_some_and(|r| r.role.kind == Kind::Line))
-            })
-            .collect();
         let mut lines = Vec::new();
-        for (k, l) in line_nodes.into_iter().enumerate() {
-            let mut inlines = if k == 0 {
-                std::mem::take(&mut self.pending_page)
-            } else {
-                Vec::new()
-            };
-            inlines.extend(self.inlines(l, skip));
-            lines.push(Line {
-                indent: self.indent(l),
-                inlines: self.verse_inlines(inlines),
-            });
-        }
+        self.walk_lines(node, skip, &mut lines);
         lines
+    }
+
+    /// A stanza's contents in order. Lines become lines; a source page
+    /// goes on the next line; a gap is a line of its own; anything else
+    /// is reported, so nothing in a stanza is dropped unseen.
+    fn walk_lines(&mut self, node: Node, skip: Option<NodeId>, lines: &mut Vec<Line>) {
+        for child in node.children() {
+            if Some(child.id()) == skip {
+                continue;
+            }
+            if child.is_text() {
+                if !collapse(child.text().unwrap_or_default()).is_empty() {
+                    Self::note(
+                        &mut self.report.unhandled,
+                        "text in a stanza, outside its lines".into(),
+                        node,
+                    );
+                }
+                continue;
+            }
+            if !child.is_element() {
+                continue;
+            }
+            match self.role(child).map(|r| r.role.kind) {
+                Some(Kind::Line) => {
+                    let mut inlines = std::mem::take(&mut self.pending_page);
+                    inlines.extend(self.inlines(child, skip));
+                    lines.push(Line {
+                        indent: self.indent(child),
+                        inlines: self.verse_inlines(inlines),
+                    });
+                }
+                Some(Kind::Page) => {
+                    if let Some(p) = self.page(child) {
+                        self.pending_page.push(p);
+                    }
+                }
+                Some(Kind::Gap) => {
+                    let mut inlines = std::mem::take(&mut self.pending_page);
+                    inlines.extend(self.gap(child));
+                    lines.push(Line { indent: 0, inlines });
+                }
+                Some(Kind::Drop) => {}
+                Some(Kind::Container | Kind::Unwrap) | None
+                    if !matches!(child.tag_name().name(), "p") =>
+                {
+                    self.unmapped(child);
+                    self.walk_lines(child, skip, lines);
+                }
+                other => Self::note(
+                    &mut self.report.unhandled,
+                    format!("{other:?} in a stanza: {}", child.tag_name().name()),
+                    child,
+                ),
+            }
+        }
+    }
+
+    /// Text lost from the source, as the edition marks it: the mark in a
+    /// gap span, with any source page inside it moved out in front.
+    fn gap(&mut self, node: Node) -> Vec<Inline> {
+        let inlines = tidy(self.inlines(node, None));
+        let (pages, mark): (Vec<Inline>, Vec<Inline>) = inlines
+            .into_iter()
+            .partition(|i| matches!(i, Inline::PageBreak { .. }));
+        let mut out = pages;
+        out.push(Inline::Span {
+            kind: wordhord_book::model::SpanKind::Gap,
+            lang: None,
+            inlines: tidy(mark),
+        });
+        out
     }
 
     fn loose_line(&mut self, node: Node) {
@@ -385,18 +489,52 @@ impl<'r> Converter<'r> {
     fn commentary(&mut self, node: Node) {
         let role = self.role(node).expect("a commentary has a role");
         let selector = role.number.clone();
-        let (text, skip) = self.number(node, selector.as_ref());
+        let role_target = role.target.clone();
+        let (text, mut skip) = self.number(node, selector.as_ref());
+        // No number: a label that links to the note's subject instead.
+        if text.is_none() {
+            if let Some((label, _)) = target_link(node, role_target.as_ref()) {
+                skip = Some(label);
+            }
+        }
+        let body = tidy(self.inlines(node, skip));
+        // A page number alone between notes: it goes on the next block.
+        if body.iter().all(|i| matches!(i, Inline::PageBreak { .. })) {
+            self.pending_page.extend(body);
+            return;
+        }
         let mut paragraph = std::mem::take(&mut self.pending_page);
-        paragraph.extend(self.inlines(node, skip));
+        paragraph.extend(body);
         let paragraph = tidy(paragraph);
         let prefix = self
             .chapters
             .last()
             .map(|c| c.prefix.clone())
             .unwrap_or_default();
-        match text.as_deref().and_then(number_range) {
-            Some(r) => self.push(Out::Commentary {
-                on: format!("{prefix}.{r}"),
+        let on = match text.as_deref().and_then(number_range) {
+            Some(r) => Some(format!("{prefix}.{r}")),
+            // A note on something without a number (Bellows' "Prose."):
+            // its label links to it.
+            None if target_link(node, role_target.as_ref()).is_some() => {
+                let link = target_link(node, role_target.as_ref());
+                let link = link.map(|(_, f)| f);
+                match link.as_ref().and_then(|f| self.targets.get(f)) {
+                    Some(t) => Some(t.clone()),
+                    None => {
+                        self.report.problems.push(format!(
+                            "a note on {:?}, which isn't a block the import made: {}",
+                            link.unwrap_or_default(),
+                            sample(node)
+                        ));
+                        return;
+                    }
+                }
+            }
+            None => None,
+        };
+        match on {
+            Some(on) => self.push(Out::Commentary {
+                on,
                 blocks: vec![Out::Paragraph(paragraph)],
             }),
             None => match self.chapters.last_mut().and_then(|c| c.blocks.last_mut()) {
@@ -617,6 +755,21 @@ pub fn tidy(inlines: Vec<Inline>) -> Vec<Inline> {
     }
     merged.retain(|i| !matches!(i, Inline::Text(t) if t.is_empty()));
     merged
+}
+
+/// The first element matching `selector` at the start of `node`, and the
+/// fragment of the link in it: `<i><a href="…#p1.4.prose">Prose</a></i>`.
+fn target_link(node: Node, selector: Option<&Selector>) -> Option<(NodeId, String)> {
+    let sel = selector?;
+    let label = node
+        .children()
+        .find(|n| n.is_element() || n.text().is_some_and(|t| !t.trim().is_empty()))?;
+    if !sel.matches(label) {
+        return None;
+    }
+    let href = label.descendants().find_map(|a| a.attribute("href"))?;
+    let (_, fragment) = href.split_once('#')?;
+    Some((label.id(), fragment.to_string()))
 }
 
 fn first_number(s: &str) -> Option<u32> {

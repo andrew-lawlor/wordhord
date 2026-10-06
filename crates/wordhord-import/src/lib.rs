@@ -67,7 +67,8 @@ fn check_numbers(ch: &Chapter, report: &mut Report) {
             number: Some(n), ..
         } = b
         {
-            if *n != last + 1 {
+            // The same number again continues the stanza after a speaker.
+            if *n != last + 1 && *n != last {
                 report
                     .problems
                     .push(format!("{}: stanza {n} follows stanza {last}", ch.prefix));
@@ -134,6 +135,7 @@ pub fn chapter_source(number: usize, ch: &Chapter) -> String {
                 }
                 s.push_str(":::\n\n");
             }
+            Out::Break => s.push_str("* * *\n\n"),
             Out::Commentary { on, blocks } => {
                 // More colons than quoted verse's three, so it nests inside.
                 let _ = writeln!(s, "{{#{id} on=\"{on}\"}}\n::::: commentary");
@@ -193,6 +195,15 @@ fn write_inlines(s: &mut String, inlines: &[Inline]) {
                 };
             }
             Inline::LineBreak | Inline::SoftBreak => s.push(' '),
+            Inline::Span {
+                kind: wordhord_book::model::SpanKind::Gap,
+                inlines,
+                ..
+            } => {
+                s.push('[');
+                write_inlines(s, inlines);
+                s.push_str("]{.gap}");
+            }
             other => {
                 let _ = write!(s, "{}", escape(&plain_text(std::slice::from_ref(other))));
             }
@@ -212,6 +223,8 @@ fn escape(t: &str) -> String {
             ':' => next.is_some_and(|n| n.is_alphanumeric()),
             // -- and --- become dashes; ... an ellipsis.
             '-' => next == Some('-'),
+            // ![ is an image; a page marker may follow this text.
+            '!' => next.is_none_or(|n| n == '['),
             '.' => next == Some('.') && chars.get(k + 2) == Some(&'.'),
             _ => false,
         };
@@ -224,6 +237,8 @@ fn escape(t: &str) -> String {
 }
 
 /// A line that would start a heading, list, quotation or definition.
+/// Ordered list markers are `1.`, `1)`, `(1)`, `a.`, `(a)`, `IV.`, `(iv)`
+/// and the like, followed by a space or the end of the line.
 fn escape_line_start(s: &str) -> String {
     let trimmed = s.trim_start();
     let lead = &s[..s.len() - trimmed.len()];
@@ -231,18 +246,22 @@ fn escape_line_start(s: &str) -> String {
     let first = chars.next();
     let second = chars.next();
     match first {
-        Some('#' | '>') => format!("{lead}\\{trimmed}"),
-        Some('-' | '+' | ':') if second.is_none_or(|c| c == ' ') => format!("{lead}\\{trimmed}"),
-        Some(c) if c.is_ascii_digit() => {
-            let digits = trimmed.chars().take_while(|c| c.is_ascii_digit()).count();
-            let rest = &trimmed[digits..];
-            if rest.starts_with(". ") || rest.starts_with(") ") || rest == "." || rest == ")" {
-                format!("{lead}{}\\{rest}", &trimmed[..digits])
-            } else {
-                s.to_string()
-            }
+        Some('#' | '>') => return format!("{lead}\\{trimmed}"),
+        Some('-' | '+' | ':') if second.is_none_or(|c| c == ' ') => {
+            return format!("{lead}\\{trimmed}")
         }
-        _ => s.to_string(),
+        _ => {}
+    }
+    let marker = regex::Regex::new(r"^(\()?([0-9]+|[A-Za-z]+)([.)])(\s|$)").expect("valid");
+    match marker.captures(trimmed) {
+        // `(I)`: escaping the parenthesis stops it opening a list.
+        Some(c) if c.get(1).is_some() => format!("{lead}\\{trimmed}"),
+        // `1.` or `IV)`: escaping the punctuation does.
+        Some(c) => {
+            let at = c.get(3).expect("matched").start();
+            format!("{lead}{}\\{}", &trimmed[..at], &trimmed[at..])
+        }
+        None => s.to_string(),
     }
 }
 
@@ -263,6 +282,7 @@ pub fn verify(imported: &Imported, out: &Path) -> Result<(Book, Vec<String>), St
         for (b, r) in ch.blocks.iter().zip(&read.blocks) {
             let id = r.id.clone().unwrap_or_default();
             match (b, &r.kind) {
+                (Out::Break, BlockKind::SceneBreak) => {}
                 (Out::Heading { inlines, .. }, BlockKind::Heading { text, .. }) => {
                     problems.extend(differ(&id, inlines, text))
                 }
@@ -369,6 +389,11 @@ mod tests {
             "> Not a quote",
             "Time 6:30, :smile: and -- and ... dots",
             "Back\\slash, `tick`, ^caret^, ~tilde~, $dollar, <angle>",
+            "(I)",
+            "(iv) a numbered aside",
+            "A. Smith",
+            "IV) four",
+            "May she ever rot!",
         ];
         for s in samples {
             let src = format!("{{#ch01-0001}}\n{}\n", line(&[Inline::Text(s.into())]));

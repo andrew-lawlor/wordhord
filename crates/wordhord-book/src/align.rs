@@ -145,9 +145,10 @@ pub fn align(translation: &Book, original: &Book) -> Alignment {
     out
 }
 
-/// The book's units: each numbered line, or each stanza.
+/// The book's units: each numbered line, or each stanza. A stanza split
+/// across blocks (a change of speaker) is one unit.
 fn units(book: &Book, by_line: bool) -> Vec<Unit> {
-    let mut out = Vec::new();
+    let mut out: Vec<Unit> = Vec::new();
     for (file, b) in book.blocks() {
         let (BlockKind::Verse(v) | BlockKind::Stanza(v)) = &b.kind else {
             continue;
@@ -164,13 +165,17 @@ fn units(book: &Book, by_line: bool) -> Vec<Unit> {
                 });
             }
         } else if let (BlockKind::Stanza(_), Some(r)) = (&b.kind, &b.reference) {
-            out.push(Unit {
-                reference: r.clone(),
-                covers: vec![r.clone()],
-                lines: v.lines.iter().map(|l| plain_text(&l.inlines)).collect(),
-                file: file.into(),
-                line: b.line,
-            });
+            let lines: Vec<String> = v.lines.iter().map(|l| plain_text(&l.inlines)).collect();
+            match out.iter_mut().find(|u| &u.reference == r) {
+                Some(u) => u.lines.extend(lines),
+                None => out.push(Unit {
+                    reference: r.clone(),
+                    covers: vec![r.clone()],
+                    lines,
+                    file: file.into(),
+                    line: b.line,
+                }),
+            }
         }
     }
     out

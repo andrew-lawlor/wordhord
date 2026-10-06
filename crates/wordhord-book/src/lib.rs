@@ -246,8 +246,17 @@ impl Book {
     fn number(&mut self) {
         let scheme = self.meta.refs.clone();
         let mut found = Vec::new();
+        // Lines already numbered in each stanza: a stanza can continue in a
+        // later block with the same reference (a change of speaker).
+        let mut used: HashMap<String, usize> = HashMap::new();
         for c in &mut self.chapters {
-            number_blocks(&mut c.blocks, scheme.as_ref(), &c.file, &mut found);
+            number_blocks(
+                &mut c.blocks,
+                scheme.as_ref(),
+                &c.file,
+                &mut found,
+                &mut used,
+            );
         }
         for (file, line, message) in found {
             self.report(Severity::Error, &file, line, message);
@@ -432,7 +441,16 @@ impl Book {
         }
         for (file, b) in self.blocks() {
             if let BlockKind::Commentary { on, .. } = &b.kind {
-                if !on.is_empty() && !align::expand(on).iter().all(|r| known.contains(r)) {
+                if let Some(id) = on.strip_prefix('#') {
+                    if !ids.contains_key(id) {
+                        push(
+                            Severity::Error,
+                            file,
+                            b.line,
+                            format!("a commentary on #{id}, which no block has"),
+                        );
+                    }
+                } else if !on.is_empty() && !align::expand(on).iter().all(|r| known.contains(r)) {
                     push(
                         Severity::Error,
                         file,
@@ -534,6 +552,7 @@ fn number_blocks(
     scheme: Option<&RefScheme>,
     file: &str,
     found: &mut Vec<(String, usize, String)>,
+    used: &mut HashMap<String, usize>,
 ) {
     for b in blocks {
         let line = b.line;
@@ -541,9 +560,9 @@ fn number_blocks(
         match &mut b.kind {
             BlockKind::Verse(v) | BlockKind::Stanza(v) => {
                 if let (Some(r), Some(s)) = (&reference, scheme) {
-                    number_verse(v, r, s, file, line, found);
+                    number_verse(v, r, s, file, line, found, used);
                 }
-                number_blocks(&mut v.stanzas, scheme, file, found);
+                number_blocks(&mut v.stanzas, scheme, file, found, used);
             }
             BlockKind::Speech { blocks, .. }
             | BlockKind::Epigraph(blocks)
@@ -552,7 +571,9 @@ fn number_blocks(
             | BlockKind::Center(blocks)
             | BlockKind::Figure(blocks)
             | BlockKind::Note { blocks, .. }
-            | BlockKind::Commentary { blocks, .. } => number_blocks(blocks, scheme, file, found),
+            | BlockKind::Commentary { blocks, .. } => {
+                number_blocks(blocks, scheme, file, found, used)
+            }
             _ => {}
         }
     }
@@ -565,6 +586,7 @@ fn number_verse(
     file: &str,
     line: usize,
     found: &mut Vec<(String, usize, String)>,
+    used: &mut HashMap<String, usize>,
 ) {
     let mut err = |m: String| found.push((file.to_string(), line, m));
     match scheme.unit.as_deref().unwrap_or("line") {
@@ -602,9 +624,11 @@ fn number_verse(
                 return;
             }
             if unit == "stanza.line" {
+                let before = used.entry(r.to_string()).or_insert(0);
                 for (k, l) in v.lines.iter_mut().enumerate() {
-                    l.reference = Some(format!("{r}.{}", k + 1));
+                    l.reference = Some(format!("{r}.{}", *before + k + 1));
                 }
+                *before += v.lines.len();
             }
         }
         other => err(format!(
