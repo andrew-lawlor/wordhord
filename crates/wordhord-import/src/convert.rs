@@ -80,6 +80,10 @@ pub struct Converter<'r> {
     loose_open: bool,
     /// Source element IDs, to the output block they became: `#ch04-0007`.
     pub targets: std::collections::HashMap<String, String>,
+    /// The next work to look for: works start in the recipe's order.
+    next_work: usize,
+    /// Which headings can start or end a work.
+    starts: Option<Selector>,
 }
 
 const CONTAINERS: &[&str] = &[
@@ -88,6 +92,9 @@ const CONTAINERS: &[&str] = &[
 
 impl<'r> Converter<'r> {
     pub fn new(recipe: &'r Recipe) -> Result<Self, String> {
+        if let Some(p) = &recipe.caesura_pattern {
+            Regex::new(p).map_err(|e| format!("caesura_pattern `{p}`: {e}"))?;
+        }
         let mut roles = Vec::new();
         for role in &recipe.roles {
             let pattern = match &role.pattern {
@@ -120,6 +127,11 @@ impl<'r> Converter<'r> {
             pending_page: Vec::new(),
             loose_open: false,
             targets: std::collections::HashMap::new(),
+            next_work: 0,
+            starts: match &recipe.starts {
+                Some(s) => Some(Selector::parse(s)?),
+                None => None,
+            },
         })
     }
 
@@ -240,28 +252,64 @@ impl<'r> Converter<'r> {
                         self.pending_page.push(p);
                     }
                 }
+                Some(Kind::Emphasis | Kind::Corr) => Self::note(
+                    &mut self.report.unhandled,
+                    format!("an inline role between blocks: <{tag}>"),
+                    child,
+                ),
                 None => Self::note(&mut self.report.unhandled, format!("<{tag}>"), child),
             }
         }
     }
 
-    fn heading(&mut self, node: Node) {
-        let text = collapse(
+    /// A heading's text for matching, leaving out what the recipe drops
+    /// (a footnote inside a heading, say).
+    fn heading_text(&self, node: Node) -> String {
+        let dropped = |n: &Node| {
+            n.ancestors()
+                .any(|a| self.role(a).is_some_and(|r| r.role.kind == Kind::Drop))
+        };
+        collapse(
             &node
                 .descendants()
-                .filter(|n| n.is_text())
+                .filter(|n| n.is_text() && !dropped(n))
                 .filter_map(|n| n.text())
                 .collect::<String>(),
-        );
+        )
+    }
+
+    fn heading(&mut self, node: Node) {
+        // Only the edition's section headings start or end works, not a
+        // chapter title or a synopsis subheading that shares the name.
+        let text = if self.starts.as_ref().is_none_or(|s| s.matches(node)) {
+            self.heading_text(node)
+        } else {
+            String::new()
+        };
         if self.recipe.end.as_deref() == Some(text.as_str()) && self.active {
             self.done = true;
             return;
         }
-        if let Some(w) = self.recipe.works.iter().find(|w| w.start == text) {
+        // The current work's own end: stop taking text until the next work.
+        let current = self
+            .next_work
+            .checked_sub(1)
+            .and_then(|k| self.recipe.works.get(k));
+        if self.active && current.and_then(|w| w.end.as_deref()) == Some(text.as_str()) {
+            self.active = false;
+            return;
+        }
+        if let Some(w) = self
+            .recipe
+            .works
+            .get(self.next_work)
+            .filter(|w| w.start == text)
+        {
             self.chapters.push(Chapter {
                 prefix: w.prefix.clone(),
                 blocks: Vec::new(),
             });
+            self.next_work += 1;
             self.active = true;
             self.pending_page.clear();
         }
@@ -463,22 +511,37 @@ impl<'r> Converter<'r> {
         out
     }
 
+    /// A line outside any stanza element. If it carries a number (the
+    /// recipe's `number` on its line role), it opens a new stanza;
+    /// otherwise it joins the open one.
     fn loose_line(&mut self, node: Node) {
+        let selector = self.role(node).and_then(|r| r.number.clone());
+        let (text, skip) = self.number(node, selector.as_ref());
+        let number = text.as_deref().and_then(first_number);
         let mut inlines = std::mem::take(&mut self.pending_page);
-        inlines.extend(self.inlines(node, None));
+        let mut own = self.inlines(node, skip);
+        if skip.is_some() {
+            // The number's period, when it sits outside the number: `1</ref>.`
+            let first_words =
+                |i: &&mut Inline| matches!(i, Inline::Text(t) if !t.trim().is_empty());
+            if let Some(Inline::Text(t)) = own.iter_mut().find(first_words) {
+                let trimmed = t.trim_start();
+                if let Some(rest) = trimmed.strip_prefix('.') {
+                    *t = rest.to_string();
+                }
+            }
+        }
+        inlines.append(&mut own);
         let line = Line {
             indent: self.indent(node),
             inlines: self.verse_inlines(inlines),
         };
         let open = self.loose_open;
         match self.chapters.last_mut().and_then(|c| c.blocks.last_mut()) {
-            Some(Out::Stanza {
-                number: None,
-                lines,
-            }) if open => lines.push(line),
+            Some(Out::Stanza { lines, .. }) if open && number.is_none() => lines.push(line),
             _ => {
                 self.push(Out::Stanza {
-                    number: None,
+                    number,
                     lines: vec![line],
                 });
                 self.loose_open = true;
@@ -585,11 +648,13 @@ impl<'r> Converter<'r> {
 
     fn verse_inlines(&self, inlines: Vec<Inline>) -> Vec<Inline> {
         let inlines = tidy(inlines);
-        if !self.recipe.caesura {
-            return inlines;
-        }
-        // Editions pad the bar with ordinary or non-breaking spaces.
-        let bar = Regex::new(r"[\s\u{a0}]+\|[\s\u{a0}]+").expect("valid");
+        // Editions pad the bar with ordinary or non-breaking spaces; some
+        // have no bar, only a run of spaces.
+        let bar = match (&self.recipe.caesura_pattern, self.recipe.caesura) {
+            (Some(p), _) => Regex::new(p).expect("checked when the recipe was read"),
+            (None, true) => Regex::new(r"[\s\u{a0}]+\|[\s\u{a0}]+").expect("valid"),
+            (None, false) => return inlines,
+        };
         let mut out = Vec::new();
         for i in inlines {
             match i {
@@ -636,6 +701,12 @@ impl<'r> Converter<'r> {
                 }
                 Some(Kind::Drop) => {}
                 Some(Kind::Unwrap) => out.extend(self.inlines(child, skip)),
+                Some(Kind::Emphasis) => out.push(Inline::Emphasis(self.inlines(child, skip))),
+                Some(Kind::Corr) => out.push(Inline::Span {
+                    kind: wordhord_book::model::SpanKind::Corr,
+                    lang: None,
+                    inlines: self.inlines(child, skip),
+                }),
                 Some(_) => {
                     Self::note(
                         &mut self.report.unhandled,
@@ -681,14 +752,26 @@ pub fn collapse(s: &str) -> String {
         .join(" ")
 }
 
+enum Wrap {
+    Emphasis,
+    Strong,
+    Span(wordhord_book::model::SpanKind, Option<String>),
+}
+
 /// Joins text, collapses whitespace inside it, trims the ends, and drops
 /// what's left empty.
 pub fn tidy(inlines: Vec<Inline>) -> Vec<Inline> {
     let mut flat: Vec<Inline> = Vec::new();
     for i in inlines {
-        let (inner, strong) = match i {
-            Inline::Emphasis(c) => (c, false),
-            Inline::Strong(c) => (c, true),
+        // What wraps the words: italics, bold, or a span.
+        let (inner, wrap) = match i {
+            Inline::Emphasis(c) => (c, Wrap::Emphasis),
+            Inline::Strong(c) => (c, Wrap::Strong),
+            Inline::Span {
+                kind,
+                lang,
+                inlines,
+            } => (inlines, Wrap::Span(kind, lang)),
             other => {
                 flat.push(other);
                 continue;
@@ -706,10 +789,14 @@ pub fn tidy(inlines: Vec<Inline>) -> Vec<Inline> {
             flat.push(Inline::Text(" ".into()));
         }
         let inner = tidy(inner);
-        flat.push(if strong {
-            Inline::Strong(inner)
-        } else {
-            Inline::Emphasis(inner)
+        flat.push(match wrap {
+            Wrap::Emphasis => Inline::Emphasis(inner),
+            Wrap::Strong => Inline::Strong(inner),
+            Wrap::Span(kind, lang) => Inline::Span {
+                kind,
+                lang,
+                inlines: inner,
+            },
         });
         if text.ends_with(char::is_whitespace) {
             flat.push(Inline::Text(" ".into()));

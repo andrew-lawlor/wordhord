@@ -118,6 +118,8 @@ pub enum SpanKind {
         thing: Option<String>,
     },
     Gap,
+    /// The editor's emendation of the manuscript.
+    Corr,
     /// This verse line covers these lines of the original.
     LineOverride {
         from: u32,

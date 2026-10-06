@@ -584,7 +584,7 @@ impl<'s> P<'s> {
             .filter(|c| {
                 matches!(
                     c.as_str(),
-                    "sc" | "person" | "place" | "group" | "named" | "gap" | "pb" | "ref"
+                    "sc" | "person" | "place" | "group" | "named" | "gap" | "corr" | "pb" | "ref"
                 )
             })
             .cloned()
@@ -641,6 +641,7 @@ impl<'s> P<'s> {
             }
             Some("sc") => (&["lang"], Some(SpanKind::SmallCaps)),
             Some("gap") => (&[], Some(SpanKind::Gap)),
+            Some("corr") => (&["lang"], Some(SpanKind::Corr)),
             Some(c @ ("person" | "place" | "group" | "named")) => {
                 let kind = match c {
                     "person" => NameKind::Person,

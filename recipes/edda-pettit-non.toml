@@ -1,0 +1,296 @@
+# Edward Pettit, The Poetic Edda: A Dual-Language Edition (Open Book
+# Publishers, 2023), doi:10.11647/OBP.0308. CC BY-NC 4.0.
+# The Old Norse text only: each chapter's Old Norse section, from its
+# heading to the first heading of the English translation. Imported from
+# the publisher's TEI XML with the import-xml example.
+#
+# Abbreviations match the Bellows book; Pettit prints Svipdagsmál as two
+# poems (grg, fj), and the Hauksbók Völuspá is vsph.
+
+# Three non-breaking spaces between half-lines.
+caesura_pattern = '\x{a0}{2,}'
+styling = []
+
+# Chapter titles and synopsis subheadings repeat the poems' names; only
+# section headings start and end works.
+starts = "head[type=section-lev1]"
+
+[book]
+id = "edda-pettit-non"
+title = "The Poetic Edda"
+lang = "non"
+license = "CC BY-NC 4.0"
+source = "Edward Pettit, The Poetic Edda: A Dual-Language Edition, Open Book Publishers, 2023, doi:10.11647/OBP.0308"
+
+[book.refs]
+unit = "stanza.line"
+
+[book.refs.works]
+vsp = "Vǫluspá"
+hav = "Hávamál"
+vm = "Vafþrúðnismál"
+grm = "Grímnismál"
+skm = "Fǫr Skírnis"
+hrbl = "Hárbarðsljóð"
+hym = "Hymiskviða"
+ls = "Lokasenna"
+thrk = "Þrymskviða"
+vkv = "Vǫlundarkviða"
+alv = "Alvíssmál"
+hh1 = "Helgakviða Hundingsbana in fyrri"
+hhj = "Helgakviða Hjǫrvarðssonar"
+hh2 = "Helgakviða Hundingsbana ǫnnur"
+sf = "Frá dauða Sinfjǫtla"
+grp = "Grípisspá"
+rm = "Reginsmál"
+fm = "Fáfnismál"
+sd = "Sigrdrífumál"
+brot = "Brot af Sigurðarkviðu"
+gdr1 = "Guðrúnarkviða in fyrsta"
+sg = "Sigurðarkviða in skamma"
+hlr = "Helreið Brynhildar"
+drp = "Dráp Niflunga"
+gdr2 = "Guðrúnarkviða ǫnnur"
+gdr3 = "Guðrúnarkviða in þriðja"
+oddr = "Oddrúnargrátr"
+akv = "Atlakviða in grœnlenzka"
+am = "Atlamál in grœnlenzku"
+ghv = "Guðrúnarhvǫt"
+hm = "Hamðismál"
+vsph = "Vǫluspá (Hauksbók)"
+bdr = "Baldrs draumar"
+rth = "Rígsþula"
+hdl = "Hyndluljóð"
+grg = "Gróugaldr"
+fj = "Fjǫlsvinnsmál"
+
+[book.edition]
+key = "pettit-2023"
+title = "The Poetic Edda: A Dual-Language Edition"
+publisher = "Open Book Publishers"
+year = 2023
+
+[[work]]
+prefix = "vsp"
+start = "Vǫluspá"
+end = "The Prophecy of the Seeress"
+
+[[work]]
+prefix = "hav"
+start = "Hávamál"
+end = "The Sayings of Hávi"
+
+[[work]]
+prefix = "vm"
+start = "Vafþrúðnismál"
+end = "The Sayings of Vafþrúðnir"
+
+[[work]]
+prefix = "grm"
+start = "Grímnismál"
+end = "The Sayings of Grímnir"
+
+[[work]]
+prefix = "skm"
+start = "Fǫr Skírnis"
+end = "Skírnir’s Journey"
+
+[[work]]
+prefix = "hrbl"
+start = "Hárbarðsljóð"
+end = "The Song of Hárbarðr"
+
+[[work]]
+prefix = "hym"
+start = "Hymiskviða"
+end = "The Lay of Hymir"
+
+[[work]]
+prefix = "ls"
+start = "Frá Ægi ok Goðum"
+end = "About Ægir and the Gods"
+
+[[work]]
+prefix = "thrk"
+start = "Þrymskviða"
+end = "The Lay of Þrymr"
+
+[[work]]
+prefix = "vkv"
+start = "Vǫlundarkviða"
+end = "The Lay of Vǫlundr"
+
+[[work]]
+prefix = "alv"
+start = "Alvíssmál"
+end = "The Sayings of Alvíss"
+
+[[work]]
+prefix = "hh1"
+start = "Helgakviða Hundingsbana in fyrri"
+end = "The Earlier Lay of Helgi Hundingsbani"
+
+[[work]]
+prefix = "hhj"
+start = "Helgakviða Hjǫrvarðssonar"
+end = "The Lay of Helgi Hjǫrvarðsson"
+
+[[work]]
+prefix = "hh2"
+start = "Helgakviða Hundingsbana ǫnnur"
+end = "The Second Lay of Helgi Hundingsbani"
+
+[[work]]
+prefix = "sf"
+start = "Frá dauða Sinfjǫtla"
+end = "About Sinfjǫtli’s Death"
+
+[[work]]
+prefix = "grp"
+start = "Grípisspá"
+end = "The Prophecy of Grípir"
+
+[[work]]
+prefix = "rm"
+start = "Reginsmál"
+end = "The Sayings of Reginn"
+
+[[work]]
+prefix = "fm"
+start = "Fáfnismál"
+end = "The Sayings of Fáfnir"
+
+[[work]]
+prefix = "sd"
+start = "Sigrdrífumál"
+end = "The Sayings of Sigrdrífa"
+
+[[work]]
+prefix = "brot"
+start = "Brot af Sigurðarkviðu"
+end = "Fragment of a Lay of Sigurðr"
+
+[[work]]
+prefix = "gdr1"
+start = "Guðrúnarkviða in fyrsta"
+end = "The First Lay of Guðrún"
+
+[[work]]
+prefix = "sg"
+start = "Sigurðarkviða in skamma"
+end = "The Short Lay of Sigurðr"
+
+[[work]]
+prefix = "hlr"
+start = "Helreið Brynhildar"
+end = "Brynhildr’s Hel-Ride"
+
+[[work]]
+prefix = "drp"
+start = "Dráp Niflunga"
+end = "The Slaying of the Niflungar"
+
+[[work]]
+prefix = "gdr2"
+start = "Guðrúnarkviða ǫnnur"
+end = "The Second Lay of Guðrún"
+
+[[work]]
+prefix = "gdr3"
+start = "Guðrúnarkviða in þriðja"
+end = "The Third Lay of Guðrún"
+
+[[work]]
+prefix = "oddr"
+start = "Oddrúnargrátr"
+end = "Oddrún’s Lament"
+
+[[work]]
+prefix = "akv"
+start = "Dauði Atla"
+end = "The Death of Atli"
+
+[[work]]
+prefix = "am"
+start = "Atlamál in grœnlenzku"
+end = "The Greenlandic Poem of Atli"
+
+[[work]]
+prefix = "ghv"
+start = "Frá Guðrúnu"
+end = "About Guðrún"
+
+[[work]]
+prefix = "hm"
+start = "Hamðismál"
+end = "The Lay of Hamðir"
+
+[[work]]
+prefix = "vsph"
+start = "Vǫluspá"
+end = "The Prophecy of the Seeress"
+
+[[work]]
+prefix = "bdr"
+start = "Baldrs draumar"
+end = "Baldr’s Dreams"
+
+[[work]]
+prefix = "rth"
+start = "Rígsþula"
+end = "Rígr’s List"
+
+[[work]]
+prefix = "hdl"
+start = "Hyndluljóð"
+end = "The Song of Hyndla"
+
+[[work]]
+prefix = "grg"
+start = "Gróugaldr"
+
+[[work]]
+prefix = "fj"
+start = "Fjǫlsvinnsmál"
+end = "Gróa’s Incantation"
+
+# Index markers and anchors carry no text; footnotes belong to the
+# English translation.
+[[role]]
+select = "anchor"
+as = "drop"
+
+[[role]]
+select = "note"
+as = "drop"
+
+[[role]]
+select = "head[type=section-lev2]"
+as = "heading"
+level = 2
+
+[[role]]
+select = "head"
+as = "heading"
+level = 1
+
+# Prose passages between stanzas.
+[[role]]
+select = "quote"
+as = "paragraph"
+
+# A line that carries a stanza number (<ref>1</ref>.) opens a stanza.
+[[role]]
+select = "l"
+as = "line"
+number = "ref"
+
+# Pettit italicises letters he has emended, in the poems and the prose;
+# in headings, italics are titles.
+[[role]]
+select = "head hi[rendition=simple:italic]"
+as = "emphasis"
+
+[[role]]
+select = "hi[rendition=simple:italic]"
+as = "corr"

@@ -16,6 +16,9 @@ pub struct Recipe {
     pub works: Vec<Work>,
     /// The heading where the selection ends, if not at the end of the book.
     pub end: Option<String>,
+    /// Which headings can start or end a work, when others share their
+    /// text (a chapter title, a synopsis subheading): a selector.
+    pub starts: Option<String>,
     #[serde(rename = "role", default)]
     pub roles: Vec<Role>,
     /// Classes on lines that mean indent steps.
@@ -24,6 +27,9 @@ pub struct Recipe {
     /// ` | ` in a line is a caesura.
     #[serde(default)]
     pub caesura: bool,
+    /// Or a regex for the caesura, for editions without a bar: three
+    /// non-breaking spaces are `'\x{a0}{2,}'`.
+    pub caesura_pattern: Option<String>,
     /// Classes that are only styling: not reported as unmapped.
     #[serde(default)]
     pub styling: Vec<String>,
@@ -34,7 +40,11 @@ pub struct Recipe {
 pub struct Work {
     pub prefix: String,
     /// The heading text that starts it, matched after collapsing spaces.
+    /// Works are matched in order, so two can share a title.
     pub start: String,
+    /// The heading text where it stops, if something else follows it in
+    /// the same chapter (a translation, an apparatus).
+    pub end: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,6 +89,10 @@ pub enum Kind {
     Gap,
     /// A thematic break between sections: a rule, or a row of dots.
     Break,
+    /// Inline: emphasis, usually italic.
+    Emphasis,
+    /// Inline: the editor's emendation of the manuscript (TEI `<corr>`).
+    Corr,
     Drop,
 }
 

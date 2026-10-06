@@ -45,6 +45,7 @@ Checked against jotdown 0.7, the Rust Djot parser.
 | Foreign | `[text]{lang=non}` | Text in another language. ISO 639-3 codes. | `<foreign xml:lang>` |
 | Caesura | ` \| ` in verse | The break between half-lines, set as a gap | `<caesura/>` |
 | Gap | `[…]{.gap}` | Text lost or illegible in the source | `<gap/>` |
+| Emendation | `[l]{.corr}` | The editor's correction of the manuscript | `<corr>` |
 | Link | `[text](#id)` | Cross-reference within the book | `<ref target>` |
 | Line override | `[text]{n=12-13}` | This verse line covers these original lines | `@n` on `<l>` |
 | Person | `[text]{.person key=…}` | A person, god or being | `<persName ref>` |

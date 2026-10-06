@@ -26,8 +26,14 @@ pub fn load_recipe(path: &Path) -> Result<Recipe, String> {
 }
 
 pub fn import(epub: &Path, recipe: &Recipe) -> Result<Imported, String> {
+    import_documents(epub::spine(epub)?, recipe)
+}
+
+/// Imports XHTML or XML documents in reading order. `import` gives it an
+/// EPUB's spine; anything else that yields documents can too.
+pub fn import_documents(docs: Vec<epub::Doc>, recipe: &Recipe) -> Result<Imported, String> {
     let mut c = Converter::new(recipe)?;
-    for doc in epub::spine(epub)? {
+    for doc in docs {
         let text = epub::xml_entities(&doc.text);
         let parsed = roxmltree::Document::parse_with_options(
             &text,
@@ -195,6 +201,15 @@ fn write_inlines(s: &mut String, inlines: &[Inline]) {
                 };
             }
             Inline::LineBreak | Inline::SoftBreak => s.push(' '),
+            Inline::Span {
+                kind: wordhord_book::model::SpanKind::Corr,
+                inlines,
+                ..
+            } => {
+                s.push('[');
+                write_inlines(s, inlines);
+                s.push_str("]{.corr}");
+            }
             Inline::Span {
                 kind: wordhord_book::model::SpanKind::Gap,
                 inlines,
