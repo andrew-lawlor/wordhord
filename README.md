@@ -11,7 +11,7 @@ For stylus Kobos, launched from NickelMenu. Books are compiled on the desktop. S
 ```
 cargo run -q -- check fixtures/*/
 cargo run -q -- align fixtures/beowulf-gummere
-cargo test
+cargo test --workspace
 ```
 
 `check` reports anything outside the vocabulary, missing or repeated IDs, unknown names, bad references, and Djot syntax that silently became text. `align` matches a translation to its original by canonical reference, line to line or stanza to stanza.
