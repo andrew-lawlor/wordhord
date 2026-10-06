@@ -1,10 +1,14 @@
-# Quire: spec
+# Wordhord: spec
 
-Working name. Draft 1, 2026-10-06.
+Draft 1, 2026-10-06.
+
+> A reader for old texts. The original and the translation, line by line. Write in the margins with a pen. Cite any passage exactly.
+
+*Wordhord* is Old English for "word-hoard", a store of words. In *Beowulf* (line 259) the leader of the Geats, asked who he is, *wordhord onleac*: unlocked his word-hoard.
 
 ## 1. Goal
 
-A reader for EPUBs you own, built for writing on the page. Books are compiled on the desktop. The Kobo draws pages and records ink. Every word's place on every page is known before you open the book.
+A reader for the study of classical and medieval texts: originals and their translations, read together. Built for writing on the page. Books are compiled on the desktop. The Kobo draws pages and records ink. Every word's place on every page is known before you open the book.
 
 **Target:** stylus Kobos (Elipsa 2E, Libra Colour), stock firmware. The reader is launched from NickelMenu and hands back to Nickel when it exits. Nickel stays installed and in charge of everything else: the store, USB, updates, sleep when the reader isn't running.
 
@@ -43,7 +47,7 @@ A book is a folder:
 odyssey/
   book.toml        metadata, source edition, reference scheme, originals
   names.toml       name register: people, places, groups (optional)
-  text/*.dj        chapters, in Djot with the Quire vocabulary
+  text/*.dj        chapters, in Djot with the Wordhord vocabulary
   images/          figures, as imported
 ```
 
@@ -151,6 +155,9 @@ Open: Kollate never writes to the Kobo. Something must put compiled books on it.
 - Books with mixed verse and prose in one paragraph.
 - Search on the device: from the word map, or not at all in v1.
 - Text selection without a pen.
+- Scripts beyond Latin: polytonic Greek is fonts; Hebrew runs right to left, which is real work for the typesetter.
+- Word lookup in the original: tap a word, see its dictionary form and meaning. The first thing students of originals will ask for.
+- Textual variants (TEI's apparatus criticus), where manuscripts disagree. For scholars. Later.
 
 ## 12. Milestones
 

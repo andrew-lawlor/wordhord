@@ -1,8 +1,8 @@
-# Quire vocabulary
+# Wordhord vocabulary
 
 Draft 1, 2026-10-06.
 
-Syntax is [Djot](https://djot.net). This file defines what the syntax means in a book. Each element maps to its TEI counterpart, so a Quire book can be exported to TEI and back.
+Syntax is [Djot](https://djot.net). This file defines what the syntax means in a book. Each element maps to its TEI counterpart, so a Wordhord book can be exported to TEI and back.
 
 Anything not listed here is rejected by the validator.
 
