@@ -195,8 +195,9 @@ fn typeset(book: &str, chapter: &str, profile: &str, out: &str) -> ExitCode {
         let t = wordhord_typeset::typeset_chapter(&book, chapter, &profile, Path::new(out))?;
         let words: usize = t.pages.iter().map(|p| p.words.len()).sum();
         println!(
-            "{} pages, {words} words, for {} ({}×{}); pages.json and page-NNN.png in {out}",
+            "{} pages, {words} words, {} notes, for {} ({}×{}); pages.json, page-NNN.png and notes/ in {out}",
             t.pages.len(),
+            t.notes.len(),
             t.profile,
             t.width,
             t.height

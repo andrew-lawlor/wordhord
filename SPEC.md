@@ -111,6 +111,15 @@ Per book, per profile, per size preset:
 - **Pages.** For each page, lines of glyph runs: font, size, then each glyph's ID and position. Plus a few primitives: lines and rectangles for rules, borders and ornaments. Plus figures, placed by box.
 - **Word map.** Every word: its text, its glyphs, its boxes, its block ID and offset, its canonical reference, its source page, its names.
 - **Links.** Notes, cross-references and contents, as boxes with targets.
+- **Notes.** Each note set on its own, for the note panel.
+
+Notes don't take room from the page. Tap a marker and its note opens in a panel over the lower 40% of the screen. Tap outside it and it closes. A long note pages inside the panel. The page under it never changes, so citations and ink stay put.
+
+A marker is a few pixels wide. Its tap box is at least 6 mm. When boxes overlap, the nearest marker wins.
+
+Each note records the page its marker is on and the reference of that line (`inf.1.2`). The notes are also gathered at the end of the chapter, to read straight through. There each label links back to its marker's page.
+
+Notes on a passage (`::: commentary`) aren't linked yet. They will open from a mark beside the stanza number.
 - **Alignment.** References to the original, where the book has one.
 
 Positions are fixed on the desktop, so the device can't drift from it. Rendering on the device only decides how each glyph's pixels look: anti-aliasing tuned to the panel.

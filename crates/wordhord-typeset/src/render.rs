@@ -78,6 +78,16 @@ impl<'a> Renderer<'a> {
     }
 }
 
+/// A note panel as the device draws it: the note's page under a rule
+/// across the top.
+pub fn panel(renderer: &mut Renderer, page: &Page, width: u32, height: u32) -> Vec<u8> {
+    let mut pixels = renderer.page(page, width, height);
+    for p in &mut pixels[..(width * 3) as usize] {
+        *p = 0;
+    }
+    pixels
+}
+
 pub fn write_png(path: &Path, pixels: &[u8], width: u32, height: u32) -> Result<(), String> {
     let file = std::fs::File::create(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);

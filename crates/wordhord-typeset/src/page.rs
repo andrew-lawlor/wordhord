@@ -11,6 +11,31 @@ pub struct Typeset {
     /// The fonts glyph IDs refer to, pinned by hash.
     pub fonts: Vec<FontRef>,
     pub pages: Vec<Page>,
+    /// Where a note opens: a panel over the foot of the page.
+    pub panel: Panel,
+    /// Every note, in the order its marker appears.
+    pub notes: Vec<Note>,
+}
+
+/// The note panel's box on the screen.
+#[derive(Debug, Clone, Serialize)]
+pub struct Panel {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+/// A note, set for the panel. Its pages are drawn from the panel's
+/// top-left corner.
+#[derive(Debug, Clone, Serialize)]
+pub struct Note {
+    pub label: String,
+    /// The reference of the line its marker is on: `inf.1.2`.
+    pub on: Option<String>,
+    /// The page its marker is on, from 0.
+    pub page: Option<usize>,
+    pub pages: Vec<Page>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -23,6 +48,30 @@ pub struct FontRef {
 pub struct Page {
     pub runs: Vec<Run>,
     pub words: Vec<Word>,
+    pub links: Vec<Link>,
+}
+
+/// A box to tap, and where it goes.
+#[derive(Debug, Clone, Serialize)]
+pub struct Link {
+    pub to: Target,
+    pub x0: f32,
+    pub y0: f32,
+    pub x1: f32,
+    pub y1: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Target {
+    /// Open a note in the panel.
+    Note { label: String },
+    /// Turn to a page, counted from 0.
+    Page { page: usize },
+    /// Back to a note's marker: resolved to a page once the chapter is
+    /// paginated, and never written.
+    #[serde(skip)]
+    Marker(String),
 }
 
 /// Glyphs in one font and size, from a baseline origin.

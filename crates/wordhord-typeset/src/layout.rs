@@ -4,14 +4,18 @@
 //! line, as written; a line too wide for the page turns over, at its
 //! caesura if it can, under a hanging indent. Stanza numbers sit in the
 //! left margin; counted verse (Dante's lines) shows every fifth line
-//! number in the right. Notes are gathered at the end of the chapter.
+//! number in the right.
+//!
+//! A note opens in a panel over the foot of the page when its marker is
+//! tapped, so notes never take room from the page. They are also gathered
+//! at the end of the chapter, to read straight through.
 
 use hyphenation::{Hyphenator, Language, Load, Standard};
 use wordhord_book::model::{Block, BlockKind, Inline, SpanKind, VerseLine};
 
 use crate::fonts::{Face, Fonts, Glyph};
 use crate::linebreak::{self, Item, INFINITY};
-use crate::page::{Page, Run, Word};
+use crate::page::{Link, Page, Panel, Run, Target, Word};
 use crate::profile::Profile;
 
 /// Glyphs in one font, placed within a line.
@@ -32,6 +36,13 @@ pub struct Line {
     pub frags: Vec<Frag>,
     /// Words: text, start and end within the line.
     pub words: Vec<(String, f32, f32)>,
+    /// Note markers: label, start and end within the line.
+    pub notes: Vec<(String, f32, f32)>,
+    /// The canonical reference of the line, or of its block.
+    pub reference: Option<String>,
+    /// The first line of a note in the chapter's notes: its label links
+    /// back to the marker.
+    pub back: Option<String>,
     /// Numbers in the margins, placed relative to the text block.
     pub marks: Vec<Frag>,
     /// The type size, for the line's ascent and descent.
@@ -71,6 +82,7 @@ enum Atom {
 enum Content {
     None,
     Word { frags: Vec<Frag>, text: String },
+    Note { frags: Vec<Frag>, label: String },
     Hyphen(Vec<Frag>),
     Caesura,
 }
@@ -117,38 +129,71 @@ impl<'a> Layout<'a> {
             self.block(b, 0.0, self.measure, self.body, after_heading, &mut units);
             after_heading = matches!(b.kind, BlockKind::Heading { .. });
         }
-        let notes: Vec<&Block> = blocks
-            .iter()
-            .filter(|b| matches!(b.kind, BlockKind::Note { .. }))
-            .collect();
+        let notes = notes(blocks);
         if !notes.is_empty() {
-            let size = self.body * 0.85;
             let heading = vec![Inline::Text("Notes".into())];
             units.push(self.heading(&heading, 2, "notes"));
-            for n in notes {
-                let BlockKind::Note { label, blocks } = &n.kind else {
-                    continue;
-                };
-                for (k, b) in blocks.iter().enumerate() {
-                    let block_id = format!("note-{label}");
-                    match (&b.kind, k) {
-                        (BlockKind::Paragraph(inlines), 0) => {
-                            let mut all = vec![
-                                Inline::Strong(vec![Inline::Text(format!("{label}."))]),
-                                Inline::Text(" ".into()),
-                            ];
-                            all.extend(inlines.iter().cloned());
-                            let mut u =
-                                self.paragraph(&all, 0.0, self.measure, size, false, &block_id);
-                            u.space_before = self.leading(size) * 0.4;
-                            units.push(u);
-                        }
-                        _ => self.block(b, 0.0, self.measure, size, true, &mut units),
-                    }
+            for (label, blocks) in notes {
+                let mut set = self.note(label, blocks, self.measure);
+                if let Some(line) = set.first_mut().and_then(|u| u.lines.first_mut()) {
+                    line.back = Some(label.to_string());
+                }
+                units.append(&mut set);
+            }
+        }
+        units
+    }
+
+    /// A note, `measure` wide: its label in bold, then its text.
+    pub fn note(&self, label: &str, blocks: &[Block], measure: f32) -> Vec<Unit> {
+        let size = self.body * 0.85;
+        let block_id = format!("note-{label}");
+        let mut units = Vec::new();
+        for (k, b) in blocks.iter().enumerate() {
+            match (&b.kind, k) {
+                (BlockKind::Paragraph(inlines), 0) => {
+                    let mut all = vec![
+                        Inline::Strong(vec![Inline::Text(format!("{label}."))]),
+                        Inline::Text(" ".into()),
+                    ];
+                    all.extend(inlines.iter().cloned());
+                    let mut u = self.paragraph(&all, 0.0, measure, size, false, &block_id);
+                    u.space_before = self.leading(size) * 0.4;
+                    units.push(u);
+                }
+                // A paragraph after a paragraph is indented.
+                _ => {
+                    let after = k > 0 && matches!(blocks[k - 1].kind, BlockKind::Paragraph(_));
+                    self.block(b, 0.0, measure, size, !after, &mut units)
                 }
             }
         }
         units
+    }
+
+    /// Where a note opens: the lower 40% of the screen.
+    pub fn panel(&self) -> Panel {
+        let p = self.profile;
+        let y = (p.height as f32 * 0.6).round();
+        Panel {
+            x: 0.0,
+            y,
+            width: p.width as f32,
+            height: p.height as f32 - y,
+        }
+    }
+
+    /// A note set on panel pages, drawn from the panel's corner.
+    pub fn note_pages(&self, label: &str, blocks: &[Block]) -> Vec<Page> {
+        let p = self.profile;
+        let panel = self.panel();
+        let units = self.note(label, blocks, self.measure);
+        let area = Area {
+            top: p.mm(5.0),
+            bottom: panel.height - p.mm(p.margins.bottom),
+            left: p.mm(p.margins.left),
+        };
+        self.flow(&units, area)
     }
 
     fn block(
@@ -161,6 +206,29 @@ impl<'a> Layout<'a> {
         units: &mut Vec<Unit>,
     ) {
         let id = b.id.clone().unwrap_or_default();
+        let first = units.len();
+        self.block_kind(b, &id, left, measure, size, after_heading, units);
+        for u in &mut units[first..] {
+            for l in &mut u.lines {
+                if l.reference.is_none() {
+                    l.reference = b.reference.clone();
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn block_kind(
+        &self,
+        b: &Block,
+        id: &str,
+        left: f32,
+        measure: f32,
+        size: f32,
+        after_heading: bool,
+        units: &mut Vec<Unit>,
+    ) {
+        let id = id.to_string();
         match &b.kind {
             BlockKind::Heading { level, text } => units.push(self.heading(text, *level, &id)),
             BlockKind::Paragraph(inlines) => {
@@ -449,9 +517,9 @@ impl<'a> Layout<'a> {
                         };
                         let (frags, width) = self.marker(label, style, -size * 0.36);
                         items.push(Item::Box { width });
-                        contents.push(Content::Word {
+                        contents.push(Content::Note {
                             frags,
-                            text: String::new(),
+                            label: label.clone(),
                         });
                     }
                     _ => {}
@@ -587,6 +655,18 @@ impl<'a> Layout<'a> {
                         if !text.is_empty() {
                             line.words.push((text.clone(), x, x + width));
                         }
+                        x += width;
+                    }
+                    // A paragraph's first-line indent.
+                    (Item::Box { width }, Content::None) => x += width,
+                    (Item::Box { width }, Content::Note { frags, label }) => {
+                        for f in frags {
+                            line.frags.push(Frag {
+                                x: x + f.x,
+                                ..f.clone()
+                            });
+                        }
+                        line.notes.push((label.clone(), x, x + width));
                         x += width;
                     }
                     (
@@ -735,6 +815,9 @@ impl<'a> Layout<'a> {
             );
             let x = verse_left + vl.indent as f32 * step;
             let mut set = self.turn_over(&atoms, x, measure - (x - left), size, block);
+            for l in &mut set {
+                l.reference = vl.reference.clone();
+            }
             if k == 0 {
                 if let (Some(n), Some(first)) = (number, set.first_mut()) {
                     let style = Style {
@@ -906,11 +989,43 @@ impl<'a> Layout<'a> {
 
     // ---- pages -----------------------------------------------------
 
+    /// A chapter's units on pages, numbered, with each note's label in
+    /// the chapter's notes linked back to the page of its marker.
     pub fn paginate(&self, units: &[Unit]) -> Vec<Page> {
         let p = self.profile;
-        let top = p.mm(p.margins.top);
-        let bottom = p.height as f32 - p.mm(p.margins.bottom) - self.body;
-        let left = p.mm(p.margins.left);
+        let area = Area {
+            top: p.mm(p.margins.top),
+            bottom: p.height as f32 - p.mm(p.margins.bottom) - self.body,
+            left: p.mm(p.margins.left),
+        };
+        let mut pages = self.flow(units, area);
+        // The page each note's marker is first on.
+        let mut marker: std::collections::HashMap<String, usize> = Default::default();
+        for (n, page) in pages.iter().enumerate() {
+            for l in &page.links {
+                if let Target::Note { label } = &l.to {
+                    marker.entry(label.clone()).or_insert(n);
+                }
+            }
+        }
+        for page in &mut pages {
+            page.links.retain_mut(|l| match &l.to {
+                Target::Marker(label) => match marker.get(label) {
+                    Some(&page) => {
+                        l.to = Target::Page { page };
+                        true
+                    }
+                    None => false,
+                },
+                _ => true,
+            });
+        }
+        self.number(&mut pages);
+        pages
+    }
+
+    fn flow(&self, units: &[Unit], area: Area) -> Vec<Page> {
+        let Area { top, bottom, left } = area;
         let mut pages: Vec<Page> = vec![Page::default()];
         let mut y = top;
         let fits = |y: f32, h: f32| y + h <= bottom;
@@ -950,8 +1065,11 @@ impl<'a> Layout<'a> {
                 y += line.height;
             }
         }
-        // Page numbers.
-        let count = pages.len();
+        pages
+    }
+
+    fn number(&self, pages: &mut [Page]) {
+        let p = self.profile;
         for (n, page) in pages.iter_mut().enumerate() {
             let style = Style {
                 face: Face::Regular,
@@ -964,9 +1082,7 @@ impl<'a> Layout<'a> {
             for f in frags {
                 page.runs.push(run(&f, x, baseline));
             }
-            let _ = count;
         }
-        pages
     }
 
     fn place(&self, page: &mut Page, line: &Line, left: f32, top: f32) {
@@ -979,6 +1095,30 @@ impl<'a> Layout<'a> {
         for f in &line.marks {
             page.runs.push(run(f, left, baseline));
         }
+        // A marker is a few pixels wide: the box to tap is wider.
+        let reach = self.profile.mm(6.0);
+        for (label, x0, x1) in &line.notes {
+            let middle = left + line.x + (x0 + x1) / 2.0;
+            let half = ((x1 - x0) / 2.0).max(reach / 2.0);
+            page.links.push(Link {
+                to: Target::Note {
+                    label: label.clone(),
+                },
+                x0: middle - half,
+                y0: top,
+                x1: middle + half,
+                y1: top + line.height,
+            });
+        }
+        if let (Some(label), Some((_, x0, x1))) = (&line.back, line.words.first()) {
+            page.links.push(Link {
+                to: Target::Marker(label.clone()),
+                x0: left + line.x + x0,
+                y0: top,
+                x1: left + line.x + x1.max(x0 + reach),
+                y1: top + line.height,
+            });
+        }
         for (text, x0, x1) in &line.words {
             page.words.push(Word {
                 text: text.clone(),
@@ -990,6 +1130,25 @@ impl<'a> Layout<'a> {
             });
         }
     }
+}
+
+/// The part of a page that text flows into.
+#[derive(Clone, Copy)]
+struct Area {
+    top: f32,
+    bottom: f32,
+    left: f32,
+}
+
+/// A chapter's notes: each label and its blocks.
+pub fn notes(blocks: &[Block]) -> Vec<(&str, &[Block])> {
+    blocks
+        .iter()
+        .filter_map(|b| match &b.kind {
+            BlockKind::Note { label, blocks } => Some((label.as_str(), blocks.as_slice())),
+            _ => None,
+        })
+        .collect()
 }
 
 fn run(f: &Frag, x: f32, baseline: f32) -> Run {
