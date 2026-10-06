@@ -37,12 +37,16 @@ pub struct FontFile {
     /// As given in the profile, relative to the project.
     pub path: String,
     pub sha256: String,
-    pub data: Vec<u8>,
+    /// The file, kept for the life of the program: the parsed faces
+    /// borrow it.
+    pub data: &'static [u8],
 }
 
 /// The family's four faces and a fallback, as indices into `files`.
 pub struct Fonts {
     pub files: Vec<FontFile>,
+    /// Each file parsed once: parsing per lookup made shaping crawl.
+    parsed: Vec<rustybuzz::Face<'static>>,
     faces: [usize; 4],
     fallback: Option<usize>,
 }
@@ -80,9 +84,13 @@ impl Fonts {
             if let Some(k) = files.iter().position(|f| f.path == path) {
                 return Ok(k);
             }
-            let data = std::fs::read(root.join(path)).map_err(|e| format!("{path}: {e}"))?;
-            rustybuzz::Face::from_slice(&data, 0).ok_or_else(|| format!("{path}: not a font"))?;
-            let sha256 = Sha256::digest(&data)
+            let data: &'static [u8] = Box::leak(
+                std::fs::read(root.join(path))
+                    .map_err(|e| format!("{path}: {e}"))?
+                    .into_boxed_slice(),
+            );
+            rustybuzz::Face::from_slice(data, 0).ok_or_else(|| format!("{path}: not a font"))?;
+            let sha256 = Sha256::digest(data)
                 .iter()
                 .map(|b| format!("{b:02x}"))
                 .collect();
@@ -95,8 +103,13 @@ impl Fonts {
         };
         let faces = [add(regular)?, add(italic)?, add(bold)?, add(bold_italic)?];
         let fallback = fallback.map(&mut add).transpose()?;
+        let parsed = files
+            .iter()
+            .map(|f| rustybuzz::Face::from_slice(f.data, 0).expect("checked when read"))
+            .collect();
         Ok(Fonts {
             files,
+            parsed,
             faces,
             fallback,
         })
@@ -106,8 +119,8 @@ impl Fonts {
         self.faces[face as usize]
     }
 
-    fn rb(&self, file: usize) -> rustybuzz::Face<'_> {
-        rustybuzz::Face::from_slice(&self.files[file].data, 0).expect("checked when loaded")
+    fn rb(&self, file: usize) -> &rustybuzz::Face<'static> {
+        &self.parsed[file]
     }
 
     /// Units per em of a font file.
@@ -155,7 +168,7 @@ impl Fonts {
                 let mut buffer = rustybuzz::UnicodeBuffer::new();
                 buffer.push_str(&s);
                 buffer.set_direction(rustybuzz::Direction::LeftToRight);
-                let out = rustybuzz::shape(&face, &features, buffer);
+                let out = rustybuzz::shape(face, &features, buffer);
                 let mut x = 0.0;
                 let mut glyphs = Vec::with_capacity(out.len());
                 for (info, pos) in out.glyph_infos().iter().zip(out.glyph_positions()) {

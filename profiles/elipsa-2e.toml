@@ -9,9 +9,10 @@ margins = { top = 9, bottom = 10, left = 10, right = 10 }
 body_size = 11.0
 leading = 1.35
 
+# Font paths are relative to this file.
 [fonts]
-regular = "fonts/junicode/Junicode-Regular.otf"
-italic = "fonts/junicode/Junicode-Italic.otf"
-bold = "fonts/junicode/Junicode-Bold.otf"
-bold_italic = "fonts/junicode/Junicode-BoldItalic.otf"
-fallback = "fonts/dejavu/DejaVuSerif.ttf"
+regular = "../fonts/junicode/Junicode-Regular.otf"
+italic = "../fonts/junicode/Junicode-Italic.otf"
+bold = "../fonts/junicode/Junicode-Bold.otf"
+bold_italic = "../fonts/junicode/Junicode-BoldItalic.otf"
+fallback = "../fonts/dejavu/DejaVuSerif.ttf"
