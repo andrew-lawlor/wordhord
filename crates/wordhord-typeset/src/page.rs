@@ -97,6 +97,9 @@ pub struct Run {
 #[derive(Debug, Clone, Serialize)]
 pub struct Word {
     pub text: String,
+    /// This is the rest of the word before it, hyphenated across lines.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub continues: bool,
     pub block: String,
     pub x0: f32,
     pub y0: f32,

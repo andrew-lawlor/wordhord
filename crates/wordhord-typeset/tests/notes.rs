@@ -163,3 +163,53 @@ fn commentary_opens_from_a_mark_beside_its_passage() {
         assert!(stanza.y1 <= prose.y0);
     });
 }
+
+const NORSE: &str = "\
+{#ch01-0001 ref=\"vsp.1\"}
+::: stanza
+Hljóðs bið ek | allar kindir,
+meiri ok minni, | mǫgu Heimdal[l]{.corr}ar!
+:::
+";
+
+#[test]
+fn an_emended_word_is_one_word() {
+    with_source(NORSE, |layout, blocks| {
+        let pages = layout.paginate(&layout.chapter(blocks));
+        let words: Vec<_> = pages[0].words.iter().map(|w| w.text.as_str()).collect();
+        assert!(words.contains(&"Heimdallar!"), "{words:?}");
+    });
+}
+
+#[test]
+fn second_half_lines_share_a_column() {
+    with_source(NORSE, |layout, blocks| {
+        let pages = layout.paginate(&layout.chapter(blocks));
+        let x = |text: &str| pages[0].words.iter().find(|w| w.text == text).unwrap().x0;
+        assert!((x("allar") - x("mǫgu")).abs() < 0.01);
+    });
+}
+
+#[test]
+fn no_word_crosses_the_right_margin() {
+    // This note fits on one line only with its spaces shrunk.
+    let source = "\
+{#ch01-0001}
+Of my renown.[^21]
+
+[^21]: Dante seems to have been already conscious of the fame which his {_Vita Nuova_} and {_Canzoni_} had given him.
+";
+    with_source(source, |layout, blocks| {
+        let p = layout.profile;
+        let right = p.width as f32 - p.mm(p.margins.right);
+        let pages = layout.paginate(&layout.chapter(blocks));
+        for w in pages.iter().flat_map(|p| &p.words) {
+            assert!(
+                w.x1 <= right + 0.5,
+                "{} ends at {} past {right}",
+                w.text,
+                w.x1
+            );
+        }
+    });
+}

@@ -30,6 +30,8 @@ pub struct Frag {
     pub x: f32,
     /// Up from the baseline is negative (superscripts).
     pub dy: f32,
+    /// The advance of all its glyphs.
+    pub width: f32,
     pub glyphs: Vec<Glyph>,
 }
 
@@ -45,6 +47,15 @@ pub struct Line {
     /// Commentary marks in the margin: the commentary's ID, and the box
     /// to tap, relative to the text block.
     pub margin_links: Vec<(String, f32, f32)>,
+    /// A verse line at the poem's base indent: it may open a group (a
+    /// tercet set off by indent), so a page breaks well before it.
+    pub opens: bool,
+    /// The rest of a verse line too wide for the page: never the first
+    /// line on a page.
+    pub turned: bool,
+    /// Its first word goes on from the last word of the line before,
+    /// hyphenated across the break.
+    pub continues: bool,
     /// The canonical reference of the line, or of its block.
     pub reference: Option<String>,
     /// The first line of a note in the chapter's notes: its first words
@@ -657,6 +668,7 @@ impl<'a> Layout<'a> {
                 size: s.size,
                 x,
                 dy,
+                width: s.width,
                 glyphs: s.glyphs,
             });
             x += s.width;
@@ -674,6 +686,7 @@ impl<'a> Layout<'a> {
                 size: s.size,
                 x,
                 dy,
+                width: s.width,
                 glyphs: s.glyphs,
             });
             x += s.width;
@@ -850,10 +863,12 @@ impl<'a> Layout<'a> {
         let mut lines = Vec::new();
         let mut start = 0;
         for (n, &b) in breaks.iter().enumerate() {
-            let ratio = if justify && n + 1 < breaks.len() {
-                ratios[n]
-            } else {
-                0.0
+            // The last line is set loose, but shrinks if it was broken to
+            // fit only by shrinking.
+            let ratio = match (justify, n + 1 < breaks.len()) {
+                (true, true) => ratios[n],
+                (true, false) => ratios[n].min(0.0),
+                (false, _) => 0.0,
             };
             while start < b && matches!(items[start], Item::Glue { .. } | Item::Penalty { .. }) {
                 start += 1;
@@ -864,7 +879,15 @@ impl<'a> Layout<'a> {
                 block: block.to_string(),
                 ..Default::default()
             };
+            // A word hyphenated at the end of the last line goes on here.
+            line.continues = start > 0
+                && matches!(items[start - 1], Item::Penalty { flagged: true, .. })
+                && matches!(contents.get(start), Some(Content::Word { .. }));
             let mut x = 0.0;
+            // Boxes with nothing between them but an unused hyphenation
+            // point are one word: syllables, or a word with an emended
+            // letter.
+            let mut joined = false;
             for k in start..b {
                 match (&items[k], &contents[k]) {
                     (Item::Box { width }, Content::Word { frags, text }) => {
@@ -874,11 +897,22 @@ impl<'a> Layout<'a> {
                                 ..f.clone()
                             });
                         }
-                        if !text.is_empty() {
-                            line.words.push((text.clone(), x, x + width));
+                        match line.words.last_mut() {
+                            Some((t, _, end)) if joined => {
+                                t.push_str(&crate::fonts::visible(text));
+                                *end = x + width;
+                            }
+                            _ if !text.is_empty() => {
+                                line.words.push((crate::fonts::visible(text), x, x + width))
+                            }
+                            _ => {}
                         }
+                        joined = true;
                         x += width;
+                        continue;
                     }
+                    // An unused hyphenation point keeps the word going.
+                    (Item::Penalty { flagged: true, .. }, _) => continue,
                     // A paragraph's first-line indent.
                     (Item::Box { width }, Content::None) => x += width,
                     (Item::Box { width }, Content::Note { frags, label }) => {
@@ -908,6 +942,7 @@ impl<'a> Layout<'a> {
                     }
                     _ => {}
                 }
+                joined = false;
             }
             if let (Item::Penalty { flagged: true, .. }, Content::Hyphen(frags)) =
                 (&items[b], &contents[b])
@@ -1016,6 +1051,26 @@ impl<'a> Layout<'a> {
             split: lines.len() > 12,
             ..Default::default()
         };
+        let style = Style {
+            face: Face::Regular,
+            size,
+            smcp: false,
+        };
+        let atoms: Vec<Vec<Atom>> = lines
+            .iter()
+            .map(|l| self.atoms(&l.inlines, style))
+            .collect();
+        let x_of = |vl: &VerseLine| verse_left + vl.indent as f32 * step;
+        // Second half-lines start in one column: the end of the longest
+        // first half, plus the usual gap.
+        let caesura = size * 1.4;
+        let halves: Vec<Option<f32>> = atoms.iter().map(|a| self.first_half(a, size)).collect();
+        let column = lines
+            .iter()
+            .zip(&halves)
+            .filter_map(|(vl, h)| h.map(|h| x_of(vl) + h))
+            .reduce(f32::max);
+        let base = lines.iter().map(|l| l.indent).min().unwrap_or(0);
         let mut group = lines.first().map_or(0, |l| l.group);
         for (k, vl) in lines.iter().enumerate() {
             if vl.group != group {
@@ -1027,18 +1082,15 @@ impl<'a> Layout<'a> {
                     ..Default::default()
                 });
             }
-            let atoms = self.atoms(
-                &vl.inlines,
-                Style {
-                    face: Face::Regular,
-                    size,
-                    smcp: false,
-                },
-            );
-            let x = verse_left + vl.indent as f32 * step;
-            let mut set = self.turn_over(&atoms, x, measure - (x - left), size, block);
-            for l in &mut set {
+            let x = x_of(vl);
+            let gap = column
+                .zip(halves[k])
+                .map(|(column, half)| column - (x + half) + caesura);
+            let mut set = self.turn_over(&atoms[k], x, measure - (x - left), size, gap, block);
+            for (n, l) in set.iter_mut().enumerate() {
                 l.reference = vl.reference.clone();
+                l.opens = n == 0 && vl.indent == base;
+                l.turned = n > 0;
             }
             if k == 0 {
                 if let (Some(n), Some(first)) = (number, set.first_mut()) {
@@ -1085,39 +1137,65 @@ impl<'a> Layout<'a> {
         vec![unit]
     }
 
-    fn turn_over(&self, atoms: &[Atom], x: f32, measure: f32, size: f32, block: &str) -> Vec<Line> {
+    /// A verse line set at `x`. With `gap`, its caesura is that wide, so
+    /// the second half-line starts in a column with the stanza's others; a
+    /// line that would then be too wide keeps the usual gap. Too wide still,
+    /// it turns over under a hanging indent, as often as it must.
+    fn turn_over(
+        &self,
+        atoms: &[Atom],
+        x: f32,
+        measure: f32,
+        size: f32,
+        gap: Option<f32>,
+        block: &str,
+    ) -> Vec<Line> {
         let hang = size * 2.5;
         let (mut items, mut contents) = self.items(atoms, size, false);
-        let natural: f32 = items
-            .iter()
-            .map(|i| match i {
-                Item::Box { width } | Item::Glue { width, .. } => *width,
-                _ => 0.0,
-            })
-            .sum();
+        let natural = |items: &[Item]| -> f32 { items.iter().map(Item::width).sum() };
+        if let Some(gap) = gap {
+            let mut aligned = items.clone();
+            for (item, content) in aligned.iter_mut().zip(&contents) {
+                if let (Item::Glue { width, .. }, Content::Caesura) = (item, content) {
+                    *width = gap;
+                }
+            }
+            if natural(&aligned) <= measure {
+                items = aligned;
+            }
+        }
         let mut breaks = Vec::new();
-        if natural > measure {
+        let mut start = 0;
+        loop {
+            let room = if breaks.is_empty() {
+                measure
+            } else {
+                measure - hang
+            };
+            if natural(&items[start..]) <= room {
+                break;
+            }
             // Prefer the last caesura past a third of the line that fits.
             let mut w = 0.0;
             let mut caesura = None;
             let mut space = None;
-            for (k, item) in items.iter().enumerate() {
+            for (k, item) in items.iter().enumerate().skip(start) {
                 if let Item::Glue { .. } = item {
-                    if w <= measure {
-                        if matches!(contents[k], Content::Caesura) && w > measure / 3.0 {
+                    if w <= room && k > start {
+                        if matches!(contents[k], Content::Caesura) && w > room / 3.0 {
                             caesura = Some(k);
                         } else {
                             space = Some(k);
                         }
                     }
                 }
-                if let Item::Box { width } | Item::Glue { width, .. } = item {
-                    w += width;
-                }
+                w += item.width();
             }
-            if let Some(b) = caesura.or(space) {
-                breaks.push(b);
-            }
+            let Some(b) = caesura.or(space) else {
+                break;
+            };
+            breaks.push(b);
+            start = b + 1;
         }
         linebreak::finish(&mut items);
         contents.push(Content::None);
@@ -1128,8 +1206,16 @@ impl<'a> Layout<'a> {
         for (k, l) in lines.iter_mut().enumerate() {
             l.x = if k == 0 { x } else { x + hang };
         }
-        // A turned-over line may still be too wide: turn it again.
         lines
+    }
+
+    /// How wide a verse line is up to its caesura, if it has one.
+    fn first_half(&self, atoms: &[Atom], size: f32) -> Option<f32> {
+        let (items, contents) = self.items(atoms, size, false);
+        let at = contents
+            .iter()
+            .position(|c| matches!(c, Content::Caesura))?;
+        Some(items[..at].iter().map(Item::width).sum())
     }
 
     fn table(
@@ -1264,23 +1350,24 @@ impl<'a> Layout<'a> {
                 0.0
             };
             let whole = before + height + follow;
-            if !fits(y, whole)
-                && !at_top
-                && (!u.split
-                    || !fits(
-                        y,
-                        before + u.lines.iter().take(2).map(|l| l.height).sum::<f32>(),
-                    ))
-                && (!u.split || height + follow <= bottom - top)
-            {
+            // A unit that can't split starts a page if it doesn't fit; one
+            // that can, if its first two lines don't.
+            let opening = before + u.lines.iter().take(2).map(|l| l.height).sum::<f32>();
+            if !at_top && !fits(y, whole) && (!u.split || !fits(y, opening)) {
                 pages.push(Page::default());
                 y = top;
             }
             y += if y <= top + 0.5 { 0.0 } else { u.space_before };
-            for line in &u.lines {
-                if !fits(y, line.height) && y > top + 0.5 {
+            let breaks = plan(&u.lines, y, top, bottom);
+            for (n, line) in u.lines.iter().enumerate() {
+                if (breaks.contains(&n) || !fits(y, line.height)) && y > top + 0.5 {
                     pages.push(Page::default());
                     y = top;
+                }
+                // The space between groups of lines isn't wanted at the top
+                // of a page.
+                if y <= top + 0.5 && is_gap(line) {
+                    continue;
                 }
                 let page = pages.last_mut().expect("one page at least");
                 self.place(page, line, left, y);
@@ -1348,8 +1435,9 @@ impl<'a> Layout<'a> {
                 });
             }
         }
-        for (text, x0, x1) in &line.words {
+        for (n, (text, x0, x1)) in line.words.iter().enumerate() {
             page.words.push(Word {
+                continues: n == 0 && line.continues,
                 text: text.clone(),
                 block: line.block.clone(),
                 x0: left + line.x + x0,
@@ -1359,6 +1447,49 @@ impl<'a> Layout<'a> {
             });
         }
     }
+}
+
+/// An empty line: the space between groups of verse lines.
+fn is_gap(line: &Line) -> bool {
+    line.frags.is_empty() && line.marks.is_empty()
+}
+
+/// Where a unit's lines start new pages, if it starts at `y`. Verse breaks
+/// between its groups (stanzas set off by space, or Dante's tercets set
+/// off by indent) when one ended in the last three lines, and never inside
+/// a turned-over line. Otherwise a last line is never left alone at the top
+/// of a page. A first line alone at the foot is prevented before the unit
+/// starts.
+fn plan(lines: &[Line], mut y: f32, top: f32, bottom: f32) -> Vec<usize> {
+    let mut breaks = Vec::new();
+    let mut start = 0;
+    for k in 0..lines.len() {
+        if y + lines[k].height > bottom && y > top + 0.5 {
+            let earliest = k.saturating_sub(3).max(start + 2);
+            let group = (earliest..=k)
+                .rev()
+                .find(|&j| is_gap(&lines[j]) || lines[j].opens);
+            let mut b = match group {
+                Some(j) => j,
+                None if k + 1 == lines.len() && k >= start + 3 => k - 1,
+                None => k,
+            };
+            while lines[b].turned && b > start + 2 {
+                b -= 1;
+            }
+            breaks.push(b);
+            start = b;
+            y = top
+                + lines[b..k]
+                    .iter()
+                    .enumerate()
+                    .filter(|(n, l)| !(*n == 0 && is_gap(l)))
+                    .map(|(_, l)| l.height)
+                    .sum::<f32>();
+        }
+        y += lines[k].height;
+    }
+    breaks
 }
 
 /// The part of a page that text flows into.
@@ -1380,8 +1511,7 @@ fn run(f: &Frag, x: f32, baseline: f32) -> Run {
 }
 
 fn frag_width(f: &Frag) -> f32 {
-    // The last glyph's position is close enough for centring.
-    f.glyphs.last().map_or(0.0, |g| g.x + f.size * 0.5)
+    f.width
 }
 
 /// Greedy breaks: fill each line, and break at the last place that fits
@@ -1419,4 +1549,66 @@ fn greedy(items: &[Item], measure: f32) -> (Vec<usize>, Vec<f32>) {
     }
     let ratios = vec![0.0; breaks.len()];
     (breaks, ratios)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(opens: bool, turned: bool) -> Line {
+        Line {
+            frags: vec![Frag {
+                font: 0,
+                size: 10.0,
+                x: 0.0,
+                dy: 0.0,
+                width: 10.0,
+                glyphs: Vec::new(),
+            }],
+            height: 10.0,
+            opens,
+            turned,
+            ..Default::default()
+        }
+    }
+
+    fn gap() -> Line {
+        Line {
+            height: 6.0,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn verse_breaks_before_a_tercet() {
+        // Tercets: base indent, then two indented lines. Nine lines fit.
+        let lines: Vec<Line> = (0..15).map(|k| line(k % 3 == 0, false)).collect();
+        assert_eq!(plan(&lines, 0.0, 0.0, 95.0), [9]);
+        // Room for eight: each page ends after its second tercet.
+        assert_eq!(plan(&lines, 0.0, 0.0, 85.0), [6, 12]);
+    }
+
+    #[test]
+    fn verse_breaks_at_the_space_between_stanzas() {
+        let mut lines: Vec<Line> = (0..4).map(|_| line(true, false)).collect();
+        lines.push(gap());
+        lines.extend((0..4).map(|_| line(false, false)));
+        // The page ends inside the second stanza's third line.
+        assert_eq!(plan(&lines, 0.0, 0.0, 70.0), [4]);
+    }
+
+    #[test]
+    fn a_last_line_is_never_alone_at_the_top() {
+        let lines: Vec<Line> = (0..6).map(|_| line(false, false)).collect();
+        assert_eq!(plan(&lines, 0.0, 0.0, 55.0), [4]);
+    }
+
+    #[test]
+    fn a_turned_line_stays_with_its_start() {
+        let mut lines: Vec<Line> = (0..6).map(|_| line(false, false)).collect();
+        lines[5].turned = true;
+        lines.push(line(false, false));
+        lines.push(line(false, false));
+        assert_eq!(plan(&lines, 0.0, 0.0, 55.0), [4]);
+    }
 }

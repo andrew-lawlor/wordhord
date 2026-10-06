@@ -28,7 +28,7 @@ pub enum Item {
 }
 
 impl Item {
-    fn width(&self) -> f32 {
+    pub fn width(&self) -> f32 {
         match self {
             Item::Box { width } | Item::Glue { width, .. } => *width,
             Item::Penalty { .. } => 0.0,
