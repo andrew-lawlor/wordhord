@@ -91,8 +91,14 @@ pub enum Kind {
     Break,
     /// Inline: emphasis, usually italic.
     Emphasis,
+    /// Inline: strong emphasis, usually bold.
+    Strong,
     /// Inline: the editor's emendation of the manuscript (TEI `<corr>`).
     Corr,
+    /// Inline: a footnote. Its paragraphs become a definition at the end
+    /// of the chapter; a reference stays where it was. Labelled by its
+    /// `n` attribute, or counted.
+    Note,
     Drop,
 }
 

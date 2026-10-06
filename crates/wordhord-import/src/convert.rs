@@ -42,6 +42,8 @@ pub struct Line {
 pub struct Chapter {
     pub prefix: String,
     pub blocks: Vec<Out>,
+    /// Footnotes, by label, in order: each a list of paragraphs.
+    pub notes: Vec<(String, Vec<Vec<Inline>>)>,
 }
 
 /// What the import found that the recipe doesn't explain.
@@ -252,7 +254,7 @@ impl<'r> Converter<'r> {
                         self.pending_page.push(p);
                     }
                 }
-                Some(Kind::Emphasis | Kind::Corr) => Self::note(
+                Some(Kind::Emphasis | Kind::Strong | Kind::Corr | Kind::Note) => Self::note(
                     &mut self.report.unhandled,
                     format!("an inline role between blocks: <{tag}>"),
                     child,
@@ -262,12 +264,42 @@ impl<'r> Converter<'r> {
         }
     }
 
+    /// A footnote: its paragraphs go to the chapter's notes, and a
+    /// reference to it is returned for the text.
+    fn footnote(&mut self, node: Node) -> Option<Inline> {
+        let paragraphs: Vec<Node> = node.children().filter(|n| n.has_tag_name("p")).collect();
+        let body: Vec<Vec<Inline>> = if paragraphs.is_empty() {
+            vec![tidy(self.inlines(node, None))]
+        } else {
+            paragraphs
+                .into_iter()
+                .map(|p| tidy(self.inlines(p, None)))
+                .collect()
+        };
+        let chapter = self.chapters.last_mut()?;
+        let wanted = node
+            .attribute("n")
+            .map(String::from)
+            .unwrap_or_else(|| (chapter.notes.len() + 1).to_string());
+        // Labels are unique within a chapter.
+        let mut label = wanted.clone();
+        let mut k = 1;
+        while chapter.notes.iter().any(|(l, _)| *l == label) {
+            k += 1;
+            label = format!("{wanted}-{k}");
+        }
+        chapter.notes.push((label.clone(), body));
+        Some(Inline::NoteRef(label))
+    }
+
     /// A heading's text for matching, leaving out what the recipe drops
-    /// (a footnote inside a heading, say).
+    /// and any footnote in it.
     fn heading_text(&self, node: Node) -> String {
         let dropped = |n: &Node| {
-            n.ancestors()
-                .any(|a| self.role(a).is_some_and(|r| r.role.kind == Kind::Drop))
+            n.ancestors().any(|a| {
+                self.role(a)
+                    .is_some_and(|r| matches!(r.role.kind, Kind::Drop | Kind::Note))
+            })
         };
         collapse(
             &node
@@ -308,6 +340,7 @@ impl<'r> Converter<'r> {
             self.chapters.push(Chapter {
                 prefix: w.prefix.clone(),
                 blocks: Vec::new(),
+                notes: Vec::new(),
             });
             self.next_work += 1;
             self.active = true;
@@ -702,6 +735,12 @@ impl<'r> Converter<'r> {
                 Some(Kind::Drop) => {}
                 Some(Kind::Unwrap) => out.extend(self.inlines(child, skip)),
                 Some(Kind::Emphasis) => out.push(Inline::Emphasis(self.inlines(child, skip))),
+                Some(Kind::Strong) => out.push(Inline::Strong(self.inlines(child, skip))),
+                Some(Kind::Note) => {
+                    if let Some(r) = self.footnote(child) {
+                        out.push(r);
+                    }
+                }
                 Some(Kind::Corr) => out.push(Inline::Span {
                     kind: wordhord_book::model::SpanKind::Corr,
                     lang: None,

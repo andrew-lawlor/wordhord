@@ -280,7 +280,9 @@ impl Book {
         let mut ids: HashMap<String, (String, usize)> = HashMap::new();
         for c in &self.chapters {
             for b in &c.blocks {
-                if b.id.is_none() && b.kind != BlockKind::SceneBreak {
+                // Footnotes are known by their label, scene breaks by nothing.
+                let exempt = matches!(b.kind, BlockKind::SceneBreak | BlockKind::Note { .. });
+                if b.id.is_none() && !exempt {
                     push(
                         Severity::Error,
                         &c.file,
@@ -439,6 +441,50 @@ impl Book {
                 }
             }
         }
+        // Footnotes: each reference has a definition in its chapter, and
+        // each definition is referred to.
+        for c in &self.chapters {
+            let mut all = Vec::new();
+            walk(&c.blocks, &mut all);
+            let defined: HashMap<&str, usize> = all
+                .iter()
+                .filter_map(|b| match &b.kind {
+                    BlockKind::Note { label, .. } => Some((label.as_str(), b.line)),
+                    _ => None,
+                })
+                .collect();
+            let mut referred = HashSet::new();
+            for b in &all {
+                for inlines in block_inlines(b) {
+                    let mut found = Vec::new();
+                    walk_inlines(inlines, &mut found);
+                    for i in found {
+                        if let Inline::NoteRef(label) = i {
+                            referred.insert(label.as_str());
+                            if !defined.contains_key(label.as_str()) {
+                                push(
+                                    Severity::Error,
+                                    &c.file,
+                                    b.line,
+                                    format!("footnote [^{label}] has no definition"),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            for (label, line) in &defined {
+                if !referred.contains(label) {
+                    push(
+                        Severity::Warning,
+                        &c.file,
+                        *line,
+                        format!("footnote [^{label}] isn't referred to"),
+                    );
+                }
+            }
+        }
+
         for (file, b) in self.blocks() {
             if let BlockKind::Commentary { on, .. } = &b.kind {
                 if let Some(id) = on.strip_prefix('#') {

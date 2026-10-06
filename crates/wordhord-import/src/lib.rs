@@ -169,6 +169,28 @@ pub fn chapter_source(number: usize, ch: &Chapter) -> String {
             }
         }
     }
+    s.push_str(&footnotes(ch));
+    s
+}
+
+/// A chapter's footnotes, after its blocks. Later paragraphs of a note
+/// are indented, so they stay in it.
+fn footnotes(ch: &Chapter) -> String {
+    let mut s = String::new();
+    for (label, paragraphs) in &ch.notes {
+        let body: Vec<String> = paragraphs
+            .iter()
+            .enumerate()
+            .map(|(k, p)| {
+                if k == 0 {
+                    line(p)
+                } else {
+                    format!("  {}", line(p))
+                }
+            })
+            .collect();
+        let _ = writeln!(s, "[^{label}]: {}\n", body.join("\n\n"));
+    }
     s
 }
 
@@ -201,6 +223,9 @@ fn write_inlines(s: &mut String, inlines: &[Inline]) {
                 };
             }
             Inline::LineBreak | Inline::SoftBreak => s.push(' '),
+            Inline::NoteRef(label) => {
+                let _ = write!(s, "[^{label}]");
+            }
             Inline::Span {
                 kind: wordhord_book::model::SpanKind::Corr,
                 inlines,
@@ -286,15 +311,21 @@ pub fn verify(imported: &Imported, out: &Path) -> Result<(Book, Vec<String>), St
     let book = Book::load(out).map_err(|d| d.to_string())?;
     let mut problems = Vec::new();
     for (k, (ch, read)) in imported.chapters.iter().zip(&book.chapters).enumerate() {
-        if ch.blocks.len() != read.blocks.len() {
+        // Footnote definitions are compared below.
+        let read_blocks: Vec<&wordhord_book::model::Block> = read
+            .blocks
+            .iter()
+            .filter(|b| !matches!(b.kind, BlockKind::Note { .. }))
+            .collect();
+        if ch.blocks.len() != read_blocks.len() {
             problems.push(format!(
                 "chapter {}: wrote {} blocks, read {}",
                 k + 1,
                 ch.blocks.len(),
-                read.blocks.len()
+                read_blocks.len()
             ));
         }
-        for (b, r) in ch.blocks.iter().zip(&read.blocks) {
+        for (b, r) in ch.blocks.iter().zip(read_blocks) {
             let id = r.id.clone().unwrap_or_default();
             match (b, &r.kind) {
                 (Out::Break, BlockKind::SceneBreak) => {}
@@ -347,6 +378,46 @@ pub fn verify(imported: &Imported, out: &Path) -> Result<(Book, Vec<String>), St
             }
         }
     }
+    // Footnotes: the same labels, with the same paragraphs.
+    for (ch, read) in imported.chapters.iter().zip(&book.chapters) {
+        let got: Vec<(&String, &Vec<wordhord_book::model::Block>)> = read
+            .blocks
+            .iter()
+            .filter_map(|b| match &b.kind {
+                BlockKind::Note { label, blocks } => Some((label, blocks)),
+                _ => None,
+            })
+            .collect();
+        if got.len() != ch.notes.len() {
+            problems.push(format!(
+                "{}: wrote {} footnotes, read {}",
+                read.file,
+                ch.notes.len(),
+                got.len()
+            ));
+        }
+        for ((label, paragraphs), (read_label, blocks)) in ch.notes.iter().zip(got) {
+            if label != read_label {
+                problems.push(format!(
+                    "{}: wrote footnote [^{label}], read [^{read_label}]",
+                    read.file
+                ));
+            }
+            if paragraphs.len() != blocks.len() {
+                problems.push(format!(
+                    "{}: [^{label}] has {} paragraphs, read {}",
+                    read.file,
+                    paragraphs.len(),
+                    blocks.len()
+                ));
+            }
+            for (p, b) in paragraphs.iter().zip(blocks) {
+                if let BlockKind::Paragraph(t) = &b.kind {
+                    problems.extend(differ(&format!("[^{label}]"), p, t));
+                }
+            }
+        }
+    }
     Ok((book, problems))
 }
 
@@ -374,6 +445,7 @@ fn markers(inlines: &[Inline]) -> Vec<String> {
         .filter_map(|i| match i {
             Inline::Caesura => Some("|".to_string()),
             Inline::PageBreak { n, .. } => Some(format!("p{n}")),
+            Inline::NoteRef(label) => Some(format!("^{label}")),
             _ => None,
         })
         .collect()

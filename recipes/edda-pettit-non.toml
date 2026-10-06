@@ -283,7 +283,7 @@ as = "paragraph"
 [[role]]
 select = "l"
 as = "line"
-number = "ref"
+number = "l > ref"
 
 # Pettit italicises letters he has emended, in the poems and the prose;
 # in headings, italics are titles.

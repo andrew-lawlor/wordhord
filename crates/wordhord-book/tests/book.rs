@@ -412,3 +412,34 @@ fn a_stanza_can_continue_after_a_change_of_speaker() {
     assert_eq!(a.pairs.len(), 1);
     assert_eq!(a.pairs[0].translation.len(), 4);
 }
+
+#[test]
+fn footnotes_need_a_definition_and_a_reference() {
+    let b = book(&[
+        ("book.toml", LINE_BOOK),
+        (
+            "text/01.dj",
+            "{#ch01-0001}\nA hearing I ask.[^2] And more.[^9]\n\n[^2]: The speaker is a seeress.\n\n  A second paragraph of the note.\n\n[^3]: Never referred to.\n",
+        ),
+    ]);
+    assert!(
+        has(&b, Severity::Error, "footnote [^9] has no definition"),
+        "{:#?}",
+        b.diagnostics
+    );
+    assert!(has(
+        &b,
+        Severity::Warning,
+        "footnote [^3] isn't referred to"
+    ));
+    assert!(
+        !has(&b, Severity::Error, "has no #id"),
+        "footnotes need no #id: {:#?}",
+        b.diagnostics
+    );
+    let note = b.blocks().into_iter().find_map(|(_, b)| match &b.kind {
+        BlockKind::Note { label, blocks } if label == "2" => Some(blocks.len()),
+        _ => None,
+    });
+    assert_eq!(note, Some(2), "the note keeps both paragraphs");
+}

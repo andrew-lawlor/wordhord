@@ -1,0 +1,295 @@
+# Edward Pettit, The Poetic Edda: A Dual-Language Edition (Open Book
+# Publishers, 2023), doi:10.11647/OBP.0308. CC BY-NC 4.0.
+# Pettit's English translation: each chapter's English section, from its
+# heading to the textual apparatus, with his footnotes. Numbered as his
+# Old Norse text (edda-pettit-non), which it translates line for line.
+# Imported from the publisher's TEI XML with the import-xml example.
+
+styling = []
+starts = "head[type=section-lev1]"
+
+[book]
+id = "edda-pettit"
+title = "The Poetic Edda"
+translator = "Edward Pettit"
+year = 2023
+lang = "eng"
+license = "CC BY-NC 4.0"
+original = "edda-pettit-non"
+source = "Edward Pettit, The Poetic Edda: A Dual-Language Edition, Open Book Publishers, 2023, doi:10.11647/OBP.0308"
+
+[book.refs]
+unit = "stanza.line"
+
+[book.refs.works]
+vsp = "Vǫluspá"
+hav = "Hávamál"
+vm = "Vafþrúðnismál"
+grm = "Grímnismál"
+skm = "Fǫr Skírnis"
+hrbl = "Hárbarðsljóð"
+hym = "Hymiskviða"
+ls = "Lokasenna"
+thrk = "Þrymskviða"
+vkv = "Vǫlundarkviða"
+alv = "Alvíssmál"
+hh1 = "Helgakviða Hundingsbana in fyrri"
+hhj = "Helgakviða Hjǫrvarðssonar"
+hh2 = "Helgakviða Hundingsbana ǫnnur"
+sf = "Frá dauða Sinfjǫtla"
+grp = "Grípisspá"
+rm = "Reginsmál"
+fm = "Fáfnismál"
+sd = "Sigrdrífumál"
+brot = "Brot af Sigurðarkviðu"
+gdr1 = "Guðrúnarkviða in fyrsta"
+sg = "Sigurðarkviða in skamma"
+hlr = "Helreið Brynhildar"
+drp = "Dráp Niflunga"
+gdr2 = "Guðrúnarkviða ǫnnur"
+gdr3 = "Guðrúnarkviða in þriðja"
+oddr = "Oddrúnargrátr"
+akv = "Atlakviða in grœnlenzka"
+am = "Atlamál in grœnlenzku"
+ghv = "Guðrúnarhvǫt"
+hm = "Hamðismál"
+vsph = "Vǫluspá (Hauksbók)"
+bdr = "Baldrs draumar"
+rth = "Rígsþula"
+hdl = "Hyndluljóð"
+grg = "Gróugaldr"
+fj = "Fjǫlsvinnsmál"
+
+[book.edition]
+key = "pettit-2023"
+title = "The Poetic Edda: A Dual-Language Edition"
+publisher = "Open Book Publishers"
+year = 2023
+
+[[work]]
+prefix = "vsp"
+start = "The Prophecy of the Seeress"
+end = "Textual Apparatus to Vǫluspá (Codex Regius)"
+
+[[work]]
+prefix = "hav"
+start = "The Sayings of Hávi"
+end = "Textual Apparatus to Hávamál"
+
+[[work]]
+prefix = "vm"
+start = "The Sayings of Vafþrúðnir"
+end = "Textual Apparatus to Vafþrúðnismál"
+
+[[work]]
+prefix = "grm"
+start = "The Sayings of Grímnir"
+end = "Textual Apparatus to Grímnismál"
+
+[[work]]
+prefix = "skm"
+start = "Skírnir’s Journey"
+end = "Textual Apparatus to Fǫr Skírnis"
+
+[[work]]
+prefix = "hrbl"
+start = "The Song of Hárbarðr"
+end = "Textual Apparatus to Harbarðsljóð"
+
+[[work]]
+prefix = "hym"
+start = "The Lay of Hymir"
+end = "Textual Apparatus to Hymiskviða"
+
+[[work]]
+prefix = "ls"
+start = "About Ægir and the Gods"
+end = "Textual Apparatus to Lokasenna"
+
+[[work]]
+prefix = "thrk"
+start = "The Lay of Þrymr"
+end = "Textual Apparatus to Þrymskviða"
+
+[[work]]
+prefix = "vkv"
+start = "The Lay of Vǫlundr"
+end = "Textual Apparatus to Vǫlundarkviða"
+
+[[work]]
+prefix = "alv"
+start = "The Sayings of Alvíss"
+end = "Textual Apparatus to Alvíssmál"
+
+[[work]]
+prefix = "hh1"
+start = "The Earlier Lay of Helgi Hundingsbani"
+end = "Textual Apparatus to Helgakviða Hundingsbana in fyrri"
+
+[[work]]
+prefix = "hhj"
+start = "The Lay of Helgi Hjǫrvarðsson"
+end = "Textual Apparatus to Helgakviða Hjǫrvarðssonar"
+
+[[work]]
+prefix = "hh2"
+start = "The Second Lay of Helgi Hundingsbani"
+end = "Textual Apparatus to Helgakviða Hundingsbana ǫnnur"
+
+[[work]]
+prefix = "sf"
+start = "About Sinfjǫtli’s Death"
+end = "Textual Apparatus to Frá dauða Sinfjǫtla"
+
+[[work]]
+prefix = "grp"
+start = "The Prophecy of Grípir"
+end = "Textual Apparatus to Grípisspá"
+
+[[work]]
+prefix = "rm"
+start = "The Sayings of Reginn"
+end = "Textual Apparatus to Reginsmál"
+
+[[work]]
+prefix = "fm"
+start = "The Sayings of Fáfnir"
+end = "Textual Apparatus to Fáfnismál"
+
+[[work]]
+prefix = "sd"
+start = "The Sayings of Sigrdrífa"
+end = "Textual Apparatus to Sigrdrífumál"
+
+[[work]]
+prefix = "brot"
+start = "Fragment of a Lay of Sigurðr"
+end = "Textual Apparatus to Brot af Sigurðarkviðu"
+
+[[work]]
+prefix = "gdr1"
+start = "The First Lay of Guðrún"
+end = "Textual Apparatus to Guðrúnarkviða in fyrsta"
+
+[[work]]
+prefix = "sg"
+start = "The Short Lay of Sigurðr"
+end = "Textual Apparatus to Sigurðarkviða in skamma"
+
+[[work]]
+prefix = "hlr"
+start = "Brynhildr’s Hel-Ride"
+end = "Textual Apparatus to Helreið Brynhildar"
+
+[[work]]
+prefix = "drp"
+start = "The Slaying of the Niflungar"
+end = "Textual Apparatus to Dráp Niflunga"
+
+[[work]]
+prefix = "gdr2"
+start = "The Second Lay of Guðrún"
+end = "Textual Apparatus to Guðrúnarkviða ǫnnur"
+
+[[work]]
+prefix = "gdr3"
+start = "The Third Lay of Guðrún"
+end = "Textual Apparatus to Guðrúnarkviða in þriðja"
+
+[[work]]
+prefix = "oddr"
+start = "Oddrún’s Lament"
+end = "Textual Apparatus to Oddrúnargrátr"
+
+[[work]]
+prefix = "akv"
+start = "The Death of Atli"
+end = "Textual Apparatus to Atlakviða in Grœnlenzka"
+
+[[work]]
+prefix = "am"
+start = "The Greenlandic Poem of Atli"
+end = "Textual Apparatus to Atlamál in grœnlenzku"
+
+[[work]]
+prefix = "ghv"
+start = "About Guðrún"
+end = "Textual Apparatus to Guðrúnarhvǫt"
+
+[[work]]
+prefix = "hm"
+start = "The Lay of Hamðir"
+end = "Textual Apparatus to Hamðismál"
+
+[[work]]
+prefix = "vsph"
+start = "The Prophecy of the Seeress"
+end = "Textual Apparatus to Vǫluspá (Hauksbók)"
+
+[[work]]
+prefix = "bdr"
+start = "Baldr’s Dreams"
+end = "Textual Apparatus to Baldrs draumar"
+
+[[work]]
+prefix = "rth"
+start = "Rígr’s List"
+end = "Textual Apparatus to Rígsþula"
+
+[[work]]
+prefix = "hdl"
+start = "The Song of Hyndla"
+end = "Textual Apparatus to Hyndluljóð"
+
+[[work]]
+prefix = "grg"
+start = "Gróa’s Incantation"
+
+[[work]]
+prefix = "fj"
+start = "The Sayings of Fjǫlsvinnr"
+end = "Textual Apparatus to Svipdagsmál"
+
+[[role]]
+select = "anchor"
+as = "drop"
+
+# Pettit's footnotes: his commentary, kept as footnotes.
+[[role]]
+select = "note"
+as = "note"
+
+[[role]]
+select = "head[type=section-lev2]"
+as = "heading"
+level = 2
+
+[[role]]
+select = "head"
+as = "heading"
+level = 1
+
+# Prose passages between stanzas.
+[[role]]
+select = "quote"
+as = "paragraph"
+
+# A line with a stanza number directly in it opens a stanza; notes in a
+# line have <ref> links of their own.
+[[role]]
+select = "l"
+as = "line"
+number = "l > ref"
+
+[[role]]
+select = "hi[rendition=simple:italic]"
+as = "emphasis"
+
+# Bold marks manuscript sigla: R (Codex Regius), H (Hauksbók).
+[[role]]
+select = "hi[rendition=simple:bold]"
+as = "strong"
+
+[[role]]
+select = "ref"
+as = "unwrap"
