@@ -26,11 +26,19 @@ pub struct Panel {
     pub height: f32,
 }
 
-/// A note, set for the panel. Its pages are drawn from the panel's
-/// top-left corner.
+/// A note or a commentary, set for the panel. Its pages are drawn from
+/// the panel's top-left corner.
 #[derive(Debug, Clone, Serialize)]
 pub struct Note {
+    /// What links to it: `note-3`, or the commentary's block ID.
+    pub id: String,
+    /// `note` or `commentary`.
+    pub kind: String,
+    /// The note's label, or the reference the commentary is on.
     pub label: String,
+    /// What a reader sees: the label, `Stanza 5`, or a passage's first
+    /// words.
+    pub title: String,
     /// The reference of the line its marker is on: `inf.1.2`.
     pub on: Option<String>,
     /// The page its marker is on, from 0.
@@ -64,11 +72,11 @@ pub struct Link {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Target {
-    /// Open a note in the panel.
-    Note { label: String },
+    /// Open a note or a commentary in the panel.
+    Note { id: String },
     /// Turn to a page, counted from 0.
     Page { page: usize },
-    /// Back to a note's marker: resolved to a page once the chapter is
+    /// Back to a note's marker or a commentary's mark: resolved to a page once the chapter is
     /// paginated, and never written.
     #[serde(skip)]
     Marker(String),

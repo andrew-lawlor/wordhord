@@ -39,26 +39,33 @@ pub fn typeset_chapter(
     // The reference of the line each marker is first on.
     let mut on: HashMap<&str, Option<String>> = HashMap::new();
     for line in units.iter().flat_map(|u| &u.lines) {
-        for (label, _, _) in &line.notes {
-            on.entry(label).or_insert_with(|| line.reference.clone());
+        for (id, _, _) in line.notes.iter().chain(&line.margin_links) {
+            on.entry(id).or_insert_with(|| line.reference.clone());
         }
     }
     let pages = layout.paginate(&units);
     let mut marker: HashMap<&str, usize> = HashMap::new();
     for (n, p) in pages.iter().enumerate() {
         for l in &p.links {
-            if let page::Target::Note { label } = &l.to {
-                marker.entry(label).or_insert(n);
+            if let page::Target::Note { id } = &l.to {
+                marker.entry(id).or_insert(n);
             }
         }
     }
-    let notes: Vec<page::Note> = layout::notes(&ch.blocks)
-        .into_iter()
-        .map(|(label, blocks)| page::Note {
-            label: label.to_string(),
-            on: on.get(label).cloned().flatten(),
-            page: marker.get(label).copied(),
-            pages: layout.note_pages(label, blocks),
+    let notes: Vec<page::Note> = layout::glosses(&ch.blocks)
+        .iter()
+        .map(|g| page::Note {
+            id: g.id.clone(),
+            kind: match g.kind {
+                layout::GlossKind::Note => "note",
+                layout::GlossKind::Commentary => "commentary",
+            }
+            .to_string(),
+            label: g.label.clone(),
+            title: g.title.clone(),
+            on: on.get(g.id.as_str()).cloned().flatten(),
+            page: marker.get(g.id.as_str()).copied(),
+            pages: layout.panel_pages(g),
         })
         .collect();
     let panel = layout.panel();
@@ -76,11 +83,13 @@ pub fn typeset_chapter(
         )?;
         rendered.push(pixels);
     }
-    // Each note's panel pages, and the first note opened over its page.
+    // Each note's panel pages, and the first of each kind opened over its
+    // page.
     let height = panel.height as u32;
-    for (k, note) in notes.iter().enumerate() {
+    let mut shown = std::collections::HashSet::new();
+    for note in &notes {
         let name: String = note
-            .label
+            .id
             .chars()
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
             .collect();
@@ -92,13 +101,13 @@ pub fn typeset_chapter(
                 profile.width,
                 height,
             )?;
-            if k == 0 && n == 0 {
+            if n == 0 && shown.insert(note.kind.as_str()) {
                 if let Some(page) = note.page {
                     let mut over = rendered[page].clone();
                     let start = (panel.y as usize) * profile.width as usize;
                     over[start..start + pixels.len()].copy_from_slice(&pixels);
                     render::write_png(
-                        &out.join("panel-preview.png"),
+                        &out.join(format!("panel-{}.png", note.kind)),
                         &over,
                         profile.width,
                         profile.height,

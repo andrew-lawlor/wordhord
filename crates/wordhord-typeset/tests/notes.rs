@@ -22,6 +22,10 @@ I found myself within a forest dark.
 ";
 
 fn with_layout(test: impl Fn(&Layout, &[wordhord_book::model::Block])) {
+    with_source(SOURCE, test)
+}
+
+fn with_source(source: &str, test: impl Fn(&Layout, &[wordhord_book::model::Block])) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let profile = Profile::load(&root.join("profiles/elipsa-2e.toml")).unwrap();
     let f = &profile.fonts;
@@ -45,10 +49,10 @@ fn with_layout(test: impl Fn(&Layout, &[wordhord_book::model::Block])) {
     std::fs::create_dir_all(dir.join("text")).unwrap();
     std::fs::write(
         dir.join("book.toml"),
-        "id = \"t\"\ntitle = \"T\"\nlang = \"eng\"\n",
+        "id = \"t\"\ntitle = \"T\"\nlang = \"eng\"\n[refs]\nprefix = \"vsp\"\nunit = \"stanza.line\"\n",
     )
     .unwrap();
-    std::fs::write(dir.join("text/01.dj"), SOURCE).unwrap();
+    std::fs::write(dir.join("text/01.dj"), source).unwrap();
     let book = Book::load(&dir).expect("book loads");
     std::fs::remove_dir_all(&dir).unwrap();
     let errors: Vec<_> = book
@@ -67,7 +71,11 @@ fn a_marker_is_a_link_wide_enough_to_tap() {
         let link = pages[0]
             .links
             .iter()
-            .find(|l| l.to == Target::Note { label: "2".into() })
+            .find(|l| {
+                l.to == Target::Note {
+                    id: "note-2".into(),
+                }
+            })
             .expect("the marker links to its note");
         let reach = layout.profile.mm(6.0);
         assert!(link.x1 - link.x0 >= reach - 0.01);
@@ -95,9 +103,9 @@ fn a_note_in_the_chapters_notes_links_back_to_its_marker() {
 #[test]
 fn a_note_is_set_inside_the_panel() {
     with_layout(|layout, blocks| {
-        let notes = layout::notes(blocks);
+        let notes = layout::glosses(blocks);
         assert_eq!(notes.len(), 1);
-        let pages = layout.note_pages(notes[0].0, notes[0].1);
+        let pages = layout.panel_pages(&notes[0]);
         assert_eq!(pages.len(), 1);
         let panel = layout.panel();
         let words = &pages[0].words;
@@ -108,5 +116,50 @@ fn a_note_is_set_inside_the_panel() {
         // The second paragraph is indented.
         let it = words.iter().find(|w| w.text == "It").unwrap();
         assert!(it.x0 > words[0].x0 + 10.0);
+    });
+}
+
+const STANZAS: &str = "\
+{#ch01-0001 ref=\"vsp.1\"}
+::: stanza
+Hearing I ask from the holy races,
+From Heimdall's sons, both high and low.
+:::
+
+{#ch01-0002}
+Then Othin spoke.
+
+{#ch01-0003 on=\"vsp.1\"}
+::::: commentary
+Holy: omitted in Regius.
+:::::
+
+{#ch01-0004 on=\"#ch01-0002\"}
+::::: commentary
+Othin: chief of the gods.
+:::::
+";
+
+#[test]
+fn commentary_opens_from_a_mark_beside_its_passage() {
+    with_source(STANZAS, |layout, blocks| {
+        let glosses = layout::glosses(blocks);
+        let titles: Vec<_> = glosses.iter().map(|g| g.title.as_str()).collect();
+        assert_eq!(titles, ["Stanza 1", "On \u{201c}Then Othin spoke.\u{201d}"]);
+        let pages = layout.paginate(&layout.chapter(blocks));
+        let to = |id: &str| {
+            pages[0]
+                .links
+                .iter()
+                .find(|l| l.to == Target::Note { id: id.into() })
+                .cloned()
+        };
+        let stanza = to("ch01-0003").expect("a mark beside the stanza");
+        let prose = to("ch01-0004").expect("a mark beside the paragraph");
+        // Both marks are in the left margin.
+        let left = layout.profile.mm(layout.profile.margins.left);
+        assert!(stanza.x0 < left + layout.body * 2.0);
+        assert!(prose.x0 < left);
+        assert!(stanza.y1 <= prose.y0);
     });
 }

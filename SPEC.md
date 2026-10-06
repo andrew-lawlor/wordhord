@@ -119,7 +119,7 @@ A marker is a few pixels wide. Its tap box is at least 6 mm. When boxes overlap,
 
 Each note records the page its marker is on and the reference of that line (`inf.1.2`). The notes are also gathered at the end of the chapter, to read straight through. There each label links back to its marker's page.
 
-Notes on a passage (`::: commentary`) aren't linked yet. They will open from a mark beside the stanza number.
+Commentary on a passage (`::: commentary`) opens the same way, from a small ring in the margin beside the passage, left of any stanza number. Its title names the passage: `Stanza 5`, `Stanzas 5–6`, or a prose passage's first words.
 - **Alignment.** References to the original, where the book has one.
 
 Positions are fixed on the desktop, so the device can't drift from it. Rendering on the device only decides how each glyph's pixels look: anti-aliasing tuned to the panel.
