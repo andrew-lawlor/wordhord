@@ -12,7 +12,7 @@ const USAGE: &str = "usage:
   wordhord check <book>...
   wordhord align <translation> [<original>]
   wordhord import <epub> <recipe.toml> <new folder>
-  wordhord typeset <book> <chapter> <profile.toml> <folder>
+  wordhord typeset <book> <chapter> <profile.toml> <folder> [--no-preview]
 
 A book is a folder with book.toml and text/*.dj. The original defaults to
 the folder beside the translation named by its `original`.";
@@ -23,7 +23,10 @@ fn main() -> ExitCode {
         Some("check") if args.len() > 1 => check(&args[1..]),
         Some("align") if args.len() == 2 || args.len() == 3 => align_books(&args[1], args.get(2)),
         Some("import") if args.len() == 4 => import(&args[1], &args[2], &args[3]),
-        Some("typeset") if args.len() == 5 => typeset(&args[1], &args[2], &args[3], &args[4]),
+        Some("typeset") if args.len() == 5 => typeset(&args[1], &args[2], &args[3], &args[4], true),
+        Some("typeset") if args.len() == 6 && args[5] == "--no-preview" => {
+            typeset(&args[1], &args[2], &args[3], &args[4], false)
+        }
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
@@ -185,22 +188,28 @@ fn import(epub: &str, recipe: &str, out: &str) -> ExitCode {
     }
 }
 
-fn typeset(book: &str, chapter: &str, profile: &str, out: &str) -> ExitCode {
+fn typeset(book: &str, chapter: &str, profile: &str, out: &str, previews: bool) -> ExitCode {
     let run = || -> Result<(), String> {
         let book = Book::load(Path::new(book)).map_err(|d| d.to_string())?;
         let chapter: usize = chapter
             .parse()
             .map_err(|_| format!("`{chapter}` isn't a chapter number"))?;
         let profile = wordhord_typeset::profile::Profile::load(Path::new(profile))?;
-        let t = wordhord_typeset::typeset_chapter(&book, chapter, &profile, Path::new(out))?;
+        let t =
+            wordhord_typeset::typeset_chapter(&book, chapter, &profile, Path::new(out), previews)?;
         let words: usize = t.pages.iter().map(|p| p.words.len()).sum();
         println!(
-            "{} pages, {words} words, {} notes, for {} ({}×{}); pages.json, page-NNN.png and notes/ in {out}",
+            "{} pages, {words} words, {} notes, for {} ({}×{}); {} in {out}",
             t.pages.len(),
             t.notes.len(),
             t.profile,
             t.width,
-            t.height
+            t.height,
+            if previews {
+                "pages.json, page-NNN.png and notes/"
+            } else {
+                "pages.json"
+            }
         );
         Ok(())
     };

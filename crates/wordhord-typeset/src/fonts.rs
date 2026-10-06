@@ -115,6 +115,25 @@ impl Fonts {
         })
     }
 
+    /// Fonts as a compiled book lists them, already read: what the device
+    /// draws with. The faces are the first four files, as typeset.
+    pub fn from_files(files: Vec<FontFile>) -> Result<Fonts, String> {
+        let parsed = files
+            .iter()
+            .map(|f| {
+                rustybuzz::Face::from_slice(f.data, 0)
+                    .ok_or_else(|| format!("{}: not a font", f.path))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let last = files.len().checked_sub(1).ok_or("no fonts")?;
+        Ok(Fonts {
+            files,
+            parsed,
+            faces: [0, 1.min(last), 2.min(last), 3.min(last)],
+            fallback: None,
+        })
+    }
+
     pub fn file(&self, face: Face) -> usize {
         self.faces[face as usize]
     }

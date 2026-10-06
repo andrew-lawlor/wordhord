@@ -13,13 +13,14 @@ use std::path::Path;
 
 use wordhord_book::Book;
 
-/// Typesets one chapter of a book (1-based) for a profile: its pages, and
-/// a PNG of each in `out`.
+/// Typesets one chapter of a book (1-based) for a profile: its pages in
+/// `out/pages.json`, and with `previews`, a PNG of each page and note.
 pub fn typeset_chapter(
     book: &Book,
     chapter: usize,
     profile: &profile::Profile,
     out: &Path,
+    previews: bool,
 ) -> Result<page::Typeset, String> {
     let ch = book
         .chapters
@@ -70,48 +71,51 @@ pub fn typeset_chapter(
         .collect();
     let panel = layout.panel();
 
-    std::fs::create_dir_all(out.join("notes")).map_err(|e| e.to_string())?;
-    let mut renderer = render::Renderer::new(&fonts);
-    let mut rendered = Vec::with_capacity(pages.len());
-    for (n, p) in pages.iter().enumerate() {
-        let pixels = renderer.page(p, profile.width, profile.height);
-        render::write_png(
-            &out.join(format!("page-{:03}.png", n + 1)),
-            &pixels,
-            profile.width,
-            profile.height,
-        )?;
-        rendered.push(pixels);
-    }
-    // Each note's panel pages, and the first of each kind opened over its
-    // page.
-    let height = panel.height as u32;
-    let mut shown = std::collections::HashSet::new();
-    for note in &notes {
-        let name: String = note
-            .id
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-            .collect();
-        for (n, p) in note.pages.iter().enumerate() {
-            let pixels = render::panel(&mut renderer, p, profile.width, height);
+    std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
+    if previews {
+        std::fs::create_dir_all(out.join("notes")).map_err(|e| e.to_string())?;
+        let mut renderer = render::Renderer::new(&fonts);
+        let mut rendered = Vec::with_capacity(pages.len());
+        for (n, p) in pages.iter().enumerate() {
+            let pixels = renderer.page(p, profile.width, profile.height);
             render::write_png(
-                &out.join("notes").join(format!("{name}-{}.png", n + 1)),
+                &out.join(format!("page-{:03}.png", n + 1)),
                 &pixels,
                 profile.width,
-                height,
+                profile.height,
             )?;
-            if n == 0 && shown.insert(note.kind.as_str()) {
-                if let Some(page) = note.page {
-                    let mut over = rendered[page].clone();
-                    let start = (panel.y as usize) * profile.width as usize;
-                    over[start..start + pixels.len()].copy_from_slice(&pixels);
-                    render::write_png(
-                        &out.join(format!("panel-{}.png", note.kind)),
-                        &over,
-                        profile.width,
-                        profile.height,
-                    )?;
+            rendered.push(pixels);
+        }
+        // Each note's panel pages, and the first of each kind opened over its
+        // page.
+        let height = panel.height as u32;
+        let mut shown = std::collections::HashSet::new();
+        for note in &notes {
+            let name: String = note
+                .id
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+                .collect();
+            for (n, p) in note.pages.iter().enumerate() {
+                let pixels = render::panel(&mut renderer, p, profile.width, height);
+                render::write_png(
+                    &out.join("notes").join(format!("{name}-{}.png", n + 1)),
+                    &pixels,
+                    profile.width,
+                    height,
+                )?;
+                if n == 0 && shown.insert(note.kind.as_str()) {
+                    if let Some(page) = note.page {
+                        let mut over = rendered[page].clone();
+                        let start = (panel.y as usize) * profile.width as usize;
+                        over[start..start + pixels.len()].copy_from_slice(&pixels);
+                        render::write_png(
+                            &out.join(format!("panel-{}.png", note.kind)),
+                            &over,
+                            profile.width,
+                            profile.height,
+                        )?;
+                    }
                 }
             }
         }

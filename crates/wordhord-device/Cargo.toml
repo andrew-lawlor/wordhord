@@ -1,0 +1,19 @@
+[package]
+name = "wordhord-device"
+description = "The Wordhord reader on a Kobo: draws compiled pages with FBInk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "wordhord-reader"
+path = "src/main.rs"
+
+[dependencies]
+wordhord-typeset = { path = "../wordhord-typeset" }
+serde_json = "1"
+sha2 = "0.10"
+libc = "0.2"
+
+[build-dependencies]
+cc = "1"

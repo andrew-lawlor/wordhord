@@ -1,9 +1,9 @@
 //! The compiled form (SPEC.md §7): pages of glyph runs, positioned by the
 //! desktop, and a map of every word on them. The device only draws.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Typeset {
     pub profile: String,
     pub width: u32,
@@ -18,7 +18,7 @@ pub struct Typeset {
 }
 
 /// The note panel's box on the screen.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Panel {
     pub x: f32,
     pub y: f32,
@@ -28,7 +28,7 @@ pub struct Panel {
 
 /// A note or a commentary, set for the panel. Its pages are drawn from
 /// the panel's top-left corner.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Note {
     /// What links to it: `note-3`, or the commentary's block ID.
     pub id: String,
@@ -46,13 +46,13 @@ pub struct Note {
     pub pages: Vec<Page>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FontRef {
     pub path: String,
     pub sha256: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Page {
     pub runs: Vec<Run>,
     pub words: Vec<Word>,
@@ -60,7 +60,7 @@ pub struct Page {
 }
 
 /// A box to tap, and where it goes.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Link {
     pub to: Target,
     pub x0: f32,
@@ -69,7 +69,7 @@ pub struct Link {
     pub y1: f32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Target {
     /// Open a note or a commentary in the panel.
@@ -83,7 +83,7 @@ pub enum Target {
 }
 
 /// Glyphs in one font and size, from a baseline origin.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Run {
     pub font: usize,
     pub size: f32,
@@ -94,11 +94,11 @@ pub struct Run {
 }
 
 /// A word on the page: its text, its box, and the block it's in.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Word {
     pub text: String,
     /// This is the rest of the word before it, hyphenated across lines.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub continues: bool,
     pub block: String,
     pub x0: f32,

@@ -1,0 +1,2 @@
+# Wordhord: a reader for old texts. Nickel pauses while it runs.
+menu_item :main :Wordhord :cmd_spawn :quiet :exec /mnt/onboard/.adds/wordhord/wordhord.sh
