@@ -443,3 +443,12 @@ fn footnotes_need_a_definition_and_a_reference() {
     });
     assert_eq!(note, Some(2), "the note keeps both paragraphs");
 }
+
+#[test]
+fn verse_in_a_quotation_or_footnote_keeps_its_own_indents() {
+    let src = "{#ch01-0001}\n> ::: verse\n> Midway upon the journey of our life\n>   I found myself within a forest dark,\n> :::\n\n{#ch01-0002}\nA note.[^1]\n\n[^1]: Chaucer:\n\n  ::: verse\n  Saw in dreame at point-devyse\n    Heaven, Earthe, Hell, and Paradyse.\n  :::\n";
+    let b = book(&[("book.toml", LINE_BOOK), ("text/01.dj", src)]);
+    assert!(b.diagnostics.is_empty(), "{:#?}", b.diagnostics);
+    let indents: Vec<u8> = verse_lines(&b).into_iter().map(|l| l.indent).collect();
+    assert_eq!(indents, [0, 1, 0, 1]);
+}

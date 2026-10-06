@@ -20,7 +20,7 @@ cargo test --workspace
 cargo run -q -- import <book.epub> recipes/edda-bellows.toml <new folder>
 ```
 
-`books/` holds converted editions: Pettit's *Poetic Edda* (2023, CC BY-NC), Old Norse and English, aligned stanza for stanza; and Bellows' translation (1923). See `books/README.md` for licences.
+`books/` holds converted editions: Pettit's *Poetic Edda* (2023, CC BY-NC), Old Norse and English, aligned stanza for stanza; Bellows' *Edda* (1923); Longfellow's *Divine Comedy* (1867), with its notes; and Bryant's *Odyssey* (1871). See `books/README.md` for licences.
 
 ```
 cargo run -q -- align books/edda-pettit

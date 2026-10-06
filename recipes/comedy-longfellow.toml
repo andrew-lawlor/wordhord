@@ -1,0 +1,89 @@
+# Henry Wadsworth Longfellow, The Divine Comedy (1867), translated line
+# for line: his line numbers are Dante's. Standard Ebooks edition.
+# Cantos are counted verse (inf.1.1 is Inferno 1.1); Longfellow's sonnets
+# before each cantica, and verse quoted in his notes, have no numbers.
+
+end = "Endnotes 1⁠–⁠500"
+languages = true
+styling = ["eoc", "epub-type-se-era", "xml-lang-enm", "epub-type-z3998-drama", "epub-type-z3998-persona", "epub-type-endnotes", "epub-type-footnotes", "last-child", "epub-type-z3998-poem", "epub-type-bridgehead", "first-child", "xml-lang", "continued", "elision", "epub-type-noteref", "epub-type-z3998-verse", "i1", "i2"]
+
+[indent]
+i1 = 1
+i2 = 2
+
+[book]
+id = "comedy-longfellow"
+title = "The Divine Comedy"
+author = "Dante Alighieri"
+translator = "Henry Wadsworth Longfellow"
+year = 1867
+lang = "eng"
+license = "public domain"
+source = "Standard Ebooks, from Project Gutenberg #1004"
+
+[book.refs]
+unit = "line"
+works = { inf = "Inferno", purg = "Purgatorio", par = "Paradiso" }
+
+[[work]]
+prefix = "inf"
+start = "Inferno"
+
+[[work]]
+prefix = "purg"
+start = "Purgatorio"
+
+[[work]]
+prefix = "par"
+start = "Paradiso"
+
+# Notes: the 2,109 endnotes become footnotes where they're referred to.
+[[role]]
+select = "a[epub:type=noteref]"
+as = "note-ref"
+
+[[role]]
+select = "a[epub:type=backlink]"
+as = "drop"
+
+# Longfellow's sonnets before each cantica: unnumbered.
+[[role]]
+select = "section[epub:type=preface]"
+as = "poem"
+
+# A canto, numbered from its heading ("Canto XXXIV").
+[[role]]
+select = "section[epub:type=z3998:poem]"
+as = "poem"
+number = "h3 span[epub:type=ordinal]"
+
+# Plays quoted in the notes, as tables: each row a speech.
+[[role]]
+select = "table[epub:type=z3998:drama]"
+as = "drama"
+
+[[role]]
+select = "td[epub:type=z3998:persona]"
+as = "speaker"
+
+[[role]]
+select = "td[epub:type=z3998:verse]"
+as = "poem"
+
+# Verse quoted in the notes.
+[[role]]
+select = "blockquote[epub:type=z3998:poem]"
+as = "poem"
+
+[[role]]
+select = "blockquote[epub:type=z3998:verse]"
+as = "poem"
+
+# Lines are spans directly in a poem's paragraphs, separated by <br/>.
+[[role]]
+select = "[epub:type=z3998:poem] > p > span"
+as = "line"
+
+[[role]]
+select = "[epub:type=z3998:verse] > p > span"
+as = "line"

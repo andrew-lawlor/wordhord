@@ -1,0 +1,16 @@
+author = "Dante Alighieri"
+id = "comedy-longfellow"
+lang = "eng"
+license = "public domain"
+source = "Standard Ebooks, from Project Gutenberg #1004"
+title = "The Divine Comedy"
+translator = "Henry Wadsworth Longfellow"
+year = 1867
+
+[refs]
+unit = "line"
+
+[refs.works]
+inf = "Inferno"
+par = "Paradiso"
+purg = "Purgatorio"

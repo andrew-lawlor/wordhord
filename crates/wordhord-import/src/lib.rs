@@ -132,6 +132,25 @@ pub fn chapter_source(number: usize, ch: &Chapter) -> String {
     s
 }
 
+/// Nested blocks (in a quotation, a note, a speech), one string each.
+/// Djot reads two tables with only a blank line between them as one, so a
+/// second table gets an empty attribute line `{}`.
+fn nested(blocks: &[Out]) -> Vec<String> {
+    blocks
+        .iter()
+        .enumerate()
+        .map(|(k, b)| {
+            let part = block(b, None);
+            let after_table = k > 0 && matches!(blocks[k - 1], Out::Table(_));
+            if after_table && matches!(b, Out::Table(_)) {
+                format!("{{}}\n{part}")
+            } else {
+                part
+            }
+        })
+        .collect()
+}
+
 /// One block as Djot. A top-level block gets its ID (and its reference);
 /// a nested one, in a quotation or a note, gets neither.
 fn block(b: &Out, top: Option<(&str, &str)>) -> String {
@@ -182,7 +201,7 @@ fn block(b: &Out, top: Option<(&str, &str)>) -> String {
         Out::Break => "* * *".to_string(),
         Out::Commentary { on, blocks } => {
             // More colons than quoted verse's three, so it nests inside.
-            let parts: Vec<String> = blocks.iter().map(|b| block(b, None)).collect();
+            let parts = nested(blocks);
             format!(
                 "{}::::: commentary\n{}\n:::::",
                 attrs(format!(" on=\"{on}\"")),
@@ -190,7 +209,7 @@ fn block(b: &Out, top: Option<(&str, &str)>) -> String {
             )
         }
         Out::Quote(blocks) => {
-            let parts: Vec<String> = blocks.iter().map(|b| block(b, None)).collect();
+            let parts = nested(blocks);
             let quoted: Vec<String> = parts
                 .join("\n\n")
                 .lines()
@@ -203,6 +222,21 @@ fn block(b: &Out, top: Option<(&str, &str)>) -> String {
                 })
                 .collect();
             format!("{}{}", attrs(String::new()), quoted.join("\n"))
+        }
+        Out::Speech { speaker, blocks } => {
+            let parts = nested(blocks);
+            let extra = speaker
+                .as_ref()
+                .map(|s| format!(" speaker=\"{s}\""))
+                .unwrap_or_default();
+            // When nested, the speaker still needs its attribute line.
+            let head = match top {
+                Some(_) => attrs(extra),
+                None if speaker.is_some() => format!("{{{}}}\n", extra.trim_start()),
+                None => String::new(),
+            };
+            // Four colons, so verse's three nest inside.
+            format!("{head}:::: speech\n{}\n::::", parts.join("\n\n"))
         }
         Out::Table(rows) => {
             let lines: Vec<String> = rows
@@ -222,7 +256,7 @@ fn block(b: &Out, top: Option<(&str, &str)>) -> String {
 fn footnotes(ch: &Chapter) -> String {
     let mut s = String::new();
     for (label, body) in &ch.notes {
-        let parts: Vec<String> = body.iter().map(|b| block(b, None)).collect();
+        let parts = nested(body);
         let indent = |p: &String| -> String {
             p.lines()
                 .map(|l| {
@@ -506,6 +540,12 @@ fn compare(meant: &Out, got: &Block, id: &str, problems: &mut Vec<String>) {
             compare_all(m, blocks, id, problems)
         }
         (Out::Quote(m), BlockKind::Quote(blocks)) => compare_all(m, blocks, id, problems),
+        (Out::Speech { speaker, blocks: m }, BlockKind::Speech { speaker: s, blocks }) => {
+            if speaker != s {
+                problems.push(format!("{id}: wrote speaker {speaker:?}, read {s:?}"));
+            }
+            compare_all(m, blocks, id, problems)
+        }
         (Out::Table(rows), BlockKind::Table(read)) => {
             if rows.len() != read.len() {
                 problems.push(format!(

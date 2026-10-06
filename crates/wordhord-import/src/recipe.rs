@@ -112,6 +112,10 @@ pub enum Kind {
     Quote,
     /// A table.
     Table,
+    /// A drama table: each row a speech.
+    Drama,
+    /// The speaker's cell in a drama row.
+    Speaker,
     Drop,
 }
 

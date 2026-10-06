@@ -363,6 +363,9 @@ impl<'s> P<'s> {
     }
 
     fn verse(&mut self, class: &str, at: Attrs, offset: usize) -> Block {
+        // Lines are indented relative to the verse's own fence: inside a
+        // footnote or a quotation, the container's indent isn't the poem's.
+        let base = content_indent(self.line_at(offset));
         let keys: &[&str] = if class == "verse" {
             &["id", "lang", "ref", "start", "original", "indent"]
         } else {
@@ -409,7 +412,7 @@ impl<'s> P<'s> {
                     self.unread_syntax(r.clone(), false);
                     for (inlines, first) in self.lines() {
                         verse.lines.push(VerseLine {
-                            indent: self.indent_at(first),
+                            indent: self.indent_at(first, base),
                             group,
                             inlines: split_caesuras(inlines),
                             reference: None,
@@ -450,10 +453,18 @@ impl<'s> P<'s> {
 
     /// Leading spaces on the source line holding `offset`, as indent steps.
     /// Djot drops them; verse needs them.
-    fn indent_at(&self, offset: usize) -> u8 {
+    fn indent_at(&self, offset: usize, base: usize) -> u8 {
+        let spaces = content_indent(self.line_at(offset));
+        (spaces.saturating_sub(base) / 2).min(u8::MAX as usize) as u8
+    }
+
+    /// The source line holding `offset`.
+    fn line_at(&self, offset: usize) -> &str {
         let start = self.src[..offset].rfind('\n').map_or(0, |i| i + 1);
-        let spaces = self.src[start..].bytes().take_while(|&b| b == b' ').count();
-        (spaces / 2).min(u8::MAX as usize) as u8
+        let end = self.src[start..]
+            .find('\n')
+            .map_or(self.src.len(), |i| start + i);
+        &self.src[start..end]
     }
 
     /// A paragraph's inlines, split into source lines at its soft breaks,
@@ -753,6 +764,26 @@ fn looks_like_attributes(line: &str) -> bool {
     };
     inner.starts_with(|c: char| c == '#' || c == '.' || c.is_ascii_alphabetic())
         && !inner.contains(['{', '}'])
+}
+
+/// Spaces at the start of a line's content: after any footnote indent and
+/// any `>` quotation markers (each with the one space that follows it).
+fn content_indent(line: &str) -> usize {
+    let lead = line.len() - line.trim_start_matches(' ').len();
+    let mut rest = &line[lead..];
+    if !rest.starts_with('>') {
+        return lead;
+    }
+    loop {
+        rest = &rest[1..];
+        rest = rest.strip_prefix(' ').unwrap_or(rest);
+        let spaces = rest.len() - rest.trim_start_matches(' ').len();
+        if rest[spaces..].starts_with('>') {
+            rest = &rest[spaces..];
+        } else {
+            return spaces;
+        }
+    }
 }
 
 /// `12` or `12-13`.

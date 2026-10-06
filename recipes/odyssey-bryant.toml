@@ -1,0 +1,37 @@
+# William Cullen Bryant, The Odyssey of Homer (1871), in blank verse.
+# Standard Ebooks edition. Bryant's lines aren't Homer's (his 24 books run
+# longer), so his verse has no line references: a reference would point
+# at the wrong Greek line.
+
+end = "Colophon"
+languages = true
+styling = ["epub-type-z3998-poem", "epub-type-bridgehead", "first-child", "epub-type-colophon"]
+
+[book]
+id = "odyssey-bryant"
+title = "The Odyssey"
+author = "Homer"
+translator = "William Cullen Bryant"
+year = 1871
+lang = "eng"
+license = "public domain"
+source = "Standard Ebooks, from archive.org/details/odysseyofhomer1899home1"
+
+[[work]]
+prefix = "od"
+start = "Book I"
+
+# Each book's title, under its number.
+[[role]]
+select = "hgroup p[epub:type=title]"
+as = "heading"
+level = 3
+
+# A book of the poem: its heading, then verse paragraphs.
+[[role]]
+select = "section[epub:type=z3998:poem]"
+as = "poem"
+
+[[role]]
+select = "[epub:type=z3998:poem] > p > span"
+as = "line"

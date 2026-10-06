@@ -134,20 +134,16 @@ fn import(epub: &str, recipe: &str, out: &str) -> ExitCode {
         let imported = wordhord_import::import(Path::new(epub), &recipe)?;
         let r = &imported.report;
         for ch in &imported.chapters {
-            let stanzas = ch
-                .blocks
-                .iter()
-                .filter(|b| matches!(b, wordhord_import::convert::Out::Stanza { .. }))
-                .count();
-            let notes = ch
-                .blocks
-                .iter()
-                .filter(|b| matches!(b, wordhord_import::convert::Out::Commentary { .. }))
-                .count();
+            use wordhord_import::convert::Out;
+            let count = |f: fn(&Out) -> bool| ch.blocks.iter().filter(|b| f(b)).count();
+            let stanzas = count(|b| matches!(b, Out::Stanza { .. }));
+            let verse = count(|b| matches!(b, Out::Verse { .. }));
+            let notes = count(|b| matches!(b, Out::Commentary { .. }));
             println!(
-                "{}: {} blocks, {stanzas} stanzas, {notes} notes",
+                "{}: {} blocks, {stanzas} stanzas, {verse} verse blocks, {notes} notes, {} footnotes",
                 ch.prefix,
-                ch.blocks.len()
+                ch.blocks.len(),
+                ch.notes.len()
             );
         }
         println!(

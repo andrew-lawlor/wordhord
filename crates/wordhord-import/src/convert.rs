@@ -40,6 +40,11 @@ pub enum Out {
     Quote(Vec<Out>),
     /// A table: rows of cells.
     Table(Vec<Vec<Vec<Inline>>>),
+    /// A speech: who speaks, and what they say (a row of a drama table).
+    Speech {
+        speaker: Option<String>,
+        blocks: Vec<Out>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -108,7 +113,7 @@ pub struct Converter<'r, 'd> {
 }
 
 const CONTAINERS: &[&str] = &[
-    "body", "div", "section", "article", "header", "hgroup", "main", "aside", "footer",
+    "body", "div", "section", "article", "header", "hgroup", "main", "aside", "footer", "td", "th",
 ];
 
 impl<'r, 'd> Converter<'r, 'd> {
@@ -288,6 +293,8 @@ impl<'r, 'd> Converter<'r, 'd> {
                 "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => Some(Kind::Heading),
                 "p" => Some(Kind::Paragraph),
                 "blockquote" => Some(Kind::Quote),
+                // An attribution under a quotation.
+                "cite" => Some(Kind::Paragraph),
                 "table" => Some(Kind::Table),
                 t if CONTAINERS.contains(&t) => Some(Kind::Container),
                 _ => None,
@@ -299,6 +306,9 @@ impl<'r, 'd> Converter<'r, 'd> {
                 Some(Kind::Heading) => self.heading(child),
                 Some(Kind::Container | Kind::Unwrap) => self.blocks(child),
                 Some(Kind::Drop) => {}
+                // A poem's heading may be what starts a work: walk it
+                // even before one has started.
+                Some(Kind::Poem) => self.poem(child),
                 _ if !self.active => {}
                 Some(Kind::Paragraph) => self.paragraph(child),
                 Some(Kind::Stanza) => self.stanza(child),
@@ -316,7 +326,6 @@ impl<'r, 'd> Converter<'r, 'd> {
                         self.pending_page.push(p);
                     }
                 }
-                Some(Kind::Poem) => self.poem(child),
                 Some(Kind::Quote) => {
                     let inner = self.capture(|c| c.blocks(child));
                     if !inner.is_empty() {
@@ -332,6 +341,9 @@ impl<'r, 'd> Converter<'r, 'd> {
                     let rows = self.table(child);
                     self.push(Out::Table(rows));
                 }
+                Some(Kind::Drama) => self.drama(child),
+                // A speaker is taken by its drama row.
+                Some(Kind::Speaker) => {}
                 Some(Kind::Emphasis | Kind::Strong | Kind::Corr | Kind::Note | Kind::NoteRef) => {
                     Self::note(
                         &mut self.report.unhandled,
@@ -377,9 +389,11 @@ impl<'r, 'd> Converter<'r, 'd> {
         let doc: &'d roxmltree::Document<'d> = &self.docs[k];
         let target = doc.get_node(id)?;
         let body = self.capture(|c| c.blocks(target));
+        // Text nodes only: an element's text() is its first child's again.
         let label = collapse(
             &node
                 .descendants()
+                .filter(|n| n.is_text())
                 .filter_map(|n| n.text())
                 .collect::<String>(),
         );
@@ -472,6 +486,8 @@ impl<'r, 'd> Converter<'r, 'd> {
                     self.unmapped(child);
                     self.blocks(child);
                 }
+                // Lines count only once a work has started.
+                Some(Kind::Paragraph) | None if tag == "p" && !self.active => {}
                 Some(Kind::Paragraph) | None if tag == "p" => {
                     self.unmapped(child);
                     let lines = self.lines_of(child, None);
@@ -496,6 +512,55 @@ impl<'r, 'd> Converter<'r, 'd> {
             }
         }
         flush(self, &mut groups);
+    }
+
+    /// A drama table: each row a speech, its speaker from the cell with
+    /// the `speaker` role, its words from the rest (verse cells are poems).
+    fn drama(&mut self, node: Node<'d, 'd>) {
+        let rows: Vec<Node<'d, 'd>> = node
+            .descendants()
+            .filter(|n| {
+                n.has_tag_name("tr")
+                    && n.ancestors().find(|a| a.has_tag_name("table")) == Some(node)
+            })
+            .collect();
+        for row in rows {
+            let speaker = row
+                .descendants()
+                .find(|n| self.role(*n).is_some_and(|r| r.role.kind == Kind::Speaker))
+                .map(|n| {
+                    collapse(
+                        &n.descendants()
+                            .filter(|t| t.is_text())
+                            .filter_map(|t| t.text())
+                            .collect::<String>(),
+                    )
+                })
+                .filter(|s| !s.is_empty());
+            // A cell of plain prose has no paragraph of its own.
+            let blocks = self.capture(|c| {
+                for cell in row.children().filter(|n| n.is_element()) {
+                    if c.role(cell).is_some_and(|r| r.role.kind == Kind::Speaker) {
+                        continue;
+                    }
+                    let blockish = cell.children().any(|n| {
+                        n.is_element()
+                            && matches!(n.tag_name().name(), "p" | "blockquote" | "div" | "table")
+                    });
+                    if c.role(cell).is_some_and(|r| r.role.kind == Kind::Poem) {
+                        c.poem(cell);
+                    } else if blockish {
+                        c.blocks(cell);
+                    } else {
+                        let inlines = tidy(c.inlines(cell, None));
+                        if !inlines.is_empty() {
+                            c.push(Out::Paragraph(inlines));
+                        }
+                    }
+                }
+            });
+            self.push(Out::Speech { speaker, blocks });
+        }
     }
 
     /// A table's rows and cells.
@@ -1037,7 +1102,7 @@ impl<'r, 'd> Converter<'r, 'd> {
             .attribute(("http://www.w3.org/XML/1998/namespace", "lang"))
             .or_else(|| node.attribute("lang"))?;
         match iso639_3(code) {
-            Some(c) => Some(c.to_string()),
+            Some(c) => Some(c),
             None => {
                 Self::note(
                     &mut self.report.unhandled,
@@ -1063,13 +1128,17 @@ impl<'r, 'd> Converter<'r, 'd> {
 
 /// Language tags as EPUBs write them (BCP 47, usually two letters), as the
 /// vocabulary's ISO 639-3. Unknown ones are reported, not guessed.
-fn iso639_3(tag: &str) -> Option<&'static str> {
+fn iso639_3(tag: &str) -> Option<String> {
     let primary = tag
         .split('-')
         .next()
         .unwrap_or_default()
         .to_ascii_lowercase();
-    Some(match primary.as_str() {
+    // Three letters are already ISO 639 (Lombard `lmo`, Emilian `egl`).
+    if primary.len() == 3 && primary.bytes().all(|b| b.is_ascii_lowercase()) {
+        return Some(primary);
+    }
+    let code = match primary.as_str() {
         "en" | "eng" => "eng",
         "it" | "ita" => "ita",
         "la" | "lat" => "lat",
@@ -1090,8 +1159,16 @@ fn iso639_3(tag: &str) -> Option<&'static str> {
         "non" => "non",
         "is" | "isl" => "isl",
         "nl" | "nld" => "nld",
+        "co" => "cos",
+        "ro" => "ron",
+        "ca" => "cat",
+        "ru" => "rus",
+        "sv" => "swe",
+        "da" => "dan",
+        "no" => "nor",
         _ => return None,
-    })
+    };
+    Some(code.to_string())
 }
 
 /// Whitespace runs as one space, and trimmed.
