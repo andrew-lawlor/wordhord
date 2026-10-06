@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/wordhord-book", "crates/wordhord-import", "crates/wordhord-cli"]
+members = ["crates/wordhord-book", "crates/wordhord-import", "crates/wordhord-typeset", "crates/wordhord-cli"]
 default-members = ["crates/wordhord-cli"]
 
 [workspace.package]

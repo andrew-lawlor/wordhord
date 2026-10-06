@@ -12,3 +12,4 @@ path = "src/main.rs"
 [dependencies]
 wordhord-book = { path = "../wordhord-book" }
 wordhord-import = { path = "../wordhord-import" }
+wordhord-typeset = { path = "../wordhord-typeset" }

@@ -1,0 +1,17 @@
+# Kobo Elipsa 2E: 10.3", 1404×1872 at 227 ppi, greyscale.
+name = "Elipsa 2E"
+width = 1404
+height = 1872
+ppi = 227
+# Millimetres.
+margins = { top = 9, bottom = 10, left = 10, right = 10 }
+# Points, and line spacing as a multiple of the size.
+body_size = 11.0
+leading = 1.35
+
+[fonts]
+regular = "fonts/junicode/Junicode-Regular.otf"
+italic = "fonts/junicode/Junicode-Italic.otf"
+bold = "fonts/junicode/Junicode-Bold.otf"
+bold_italic = "fonts/junicode/Junicode-BoldItalic.otf"
+fallback = "fonts/dejavu/DejaVuSerif.ttf"

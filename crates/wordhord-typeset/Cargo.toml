@@ -1,0 +1,17 @@
+[package]
+name = "wordhord-typeset"
+description = "Typesets a Wordhord book into pages of glyph runs, with a PNG preview"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wordhord-book = { path = "../wordhord-book" }
+rustybuzz = "0.20"
+swash = "0.2"
+hyphenation = { version = "0.8", features = ["embed_en-us"] }
+png = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+sha2 = "0.10"
