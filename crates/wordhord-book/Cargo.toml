@@ -1,0 +1,11 @@
+[package]
+name = "wordhord-book"
+description = "A Wordhord book's source: loading, validation and alignment"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+jotdown = "0.7"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"

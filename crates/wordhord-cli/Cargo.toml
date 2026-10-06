@@ -1,0 +1,13 @@
+[package]
+name = "wordhord-cli"
+description = "The wordhord command: check and align books"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "wordhord"
+path = "src/main.rs"
+
+[dependencies]
+wordhord-book = { path = "../wordhord-book" }
