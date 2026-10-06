@@ -233,6 +233,32 @@ impl<'s> P<'s> {
                         };
                         self.new_block(&at, kind, range.start)
                     }
+                    "commentary" => {
+                        self.allow(
+                            &at,
+                            &["id", "lang", "on"],
+                            &[],
+                            "`::: commentary`",
+                            range.start,
+                        );
+                        let on = at.get("on").map(String::from);
+                        if on.is_none() {
+                            self.report(
+                                Severity::Error,
+                                range.start,
+                                "a commentary needs `on=`: the passage it's about",
+                            );
+                        }
+                        let blocks = self.blocks();
+                        self.new_block(
+                            &at,
+                            BlockKind::Commentary {
+                                on: on.unwrap_or_default(),
+                                blocks,
+                            },
+                            range.start,
+                        )
+                    }
                     other => {
                         self.report(
                             Severity::Error,

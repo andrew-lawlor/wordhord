@@ -177,7 +177,7 @@ fn units(book: &Book, by_line: bool) -> Vec<Unit> {
 }
 
 /// `bw.12-13` covers `bw.12` and `bw.13`.
-fn expand(r: &str) -> Vec<String> {
+pub(crate) fn expand(r: &str) -> Vec<String> {
     let Some((prefix, last)) = r.rsplit_once('.') else {
         return vec![r.into()];
     };

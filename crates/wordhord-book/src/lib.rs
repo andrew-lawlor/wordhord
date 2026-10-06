@@ -416,6 +416,33 @@ impl Book {
                 }
             }
         }
+        // A commentary is about a stanza or line the book has.
+        let mut known: HashSet<String> = HashSet::new();
+        for (_, b) in self.blocks() {
+            if let Some(r) = &b.reference {
+                known.insert(r.clone());
+            }
+            if let BlockKind::Verse(v) | BlockKind::Stanza(v) = &b.kind {
+                for l in &v.lines {
+                    if let Some(r) = &l.reference {
+                        known.extend(align::expand(r));
+                    }
+                }
+            }
+        }
+        for (file, b) in self.blocks() {
+            if let BlockKind::Commentary { on, .. } = &b.kind {
+                if !on.is_empty() && !align::expand(on).iter().all(|r| known.contains(r)) {
+                    push(
+                        Severity::Error,
+                        file,
+                        b.line,
+                        format!("a commentary on `{on}`, which isn't in the book"),
+                    );
+                }
+            }
+        }
+
         for (key, n) in &self.names {
             if !matches!(n.kind.as_str(), "person" | "place" | "group" | "named") {
                 push(
@@ -524,7 +551,8 @@ fn number_blocks(
             | BlockKind::Quote(blocks)
             | BlockKind::Center(blocks)
             | BlockKind::Figure(blocks)
-            | BlockKind::Note { blocks, .. } => number_blocks(blocks, scheme, file, found),
+            | BlockKind::Note { blocks, .. }
+            | BlockKind::Commentary { blocks, .. } => number_blocks(blocks, scheme, file, found),
             _ => {}
         }
     }

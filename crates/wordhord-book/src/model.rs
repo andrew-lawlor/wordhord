@@ -38,6 +38,11 @@ pub enum BlockKind {
         label: String,
         blocks: Vec<Block>,
     },
+    /// A note on a passage, keyed by its reference: `on="vsp.1"`.
+    Commentary {
+        on: String,
+        blocks: Vec<Block>,
+    },
 }
 
 /// Verse: lines, in groups separated by blank lines, and any stanzas
@@ -173,7 +178,8 @@ pub fn walk<'a>(blocks: &'a [Block], out: &mut Vec<&'a Block>) {
             | BlockKind::Quote(blocks)
             | BlockKind::Center(blocks)
             | BlockKind::Figure(blocks)
-            | BlockKind::Note { blocks, .. } => walk(blocks, out),
+            | BlockKind::Note { blocks, .. }
+            | BlockKind::Commentary { blocks, .. } => walk(blocks, out),
             BlockKind::Verse(v) | BlockKind::Stanza(v) => walk(&v.stanzas, out),
             _ => {}
         }

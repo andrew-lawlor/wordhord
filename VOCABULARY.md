@@ -33,6 +33,7 @@ Checked against jotdown 0.7, the Rust Djot parser.
 | Figure | `::: figure` | An image, with an optional caption paragraph | `<figure>`, `<head>` |
 | Table | Djot table | A table | `<table>` |
 | Note | `[^id]` and its definition | Footnote or endnote | `<note>` |
+| Commentary | `::: commentary` | A note on a passage, with `on=` its reference: `on="vsp.1"`, `on="vsp.5-6"` | `<note type="commentary" target>` |
 
 ## Inlines
 
@@ -63,6 +64,7 @@ Checked against jotdown 0.7, the Rust Djot parser.
 | `start=` | verse | Number of the first line. Later lines are counted. |
 | `original=` | verse, stanza | ID of the original book this aligns to (from its `book.toml`). |
 | `speaker=` | speech | Who speaks. |
+| `on=` | commentary | The reference of the passage it's about. Ranges allowed. |
 | `indent=` | verse | Extra indent for the whole block, in steps. |
 | `key=` | name spans | Entry in the book's name register. |
 | `type=` | `.named` | What kind of thing: `ship`, `weapon`, `hall`, … |

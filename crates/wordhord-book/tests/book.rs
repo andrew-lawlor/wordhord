@@ -343,3 +343,17 @@ fn a_scheme_has_one_prefix_or_several_works() {
     let b = book(&[("book.toml", toml), ("text/01.dj", "{#ch01-0001}\nText.\n")]);
     assert!(has(&b, Severity::Error, "either `prefix`"));
 }
+
+#[test]
+fn a_commentary_must_be_about_a_passage_the_book_has() {
+    let toml = "id = \"edda\"\ntitle = \"Edda\"\nlang = \"eng\"\n[refs]\nunit = \"stanza.line\"\nworks = { vsp = \"Völuspá\" }\n";
+    let b = book(&[
+        ("book.toml", toml),
+        (
+            "text/01.dj",
+            "{#ch01-0001 ref=\"vsp.1\"}\n::: stanza\nHearing I ask\n:::\n\n{#ch01-0002 ref=\"vsp.2\"}\n::: stanza\nI remember yet\n:::\n\n{#ch01-0003 on=\"vsp.1-2\"}\n::: commentary\nBoth stanzas.\n:::\n\n{#ch01-0004 on=\"vsp.9\"}\n::: commentary\nNo such stanza.\n:::\n",
+        ),
+    ]);
+    assert_eq!(b.errors(), 1, "{:#?}", b.diagnostics);
+    assert!(has(&b, Severity::Error, "a commentary on `vsp.9`"));
+}
