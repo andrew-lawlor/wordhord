@@ -1,0 +1,84 @@
+# Henry Adams Bellows, The Poetic Edda (1923). Project Gutenberg #73533.
+# Völuspá only, for now.
+
+end = "HOVAMOL"
+caesura = true
+# Structural wrappers and type styling.
+styling = ["div1", "div2", "divHead", "divBody", "section", "introduction", "introNote", "endNotes", "last-child", "first", "main", "sc"]
+
+[book]
+id = "edda-bellows"
+title = "The Poetic Edda"
+translator = "Henry Adams Bellows"
+year = 1923
+lang = "eng"
+license = "public domain"
+original = "edda-non"
+source = "Project Gutenberg #73533"
+
+[book.refs]
+unit = "stanza.line"
+works = { vsp = "Völuspá" }
+
+[book.edition]
+key = "bellows-1923"
+title = "The Poetic Edda"
+publisher = "American-Scandinavian Foundation"
+year = 1923
+
+[[work]]
+prefix = "vsp"
+start = "VOLUSPO"
+
+# Page numbers of the print edition, "[3]". Links back to the contents
+# share the class: they don't match the pattern, so they're dropped.
+[[role]]
+select = "span.pageNum"
+as = "page"
+pattern = '^\[(\d+)\]$'
+
+# Verse quoted in the notes (variant lines from other manuscripts) is part
+# of the note, not a stanza of the poem.
+[[role]]
+select = "div.endNotes div.lgouter"
+as = "verse"
+
+[[role]]
+select = "div.lgouter"
+as = "stanza"
+number = "span.verseNum"
+
+[[role]]
+select = "p.line"
+as = "line"
+
+# Bellows' notes follow each poem, one per stanza: "1. A few editors…"
+[[role]]
+select = "div.endNotes h3"
+as = "drop"
+
+[[role]]
+select = "div.endNotes p"
+as = "commentary"
+number = "span.parNum"
+
+[[role]]
+select = "h2.main"
+as = "heading"
+level = 1
+
+[[role]]
+select = "h2.sub"
+as = "heading"
+level = 2
+
+# "Introductory Note", before the poem.
+[[role]]
+select = "h3.main"
+as = "heading"
+level = 2
+
+# Transcriber's corrections: keep the corrected text.
+[[role]]
+select = "span.corr"
+as = "unwrap"

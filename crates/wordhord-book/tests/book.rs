@@ -357,3 +357,31 @@ fn a_commentary_must_be_about_a_passage_the_book_has() {
     assert_eq!(b.errors(), 1, "{:#?}", b.diagnostics);
     assert!(has(&b, Severity::Error, "a commentary on `vsp.9`"));
 }
+
+#[test]
+fn an_attribute_line_that_was_read_is_not_flagged() {
+    let b = book(&[
+        ("book.toml", LINE_BOOK),
+        (
+            "text/01.dj",
+            "{#ch01-0001}\nA plain paragraph.\n\n{#ch01-0002}\nAnother.\n",
+        ),
+    ]);
+    assert!(b.diagnostics.is_empty(), "{:#?}", b.diagnostics);
+}
+
+#[test]
+fn text_that_starts_and_ends_with_braces_is_not_an_attribute_line() {
+    let b = book(&[
+        ("book.toml", LINE_BOOK),
+        (
+            "text/01.dj",
+            "{#ch01-0001}\n{_Dvalin_}: a dwarf.[]{.pb n=\"8\"}\n",
+        ),
+    ]);
+    assert!(
+        !has(&b, Severity::Error, "attribute line"),
+        "{:#?}",
+        b.diagnostics
+    );
+}

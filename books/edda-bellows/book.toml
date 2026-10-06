@@ -1,0 +1,20 @@
+id = "edda-bellows"
+lang = "eng"
+license = "public domain"
+original = "edda-non"
+source = "Project Gutenberg #73533"
+title = "The Poetic Edda"
+translator = "Henry Adams Bellows"
+year = 1923
+
+[edition]
+key = "bellows-1923"
+publisher = "American-Scandinavian Foundation"
+title = "The Poetic Edda"
+year = 1923
+
+[refs]
+unit = "stanza.line"
+
+[refs.works]
+vsp = "Völuspá"

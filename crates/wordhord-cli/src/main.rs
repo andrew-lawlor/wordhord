@@ -1,4 +1,5 @@
-//! `wordhord check <book>…` and `wordhord align <translation> [<original>]`.
+//! `wordhord check <book>…`, `wordhord align <translation> [<original>]` and
+//! `wordhord import <epub> <recipe> <folder>`.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -10,6 +11,7 @@ use wordhord_book::{Book, Diagnostic};
 const USAGE: &str = "usage:
   wordhord check <book>...
   wordhord align <translation> [<original>]
+  wordhord import <epub> <recipe.toml> <new folder>
 
 A book is a folder with book.toml and text/*.dj. The original defaults to
 the folder beside the translation named by its `original`.";
@@ -19,6 +21,7 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("check") if args.len() > 1 => check(&args[1..]),
         Some("align") if args.len() == 2 || args.len() == 3 => align_books(&args[1], args.get(2)),
+        Some("import") if args.len() == 4 => import(&args[1], &args[2], &args[3]),
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
@@ -122,5 +125,61 @@ fn align_books(translation: &str, original: Option<&String>) -> ExitCode {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+fn import(epub: &str, recipe: &str, out: &str) -> ExitCode {
+    let run = || -> Result<bool, String> {
+        let recipe = wordhord_import::load_recipe(Path::new(recipe))?;
+        let imported = wordhord_import::import(Path::new(epub), &recipe)?;
+        let r = &imported.report;
+        for ch in &imported.chapters {
+            let stanzas = ch
+                .blocks
+                .iter()
+                .filter(|b| matches!(b, wordhord_import::convert::Out::Stanza { .. }))
+                .count();
+            let notes = ch
+                .blocks
+                .iter()
+                .filter(|b| matches!(b, wordhord_import::convert::Out::Commentary { .. }))
+                .count();
+            println!(
+                "{}: {} blocks, {stanzas} stanzas, {notes} notes",
+                ch.prefix,
+                ch.blocks.len()
+            );
+        }
+        println!("{} source pages", r.pages);
+        for (key, (n, sample)) in &r.unmapped {
+            println!("unmapped class {key} ×{n}: {sample}");
+        }
+        for (key, (n, sample)) in &r.unhandled {
+            println!("not handled {key} ×{n}: {sample}");
+        }
+        for p in &r.problems {
+            println!("problem: {p}");
+        }
+        wordhord_import::write(&imported, &recipe, Path::new(out))?;
+        let (book, differences) = wordhord_import::verify(&imported, Path::new(out))?;
+        for d in &differences {
+            println!("read back differently: {d}");
+        }
+        print(Path::new(out), &book.diagnostics);
+        println!(
+            "wrote {out}: {} differences on reading back; check: {} errors, {} warnings",
+            differences.len(),
+            book.errors(),
+            book.warnings()
+        );
+        Ok(differences.is_empty() && book.errors() == 0)
+    };
+    match run() {
+        Ok(true) => ExitCode::SUCCESS,
+        Ok(false) => ExitCode::FAILURE,
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
     }
 }

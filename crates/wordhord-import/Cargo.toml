@@ -1,0 +1,17 @@
+[package]
+name = "wordhord-import"
+description = "EPUB to Wordhord source, by recipe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wordhord-book = { path = "../wordhord-book" }
+roxmltree = "0.20"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+jotdown = "0.7"

@@ -204,8 +204,9 @@ impl<'s> P<'s> {
                 let text = self.inlines();
                 out.push(self.new_block(&at, BlockKind::Heading { level, text }, range.start));
             }
-            Event::Start(Container::Paragraph, _) => {
-                self.unread_syntax(range.clone());
+            Event::Start(Container::Paragraph, ref a) => {
+                let read = !a.is_empty();
+                self.unread_syntax(range.clone(), read);
                 self.allow(&at, &["id", "lang", "ref"], &[], "a paragraph", range.start);
                 let text = self.inlines();
                 out.push(self.new_block(&at, BlockKind::Paragraph(text), range.start));
@@ -336,14 +337,15 @@ impl<'s> P<'s> {
     }
 
     /// Catches Djot syntax that silently became text: an attribute line it
-    /// couldn't read, or a `:::` that didn't open a block.
-    fn unread_syntax(&mut self, range: Range<usize>) {
+    /// couldn't read, or a `:::` that didn't open a block. `read` says Djot
+    /// did read the block's attributes: then a first `{…}` line is them.
+    fn unread_syntax(&mut self, range: Range<usize>, read: bool) {
         let end = self.container_end().max(range.end).min(self.src.len());
         let text = &self.src[range.start..end];
         let mut offset = range.start;
         for line in text.split_inclusive('\n') {
             let t = line.trim();
-            if t.starts_with('{') && t.ends_with('}') && offset == range.start {
+            if looks_like_attributes(t) && offset == range.start && !read {
                 self.report(
                     Severity::Error,
                     offset,
@@ -404,7 +406,7 @@ impl<'s> P<'s> {
                             "lines of verse can't have attributes; put them on the verse",
                         );
                     }
-                    self.unread_syntax(r.clone());
+                    self.unread_syntax(r.clone(), false);
                     for (inlines, first) in self.lines() {
                         verse.lines.push(VerseLine {
                             indent: self.indent_at(first),
@@ -740,6 +742,16 @@ fn describe(c: &Container) -> String {
         Container::Verbatim => "verbatim text".into(),
         other => format!("{other:?}"),
     }
+}
+
+/// A whole line that is one `{…}` attribute block: `{#id ref=x}`, not
+/// text that happens to start with `{_italics_}` and end with `{.pb}`.
+fn looks_like_attributes(line: &str) -> bool {
+    let Some(inner) = line.strip_prefix('{').and_then(|l| l.strip_suffix('}')) else {
+        return false;
+    };
+    inner.starts_with(|c: char| c == '#' || c == '.' || c.is_ascii_alphabetic())
+        && !inner.contains(['{', '}'])
 }
 
 /// `12` or `12-13`.
