@@ -174,11 +174,22 @@ On the Elipsa 2E:
 
 Measured on the device and written to the log, so regressions show.
 
-## 13. Device
+## 13. Platforms
 
-Draft 1's device layer stays. FBInk draws and refreshes. Input devices are read raw. NickelMenu starts a script that pauses Nickel with SIGSTOP and saves its screen; both come back on exit or crash. Wordhord closes itself after 30 minutes untouched, so Nickel's sleep and power handling return.
+Everything that touches hardware sits behind one thin layer, so the rest of Wordhord never knows what it runs on:
 
-Nickel holds the power button and the sleep cover, so Wordhord can't grab them. A power press while Wordhord runs reaches Nickel when it resumes. Wordhord needs its own way out and, later, its own sleep.
+- **Screen:** draw a region of grey pixels, refresh it with a waveform (full, fast, or ink).
+- **Input:** finger, pen and button events, already turned the right way up.
+- **Power:** sleep, wake, battery, frontlight.
+- **Lifecycle:** start, hand back, crash safely.
+
+Three backends:
+
+**Kobo** (first). FBInk draws and refreshes. Input devices are read raw. NickelMenu starts a script that pauses Nickel with SIGSTOP and saves its screen; both come back on exit or crash. Wordhord closes itself after 30 minutes untouched, so Nickel's sleep and power handling return. Nickel holds the power button and the sleep cover, so Wordhord can't grab them; a power press while Wordhord runs reaches Nickel when it resumes. Wordhord needs its own way out and, later, its own sleep.
+
+**PineNote** (later). The same 10.3" 1404×1872 panel as the Elipsa 2E, so layouts and cached pages carry over unchanged. It runs ordinary Linux, so Wordhord is a normal program there: no host app to pause. The pen is a Wacom digitiser, a standard input device. The work is the display: the `rockchip_ebc` e-ink driver, which is still changing. Check its state before starting.
+
+**Desktop** (for development). A window that behaves like the device: the same pixels, mouse clicks as taps, drags as swipes, a tablet as the pen. Most testing happens here, without copying anything to a Kobo. Waveforms are simulated, slowly, so a missed refresh shows.
 
 ## 14. Spice
 
@@ -203,7 +214,7 @@ Small things that make it Wordhord's:
 
 Each ends in a go or no-go.
 
-1. **Any EPUB, one chapter.** Five Standard Ebooks and five messy EPUBs laid out on the device. Go: you'd read them, and page turns meet budget.
+1. **Any EPUB, one chapter.** Laid out on the desktop backend, then on the Kobo. Test set: *Children of Ash and Elm* (Basic Books), *The Prose Edda* and Michael Alexander's *Beowulf* (Penguin), Emily Wilson's *Odyssey* (Norton), Davidson's *Gods and Myths of Northern Europe* (Penguin), *The Hammer and the Cross* (Tor), *Learning Go* (O'Reilly), and Standard Ebooks' *Moby-Dick* and *Canterbury Tales* as controls. Go: you'd read them, and page turns meet budget.
 2. **Library and position.** Scan, list, open, resume. Go: launch to last page in under a second.
 3. **Dictionary.** English and Old Norse packs; tap a word, see the entry, inflected forms included. Go: four taps in five find the right entry.
 4. **Pen.** Ink, gestures, anchors, the log. Go: under 5 ms per point, and ink follows its paragraph through a font change.
