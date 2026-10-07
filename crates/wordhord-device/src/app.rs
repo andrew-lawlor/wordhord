@@ -2,6 +2,7 @@
 //! pages, and does what each gesture asks until it's closed.
 
 use std::path::Path;
+use std::thread::JoinHandle;
 use std::time::Instant;
 
 use wordhord_typeset::fonts::{Face, FontFile, Fonts};
@@ -45,7 +46,20 @@ pub fn run(screen: &mut dyn Platform, library: &Path, app: &Path) -> Result<(), 
     let _ = std::fs::write(library.join("last"), book.name.as_bytes());
     let (mut chapter, mut page) = book.position();
     let mut flash = true;
+    // The chapter being laid out ahead, on another thread.
+    let mut ahead: Option<(usize, JoinHandle<()>)> = None;
     loop {
+        // If the next chapter is still being laid out, wait for it rather
+        // than do the work twice.
+        if let Some((k, handle)) = ahead.take() {
+            if k == chapter && !handle.is_finished() {
+                let waited = Instant::now();
+                let _ = handle.join();
+                eprintln!("waited {:?} for chapter {k}", waited.elapsed());
+            } else if !handle.is_finished() {
+                ahead = Some((k, handle));
+            }
+        }
         let t = match book.chapter(chapter) {
             Ok(t) => t,
             Err(e) => {
@@ -72,12 +86,17 @@ pub fn run(screen: &mut dyn Platform, library: &Path, app: &Path) -> Result<(), 
             return Err(e);
         }
         let read = |src: &str| book.image(src);
-        let mut renderer = Renderer::new(&book.fonts).with_images(&read);
+        let mut renderer = Renderer::new(&book.fonts)
+            .with_images(&read)
+            .with_picture_cache(book.picture_dir());
         let mut reader = Reader::new(&t, page);
         book.remember(chapter, reader.page);
         // The page as drawn, to put back where the panel was.
         let mut shown = draw(screen, &mut renderer, &t.pages[reader.page], flash);
         flash = false;
+        if ahead.is_none() {
+            ahead = Some((chapter + 1, lay_out_ahead(&book, chapter)));
+        }
         let step = loop {
             let gesture = screen.next();
             let effect = reader.act(gesture);
@@ -127,6 +146,38 @@ pub fn run(screen: &mut dyn Platform, library: &Path, app: &Path) -> Result<(), 
             }
         }
     }
+}
+
+/// On another thread, readies the images on the rest of chapter `now`,
+/// then lays out the next chapter and readies its images too, so they're
+/// waiting in the cache when the reader gets there. The thread opens its
+/// own copy of the book and runs at a lower priority than the reader.
+fn lay_out_ahead(book: &Book, now: usize) -> JoinHandle<()> {
+    let (path, app) = (book.path.clone(), book.app.clone());
+    let next = now + 1;
+    let wanted = next < book.chapters() && !book.is_cached(next);
+    std::thread::spawn(move || {
+        // On Linux, nice applies to the calling thread alone.
+        unsafe {
+            libc::nice(10);
+        }
+        let started = Instant::now();
+        let Ok(b) = Book::open(&path, &app) else {
+            return;
+        };
+        if let Ok(t) = b.chapter(now) {
+            b.prepare_pictures(&t);
+        }
+        if wanted {
+            match b.chapter(next) {
+                Ok(t) => {
+                    b.prepare_pictures(&t);
+                    eprintln!("ahead: chapter {next} ready in {:?}", started.elapsed());
+                }
+                Err(e) => eprintln!("ahead: chapter {next}: {e}"),
+            }
+        }
+    })
 }
 
 /// Draws a whole page; returns its pixels.

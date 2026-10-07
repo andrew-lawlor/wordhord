@@ -3,7 +3,7 @@
 //! panel shows. The preview, and the reference the device must match.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use swash::scale::{image::Image, Render, ScaleContext, Source};
 use swash::zeno::Format;
@@ -23,6 +23,8 @@ pub struct Renderer<'a> {
     images: Option<&'a ReadImage<'a>>,
     /// Images decoded, scaled and dithered, by source and size.
     pictures: HashMap<(String, u32, u32), Option<Vec<u8>>>,
+    /// Where finished images are kept between runs.
+    picture_dir: Option<PathBuf>,
 }
 
 impl<'a> Renderer<'a> {
@@ -33,7 +35,15 @@ impl<'a> Renderer<'a> {
             cache: HashMap::new(),
             images: None,
             pictures: HashMap::new(),
+            picture_dir: None,
         }
+    }
+
+    /// Keep finished images in `dir`, so each is decoded, scaled and
+    /// dithered once, not every time its page is drawn.
+    pub fn with_picture_cache(mut self, dir: PathBuf) -> Renderer<'a> {
+        self.picture_dir = Some(dir);
+        self
     }
 
     /// Draw images, read by `bytes`.
@@ -48,8 +58,7 @@ impl<'a> Renderer<'a> {
         if !self.pictures.contains_key(&key) {
             let picture = self
                 .images
-                .and_then(|read| read(src))
-                .and_then(|bytes| picture(&bytes, w, h));
+                .and_then(|read| cached_picture(self.picture_dir.as_deref(), src, w, h, read));
             self.pictures.insert(key.clone(), picture);
         }
         self.pictures.get(&key).and_then(|p| p.as_ref())
@@ -145,7 +154,13 @@ pub fn picture(bytes: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
         return None;
     }
     let decoded = image::load_from_memory(bytes).ok()?.to_luma_alpha8();
-    let scaled = image::imageops::resize(&decoded, w, h, image::imageops::FilterType::CatmullRom);
+    // Shrinking, the usual case, by averaging boxes of pixels: fast, and
+    // smooth enough for 16 greys. Enlarging, bilinear.
+    let scaled = if w <= decoded.width() && h <= decoded.height() {
+        image::imageops::thumbnail(&decoded, w, h)
+    } else {
+        image::imageops::resize(&decoded, w, h, image::imageops::FilterType::Triangle)
+    };
     let mut grey: Vec<f32> = scaled
         .pixels()
         .map(|p| {
@@ -178,6 +193,45 @@ pub fn picture(bytes: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
         }
     }
     Some(out)
+}
+
+/// An image ready to draw at `w`×`h`: from `dir` if it was made before, or
+/// made now from the file `read` gives, and kept there.
+pub fn cached_picture(
+    dir: Option<&Path>,
+    src: &str,
+    w: u32,
+    h: u32,
+    read: &ReadImage,
+) -> Option<Vec<u8>> {
+    let path = dir.map(|d| picture_path(d, src, w, h));
+    if let Some(bytes) = path.as_ref().and_then(|p| std::fs::read(p).ok()) {
+        if bytes.len() == (w * h) as usize {
+            return Some(bytes);
+        }
+    }
+    let made = picture(&read(src)?, w, h)?;
+    if let Some(path) = path {
+        // Written whole, then renamed, so no reader finds half of it.
+        let partial = path.with_extension("part");
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if std::fs::write(&partial, &made).is_ok() {
+            let _ = std::fs::rename(&partial, &path);
+        }
+    }
+    Some(made)
+}
+
+/// Where `cached_picture` keeps an image made at `w`×`h`.
+pub fn picture_path(dir: &Path, src: &str, w: u32, h: u32) -> PathBuf {
+    use sha2::{Digest, Sha256};
+    let name: String = Sha256::digest(src.as_bytes())[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    dir.join(format!("{name}-{w}x{h}.grey"))
 }
 
 /// An image's size in pixels, from its header, without decoding it.

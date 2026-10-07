@@ -23,6 +23,10 @@ pub struct Book {
     /// cached pages.
     pub dir: PathBuf,
     pub name: String,
+    /// The book's file or folder, and the app folder: enough to open it
+    /// again, on another thread.
+    pub path: PathBuf,
+    pub app: PathBuf,
     pub fonts: Fonts,
     source: Source,
 }
@@ -48,7 +52,9 @@ impl Book {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         if path.join("pages.json").exists() {
-            return Book::compiled(path, &app.join("fonts"), name);
+            let mut book = Book::compiled(path, &app.join("fonts"), name)?;
+            book.app = app.to_path_buf();
+            return Ok(book);
         }
         let started = Instant::now();
         let profile_path = app.join("profile.toml");
@@ -72,6 +78,8 @@ impl Book {
         eprintln!("{name}: opened and hashed in {:?}", started.elapsed());
         Ok(Book {
             name,
+            path: path.to_path_buf(),
+            app: app.to_path_buf(),
             fonts,
             source: Source::Epub {
                 epub: Box::new(epub),
@@ -115,6 +123,8 @@ impl Book {
         Ok(Book {
             dir: dir.to_path_buf(),
             name,
+            path: dir.to_path_buf(),
+            app: PathBuf::new(),
             fonts: Fonts::from_files(files)?,
             source: Source::Compiled(typeset),
         })
@@ -159,7 +169,11 @@ impl Book {
         let laid_out = started.elapsed();
         let _ = std::fs::create_dir_all(pages);
         if let Ok(json) = serde_json::to_vec(&t) {
-            let _ = std::fs::write(&cached, json);
+            // Written whole, then renamed: another thread may be reading.
+            let partial = cached.with_extension("part");
+            if std::fs::write(&partial, json).is_ok() {
+                let _ = std::fs::rename(&partial, &cached);
+            }
         }
         eprintln!(
             "chapter {k} ({path}): converted in {converted:?}, {} pages laid out in {:?}, cached in {:?}",
@@ -168,6 +182,34 @@ impl Book {
             started.elapsed() - laid_out
         );
         Ok(t)
+    }
+
+    /// Whether a chapter's pages are already laid out and kept.
+    pub fn is_cached(&self, k: usize) -> bool {
+        match &self.source {
+            Source::Compiled(_) => true,
+            Source::Epub { pages, .. } => pages.join(format!("{k:03}.json")).exists(),
+        }
+    }
+
+    /// Where finished images are kept.
+    pub fn picture_dir(&self) -> PathBuf {
+        match &self.source {
+            Source::Compiled(_) => self.dir.join("pictures"),
+            Source::Epub { pages, .. } => pages.join("pictures"),
+        }
+    }
+
+    /// Makes every image a chapter's pages draw, ready to draw.
+    pub fn prepare_pictures(&self, t: &Typeset) {
+        let dir = self.picture_dir();
+        let read = |src: &str| self.image(src);
+        for img in t.pages.iter().flat_map(|p| &p.images) {
+            let (w, h) = (img.width.round() as u32, img.height.round() as u32);
+            if !wordhord_typeset::render::picture_path(&dir, &img.src, w, h).exists() {
+                let _ = wordhord_typeset::render::cached_picture(Some(&dir), &img.src, w, h, &read);
+            }
+        }
     }
 
     /// An image's bytes, by the source its pages give.
