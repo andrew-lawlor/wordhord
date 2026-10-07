@@ -59,6 +59,19 @@ pub struct Page {
     pub links: Vec<Link>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<PageImage>,
+    /// Filled rectangles: rules, bars, frames.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<Rule>,
+}
+
+/// A filled rectangle, in a grey from 0 (black) to 255 (white).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Rule {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub grey: u8,
 }
 
 /// An image on the page: its file, as the book names it, and its box.

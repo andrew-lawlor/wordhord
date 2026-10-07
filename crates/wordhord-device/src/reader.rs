@@ -21,6 +21,9 @@ const FLASH_EVERY: usize = 6;
 /// Taps this close to the left or right edge, as a share of the width,
 /// turn the page.
 const EDGE: f32 = 0.15;
+/// Taps this close to the top, as a share of the height, bring up the bar
+/// with the way back to the library and the contents.
+const TOP: f32 = 0.08;
 /// A tap that misses every link, but by less than this many pixels, takes
 /// the nearest: fingers are blunt, and links sit close to gaps.
 const NEAR: f32 = 40.0;
@@ -46,6 +49,8 @@ pub enum Effect {
     /// Past the chapter's end (1) or before its start (-1): the next or
     /// previous chapter.
     Chapter(i8),
+    /// Bring up the bar over the top of the page.
+    Menu,
     Close,
 }
 
@@ -124,6 +129,9 @@ impl<'t> Reader<'t> {
         }
         if let Some(l) = link_at(&t.pages[self.page].links, x, y) {
             return self.follow(&l.to);
+        }
+        if y < t.height as f32 * TOP {
+            return Effect::Menu;
         }
         let width = t.width as f32;
         if x < width * EDGE {
@@ -319,6 +327,16 @@ mod tests {
         // 25 px above the stanza number's box.
         assert_eq!(r.act(Gesture::Tap(60, 255)), Effect::Panel);
         assert_eq!(r.open, Some(Open { note: 1, page: 0 }));
+    }
+
+    #[test]
+    fn a_tap_at_the_top_brings_up_the_bar() {
+        let t = book();
+        let mut r = Reader::new(&t, 0);
+        assert_eq!(r.act(Gesture::Tap(700, 60)), Effect::Menu);
+        // Even near an edge: the top wins over turning the page.
+        assert_eq!(r.act(Gesture::Tap(1380, 60)), Effect::Menu);
+        assert_eq!(r.page, 0);
     }
 
     #[test]

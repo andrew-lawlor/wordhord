@@ -34,6 +34,9 @@ pub struct Entry {
     pub language: Option<String>,
     /// The cover: an archive path, or `../cover.jpg` for one beside the book.
     pub cover: Option<String>,
+    /// The cover's size in pixels, so it's drawn in proportion.
+    #[serde(default)]
+    pub cover_size: Option<(u32, u32)>,
     pub drm: bool,
 }
 
@@ -59,7 +62,12 @@ impl Library {
         let mut books = Vec::new();
         for (path, size, modified) in files {
             let entry = match old.get(&path) {
-                Some(e) if e.size == size && e.modified == modified => {
+                // Entries from before covers were measured are read again.
+                Some(e)
+                    if e.size == size
+                        && e.modified == modified
+                        && (e.cover.is_none() || e.cover_size.is_some()) =>
+                {
                     kept += 1;
                     e.clone()
                 }
@@ -145,11 +153,13 @@ impl Library {
             .collect()
     }
 
-    /// Tags, A to Z, each with its books by title.
+    /// Tags, A to Z, each with its books by title. Only tags a person
+    /// gave: library-catalogue subjects that publishers ship ("Henry V,
+    /// King of England, 1387-1422 -- Drama") are left out.
     pub fn by_tag(&self) -> Vec<(String, Vec<&Entry>)> {
         let mut groups: BTreeMap<String, (String, Vec<&Entry>)> = BTreeMap::new();
         for e in &self.books {
-            for t in &e.tags {
+            for t in e.tags.iter().filter(|t| is_own_tag(t)) {
                 groups
                     .entry(t.to_lowercase())
                     .or_insert_with(|| (t.clone(), Vec::new()))
@@ -158,6 +168,84 @@ impl Library {
             }
         }
         groups.into_values().collect()
+    }
+}
+
+fn is_own_tag(tag: &str) -> bool {
+    !tag.contains("--")
+        && !tag.chars().next().is_some_and(|c| c.is_ascii_digit())
+        && tag.chars().count() <= 40
+}
+
+impl Entry {
+    /// The cover's bytes, from the book or from beside it.
+    pub fn cover_bytes(&self, root: &Path) -> Option<Vec<u8>> {
+        let cover = self.cover.as_deref()?;
+        let full = root.join(&self.path);
+        if cover == "../cover.jpg" {
+            return std::fs::read(full.parent()?.join("cover.jpg")).ok();
+        }
+        Epub::open(&full).ok()?.bytes(cover).ok()
+    }
+
+    /// "Harry Harrison · The Hammer and the Cross 2"
+    pub fn byline(&self) -> String {
+        let author = self.authors.first().cloned().unwrap_or_default();
+        match (&self.series, self.series_index) {
+            (Some(s), Some(n)) => format!("{author} · {s} {}", number(n)),
+            (Some(s), None) => format!("{author} · {s}"),
+            _ => author,
+        }
+    }
+}
+
+/// 2 as "2", 2.5 as "2.5".
+pub fn number(n: f32) -> String {
+    if n.fract() == 0.0 {
+        format!("{}", n as i64)
+    } else {
+        format!("{n}")
+    }
+}
+
+/// A book opened lately: where it is, when, and how far through.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Opened {
+    pub path: String,
+    pub opened: u64,
+    pub progress: f32,
+}
+
+/// Books opened lately, most recent first.
+pub fn recent(app: &Path) -> Vec<Opened> {
+    std::fs::read(app.join("recent.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+/// Records a book as opened now, `progress` of the way through.
+pub fn opened(app: &Path, path: &str, progress: f32) {
+    let mut list = recent(app);
+    list.retain(|o| o.path != path);
+    let now = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    list.insert(
+        0,
+        Opened {
+            path: path.to_string(),
+            opened: now,
+            progress,
+        },
+    );
+    list.truncate(50);
+    if let Ok(json) = serde_json::to_vec(&list) {
+        let file = app.join("recent.json");
+        let partial = file.with_extension("part");
+        if std::fs::write(&partial, json).is_ok() {
+            let _ = std::fs::rename(&partial, file);
+        }
     }
 }
 
@@ -299,6 +387,17 @@ fn entry(
                 None => a.clone(),
             })
     });
+    let cover = if beside_cover.is_some() {
+        Some("../cover.jpg".to_string())
+    } else {
+        m.cover
+    };
+    let cover_size = match (&cover, &beside_cover) {
+        (Some(_), Some(file)) => std::fs::read(file).ok(),
+        (Some(c), None) => epub.bytes(c).ok(),
+        _ => None,
+    }
+    .and_then(|b| wordhord_typeset::render::image_size(&b));
     Some(Entry {
         path: path.to_string(),
         size,
@@ -314,11 +413,8 @@ fn entry(
         series_index: m.series_index,
         tags: m.tags,
         language: m.language,
-        cover: if beside_cover.is_some() {
-            Some("../cover.jpg".into())
-        } else {
-            m.cover
-        },
+        cover,
+        cover_size,
         drm: epub.drm(),
     })
 }

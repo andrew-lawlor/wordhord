@@ -83,7 +83,18 @@ impl<'a> Renderer<'a> {
     pub fn page(&mut self, page: &Page, width: u32, height: u32) -> Vec<u8> {
         let (w, h) = (width as i32, height as i32);
         let mut pixels = vec![255u8; (width * height) as usize];
-        // Images first, so text can sit on them.
+        for r in &page.rules {
+            let (x0, y0) = (r.x.round().max(0.0) as u32, r.y.round().max(0.0) as u32);
+            let (x1, y1) = (
+                ((r.x + r.width).round() as u32).min(width),
+                ((r.y + r.height).round() as u32).min(height),
+            );
+            for y in y0..y1 {
+                let row = (y * width) as usize;
+                pixels[row + x0 as usize..row + x1.max(x0) as usize].fill(r.grey);
+            }
+        }
+        // Images next, so text can sit on them.
         for img in &page.images {
             let (w, h) = (img.width.round() as u32, img.height.round() as u32);
             let (x0, y0) = (img.x.round() as i32, img.y.round() as i32);

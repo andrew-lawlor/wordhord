@@ -18,7 +18,8 @@ sync
 # shellcheck disable=SC2086
 killall -q -STOP $PAUSED
 
-./wordhord-reader "$DIR/library" "$DIR" "$SCREEN" >>"$LOG" 2>&1
+# The library is every book on the Kobo.
+./wordhord-reader /mnt/onboard "$DIR" "$SCREEN" >>"$LOG" 2>&1
 status=$?
 echo "exit $status" >>"$LOG"
 if [ "$status" -ne 0 ]; then

@@ -1,5 +1,8 @@
-//! The reader, whatever it runs on: opens the book read last, draws its
-//! pages, and does what each gesture asks until it's closed.
+//! Wordhord, whatever it runs on: the library, and the book open in it.
+//!
+//! It opens the book read last, if it's still there, else the library.
+//! From a book, a tap at the top brings up a bar: back to the library, or
+//! to the contents. Holding a finger down closes Wordhord from anywhere.
 
 use std::path::Path;
 use std::thread::JoinHandle;
@@ -7,28 +10,36 @@ use std::time::Instant;
 
 use wordhord_typeset::fonts::{Face, FontFile, Fonts};
 use wordhord_typeset::page::{Page, Run};
+use wordhord_typeset::profile::Profile;
 use wordhord_typeset::render::{self, Renderer};
 
-use crate::book::{self, Book};
+use crate::book::Book;
+use crate::library::{self, Entry, Library};
 use crate::platform::Platform;
 use crate::reader::{Effect, Reader};
 use crate::touch::Gesture;
+use crate::ui::{Action, Recent, Row, Screen, Shelf, Ui, COVER};
 
-pub fn run(screen: &mut dyn Platform, library: &Path, app: &Path) -> Result<(), String> {
-    let fonts = app.join("fonts");
+/// How a book was left.
+enum Leave {
+    Library,
+    Close,
+}
+
+pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), String> {
+    let fonts_dir = app.join("fonts");
     let (width, height) = screen.size();
     let started = Instant::now();
-    let opened = book::choose(library)
-        .ok_or_else(|| format!("no books in {}", library.display()))
-        .and_then(|path| Book::open(&path, app));
-    let book = match opened {
-        Ok(b) => b,
+    let setup = Profile::load(&app.join("profile.toml"))
+        .and_then(|p| Fonts::load(&p.dir, &p.fonts).map(|f| (p, f)));
+    let (profile, fonts) = match setup {
+        Ok(s) => s,
         Err(e) => {
             say(
                 screen,
-                &fonts,
+                &fonts_dir,
                 &[
-                    "Wordhord can't open a book.",
+                    "Wordhord can't start.",
                     &e,
                     "Hold a finger down to go back.",
                 ],
@@ -37,20 +48,259 @@ pub fn run(screen: &mut dyn Platform, library: &Path, app: &Path) -> Result<(), 
             return Err(e);
         }
     };
+    let ui = Ui::new(&fonts, width, height, profile.ppi);
+    let library = Library::scan(root, &app.join("library.json"));
+    eprintln!("ready in {:?}", started.elapsed());
+    let mut open = library::recent(app)
+        .into_iter()
+        .map(|o| o.path)
+        .find(|p| library.books.iter().any(|b| &b.path == p));
+    let mut browser = Browser::default();
+    loop {
+        if let Some(path) = open.take() {
+            match read(screen, root, &path, app, &ui, &fonts) {
+                Ok(Leave::Library) => {}
+                Ok(Leave::Close) => return Ok(()),
+                Err(e) => {
+                    eprintln!("{path}: {e}");
+                    say(
+                        screen,
+                        &fonts_dir,
+                        &["Wordhord can't open this book.", &e, "Tap to go back."],
+                    );
+                    screen.next();
+                }
+            }
+        }
+        match browse(screen, &mut browser, &library, root, app, &ui, &fonts) {
+            Some(path) => open = Some(path),
+            None => return Ok(()),
+        }
+    }
+}
+
+// ---- the library -----------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum View {
+    Home,
+    Shelf(Shelf),
+    Group(Shelf, usize),
+}
+
+/// Where in the library the reader is: the views gone through, each with
+/// its page.
+#[derive(Default)]
+struct Browser {
+    stack: Vec<(View, usize)>,
+}
+
+impl Browser {
+    fn current(&self) -> (View, usize) {
+        self.stack.last().copied().unwrap_or((View::Home, 0))
+    }
+
+    fn go(&mut self, action: &Action) {
+        match action {
+            Action::Shelf(s) => self.stack.push((View::Shelf(*s), 0)),
+            Action::Group(s, k) => self.stack.push((View::Group(*s, *k), 0)),
+            Action::Back => {
+                self.stack.pop();
+            }
+            _ => {}
+        }
+    }
+
+    fn turn(&mut self, by: isize, pages: usize) {
+        let (view, page) = self.current();
+        let to = page as isize + by;
+        if to >= 0 && (to as usize) < pages {
+            self.stack.pop();
+            self.stack.push((view, to as usize));
+        }
+    }
+
+    fn screen(&self, ui: &Ui, library: &Library, recent: &[library::Opened]) -> Screen {
+        let progress = |path: &str| recent.iter().find(|o| o.path == path).map(|o| o.progress);
+        let row = |e: &Entry| Row {
+            title: e.title.clone(),
+            detail: e.byline(),
+            cover: Some((e.path.clone(), e.cover_size.unwrap_or((0, 0)))),
+            progress: progress(&e.path),
+            action: Action::Open(e.path.clone()),
+            depth: 0,
+        };
+        let groups = |shelf: Shelf| match shelf {
+            Shelf::Authors => library.by_author(),
+            Shelf::Series => library.by_series(),
+            Shelf::Tags => library.by_tag(),
+            Shelf::All => Vec::new(),
+        };
+        let (view, page) = self.current();
+        match view {
+            View::Home => {
+                let recent: Vec<Recent> = recent
+                    .iter()
+                    .filter_map(|o| {
+                        let e = library.books.iter().find(|b| b.path == o.path)?;
+                        Some(Recent {
+                            path: e.path.clone(),
+                            title: e.title.clone(),
+                            cover: e.cover_size,
+                            progress: o.progress,
+                        })
+                    })
+                    .take(4)
+                    .collect();
+                ui.home(
+                    &recent,
+                    [
+                        (Shelf::Authors, library.by_author().len()),
+                        (Shelf::Series, library.by_series().len()),
+                        (Shelf::Tags, library.by_tag().len()),
+                        (Shelf::All, library.books.len()),
+                    ],
+                )
+            }
+            View::Shelf(Shelf::All) => {
+                let rows: Vec<Row> = library.books.iter().map(row).collect();
+                ui.list(Shelf::All.name(), &rows, page, true)
+            }
+            View::Shelf(shelf) => {
+                let rows: Vec<Row> = groups(shelf)
+                    .iter()
+                    .enumerate()
+                    .map(|(k, (name, books))| Row {
+                        title: name.clone(),
+                        detail: match (shelf, books.len()) {
+                            (Shelf::Series, _) => books
+                                .first()
+                                .and_then(|b| b.authors.first().cloned())
+                                .unwrap_or_default(),
+                            (_, 1) => "1 book".into(),
+                            (_, n) => format!("{n} books"),
+                        },
+                        cover: None,
+                        progress: None,
+                        action: Action::Group(shelf, k),
+                        depth: 0,
+                    })
+                    .collect();
+                ui.list(shelf.name(), &rows, page, true)
+            }
+            View::Group(shelf, k) => {
+                let groups = groups(shelf);
+                let Some((name, books)) = groups.get(k) else {
+                    return ui.list(shelf.name(), &[], 0, true);
+                };
+                let rows: Vec<Row> = books.iter().map(|e| row(e)).collect();
+                ui.list(name, &rows, page, true)
+            }
+        }
+    }
+}
+
+/// The library, until a book is chosen (its path) or Wordhord is closed.
+fn browse(
+    screen: &mut dyn Platform,
+    browser: &mut Browser,
+    library: &Library,
+    root: &Path,
+    app: &Path,
+    ui: &Ui,
+    fonts: &Fonts,
+) -> Option<String> {
+    let (width, height) = screen.size();
+    let read = |src: &str| {
+        let path = src.strip_prefix(COVER)?;
+        library
+            .books
+            .iter()
+            .find(|b| b.path == path)?
+            .cover_bytes(root)
+    };
+    let mut renderer = Renderer::new(fonts)
+        .with_images(&read)
+        .with_picture_cache(app.join("covers"));
+    let mut flash = true;
+    loop {
+        let recent = library::recent(app);
+        let s = browser.screen(ui, library, &recent);
+        let started = Instant::now();
+        let pixels = renderer.page(&s.page, width, height);
+        screen.draw(&pixels, width, height, 0, 0, flash);
+        eprintln!(
+            "library: {:?} drawn in {:?}",
+            browser.current(),
+            started.elapsed()
+        );
+        flash = false;
+        loop {
+            match screen.next() {
+                Gesture::Hold | Gesture::Power => return None,
+                Gesture::SwipeLeft if browser.current().1 + 1 < s.pages => {
+                    browser.turn(1, s.pages);
+                    break;
+                }
+                Gesture::SwipeRight if browser.current().1 > 0 => {
+                    browser.turn(-1, s.pages);
+                    break;
+                }
+                Gesture::Tap(x, y) => match s.hit(x as f32, y as f32) {
+                    Some(Action::Open(path)) => return Some(path.clone()),
+                    Some(a) => {
+                        let a = a.clone();
+                        // Back from home has nowhere to go.
+                        if !(a == Action::Back && browser.stack.is_empty()) {
+                            browser.go(&a);
+                            flash = true;
+                            break;
+                        }
+                    }
+                    None => {}
+                },
+                _ => {}
+            }
+        }
+    }
+}
+
+// ---- a book ------------------------------------------------------------------
+
+/// Where reading goes from a chapter.
+enum Step {
+    Next,
+    Previous,
+    Jump(usize),
+    Leave(Leave),
+}
+
+fn read(
+    screen: &mut dyn Platform,
+    root: &Path,
+    path: &str,
+    app: &Path,
+    ui: &Ui,
+    fonts: &Fonts,
+) -> Result<Leave, String> {
+    let (width, height) = screen.size();
+    let started = Instant::now();
+    let book = Book::open(&root.join(path), app)?;
     eprintln!(
         "{}: {} chapters, opened in {:?}",
         book.name,
         book.chapters(),
         started.elapsed()
     );
-    let _ = std::fs::write(library.join("last"), book.name.as_bytes());
     let (mut chapter, mut page) = book.position();
     let mut flash = true;
     // The chapter being laid out ahead, on another thread.
     let mut ahead: Option<(usize, JoinHandle<()>)> = None;
+    // A renderer for the bar and the contents, in the app's own fonts.
+    let mut chrome = Renderer::new(fonts);
     loop {
-        // If the next chapter is still being laid out, wait for it rather
-        // than do the work twice.
+        // If this chapter is still being laid out, wait for it rather than
+        // do the work twice.
         if let Some((k, handle)) = ahead.take() {
             if k == chapter && !handle.is_finished() {
                 let waited = Instant::now();
@@ -60,38 +310,24 @@ pub fn run(screen: &mut dyn Platform, library: &Path, app: &Path) -> Result<(), 
                 ahead = Some((k, handle));
             }
         }
-        let t = match book.chapter(chapter) {
-            Ok(t) => t,
-            Err(e) => {
-                say(
-                    screen,
-                    &fonts,
-                    &[
-                        "Wordhord can't open this chapter.",
-                        &e,
-                        "Hold a finger down to go back.",
-                    ],
-                );
-                wait_to_close(screen);
-                return Err(e);
-            }
-        };
+        let t = book.chapter(chapter)?;
         if (t.width, t.height) != (width, height) {
-            let e = format!(
+            return Err(format!(
                 "These pages are set for a {}×{} screen. This one is {width}×{height}.",
                 t.width, t.height
-            );
-            say(screen, &fonts, &[&e, "Hold a finger down to go back."]);
-            wait_to_close(screen);
-            return Err(e);
+            ));
         }
         let read = |src: &str| book.image(src);
         let mut renderer = Renderer::new(&book.fonts)
             .with_images(&read)
             .with_picture_cache(book.picture_dir());
         let mut reader = Reader::new(&t, page);
+        let chapters = book.chapters() as f32;
+        let progress =
+            |page: usize| (chapter as f32 + (page + 1) as f32 / t.pages.len() as f32) / chapters;
         book.remember(chapter, reader.page);
-        // The page as drawn, to put back where the panel was.
+        library::opened(app, path, progress(reader.page));
+        // The page as drawn, to put back where the panel or bar was.
         let mut shown = draw(screen, &mut renderer, &t.pages[reader.page], flash);
         flash = false;
         if ahead.is_none() {
@@ -103,12 +339,12 @@ pub fn run(screen: &mut dyn Platform, library: &Path, app: &Path) -> Result<(), 
             eprintln!("{gesture:?}: {effect:?}");
             match effect {
                 Effect::Nothing => {}
-                Effect::Close => break None,
+                Effect::Close => break Step::Leave(Leave::Close),
                 // At the book's first or last page, there's nowhere to go.
                 Effect::Chapter(step)
                     if (step > 0 && chapter + 1 < book.chapters()) || (step < 0 && chapter > 0) =>
                 {
-                    break Some(step)
+                    break if step > 0 { Step::Next } else { Step::Previous };
                 }
                 Effect::Chapter(_) => {}
                 Effect::Page { flash } => {
@@ -128,21 +364,118 @@ pub fn run(screen: &mut dyn Platform, library: &Path, app: &Path) -> Result<(), 
                     let rows = &shown[top as usize * width as usize..];
                     screen.draw(rows, width, height - top, 0, top, false);
                 }
+                Effect::Menu => {
+                    let (bar, bar_h) = ui.reading_bar(&book.title());
+                    let pixels = chrome.page(&bar.page, width, bar_h);
+                    screen.draw(&pixels, width, bar_h, 0, 0, false);
+                    let action = match screen.next() {
+                        Gesture::Tap(x, y) => bar.hit(x as f32, y as f32).cloned(),
+                        Gesture::Hold | Gesture::Power => break Step::Leave(Leave::Close),
+                        _ => None,
+                    };
+                    match action {
+                        Some(Action::Library) => break Step::Leave(Leave::Library),
+                        Some(Action::Contents) => {
+                            match contents(screen, &book, ui, &mut chrome, chapter) {
+                                Some(Ok(k)) => break Step::Jump(k),
+                                Some(Err(leave)) => break Step::Leave(leave),
+                                None => {
+                                    shown = draw(screen, &mut renderer, &t.pages[reader.page], true)
+                                }
+                            }
+                        }
+                        // Anything else puts the page back.
+                        _ => screen.draw(
+                            &shown[..(bar_h * width) as usize],
+                            width,
+                            bar_h,
+                            0,
+                            0,
+                            false,
+                        ),
+                    }
+                }
             }
         };
+        library::opened(app, path, progress(reader.page));
         match step {
-            None => {
+            Step::Leave(leave) => {
                 book.remember(chapter, reader.page);
-                return Ok(());
+                return Ok(leave);
             }
-            Some(step) if step > 0 => {
+            Step::Next => {
                 chapter += 1;
                 page = 0;
             }
-            Some(_) => {
+            Step::Previous => {
                 chapter -= 1;
                 // The previous chapter opens at its last page.
                 page = usize::MAX;
+            }
+            Step::Jump(k) => {
+                chapter = k;
+                page = 0;
+                flash = true;
+            }
+        }
+    }
+}
+
+/// The book's contents. A chapter chosen, `Ok`; Wordhord closed, `Err`;
+/// back to the page, `None`.
+fn contents(
+    screen: &mut dyn Platform,
+    book: &Book,
+    ui: &Ui,
+    chrome: &mut Renderer,
+    current: usize,
+) -> Option<Result<usize, Leave>> {
+    let (width, height) = screen.size();
+    let entries = book.contents();
+    let rows: Vec<Row> = entries
+        .iter()
+        .map(|(label, depth, chapter)| Row {
+            title: label.clone(),
+            detail: String::new(),
+            cover: None,
+            progress: None,
+            action: Action::Chapter(*chapter),
+            depth: *depth,
+        })
+        .collect();
+    // Open at the page that holds the chapter being read.
+    let at = entries
+        .iter()
+        .rposition(|(_, _, c)| *c <= current)
+        .unwrap_or(0);
+    let per_page = ui
+        .list("Contents", &rows, 0, true)
+        .hits
+        .len()
+        .saturating_sub(1)
+        .max(1);
+    let mut page = at / per_page;
+    loop {
+        let s = ui.list("Contents", &rows, page, true);
+        let pixels = chrome.page(&s.page, width, height);
+        screen.draw(&pixels, width, height, 0, 0, true);
+        loop {
+            match screen.next() {
+                Gesture::Hold | Gesture::Power => return Some(Err(Leave::Close)),
+                Gesture::SwipeLeft if page + 1 < s.pages => {
+                    page += 1;
+                    break;
+                }
+                Gesture::SwipeRight if page > 0 => {
+                    page -= 1;
+                    break;
+                }
+                Gesture::Tap(x, y) => match s.hit(x as f32, y as f32) {
+                    Some(Action::Chapter(k)) => return Some(Ok(*k)),
+                    Some(Action::Back) => return None,
+                    _ => {}
+                },
+                _ => {}
             }
         }
     }

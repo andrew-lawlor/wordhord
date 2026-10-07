@@ -184,6 +184,39 @@ impl Book {
         Ok(t)
     }
 
+    /// The book's table of contents: each entry's label, depth, and the
+    /// chapter it opens. Entries in documents outside the reading order
+    /// are left out.
+    pub fn contents(&self) -> Vec<(String, usize, usize)> {
+        let Source::Epub { epub, chapters, .. } = &self.source else {
+            return Vec::new();
+        };
+        let mut out: Vec<(String, usize, usize)> = epub
+            .toc
+            .iter()
+            .filter_map(|t| {
+                let file = t.target.split('#').next()?;
+                let chapter = chapters.iter().position(|c| c == file)?;
+                Some((t.label.clone(), t.depth, chapter))
+            })
+            .collect();
+        // Without usable contents, the chapters themselves, numbered.
+        if out.is_empty() {
+            out = (0..chapters.len())
+                .map(|k| (format!("Chapter {}", k + 1), 0, k))
+                .collect();
+        }
+        out
+    }
+
+    /// The book's title, as its package gives it.
+    pub fn title(&self) -> String {
+        match &self.source {
+            Source::Epub { epub, .. } if !epub.meta.title.is_empty() => epub.meta.title.clone(),
+            _ => self.name.clone(),
+        }
+    }
+
     /// Whether a chapter's pages are already laid out and kept.
     pub fn is_cached(&self, k: usize) -> bool {
         match &self.source {
@@ -242,28 +275,4 @@ impl Book {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// The book to open in a library folder: the one read last, or else the
-/// first by name. A book is an `.epub`, or a folder of compiled pages.
-pub fn choose(library: &Path) -> Option<PathBuf> {
-    let is_book = |p: &Path| {
-        p.join("pages.json").exists()
-            || p.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("epub"))
-    };
-    let last = std::fs::read_to_string(library.join("last")).ok();
-    if let Some(name) = last.as_deref().map(str::trim) {
-        let path = library.join(name);
-        if is_book(&path) {
-            return Some(path);
-        }
-    }
-    let mut books: Vec<PathBuf> = std::fs::read_dir(library)
-        .ok()?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| is_book(p))
-        .collect();
-    books.sort();
-    books.into_iter().next()
 }

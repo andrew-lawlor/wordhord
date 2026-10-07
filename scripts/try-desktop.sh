@@ -1,26 +1,19 @@
 #!/bin/sh
-# Opens the reader in a window on the desktop, on whole EPUBs.
+# Opens Wordhord in a window on the desktop, with a folder of EPUBs (a
+# Calibre library works) as its library.
 #
-#   scripts/try-desktop.sh <book.epub>...
+#   scripts/try-desktop.sh <folder>
 #
-# The books are linked into a library under ~/.cache/wordhord-dev; the
-# last one opens. Chapters are laid out as they're opened and cached in
-# ~/.cache/wordhord-dev/app/cache. A click is a tap, a drag a swipe, a long
-# press a hold; the arrow keys turn pages and Escape closes.
+# The app folder, with its index and cache, is ~/.cache/wordhord-dev/app.
+# A click is a tap, a drag a swipe, a long press a hold; the arrow keys
+# turn pages and Escape closes.
 set -eu
 cd "$(dirname "$0")/.."
-DEV="$HOME/.cache/wordhord-dev"
-if [ $# -lt 1 ]; then
-	echo "usage: $0 <book.epub>..." >&2
+if [ $# -ne 1 ]; then
+	echo "usage: $0 <folder of books>" >&2
 	exit 2
 fi
+APP="$HOME/.cache/wordhord-dev/app"
 cargo build --quiet --release -p wordhord-device
-scripts/app-folder.sh "$DEV/app"
-mkdir -p "$DEV/library"
-name=
-for book in "$@"; do
-	name="$(basename "$book")"
-	ln -sf "$(realpath "$book")" "$DEV/library/$name"
-done
-printf '%s' "$name" >"$DEV/library/last"
-exec target/release/wordhord-reader "$DEV/library" "$DEV/app"
+scripts/app-folder.sh "$APP"
+exec target/release/wordhord-reader "$1" "$APP"
