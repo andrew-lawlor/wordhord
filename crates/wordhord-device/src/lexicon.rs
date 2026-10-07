@@ -137,9 +137,11 @@ const SAID: [&str; 5] = ["masculine", "feminine", "neuter", "form-of", "alternat
 /// four readings, and three senses each: enough for a panel.
 pub fn entry_blocks(word: &str, readings: &[Reading]) -> Vec<Block> {
     let mut blocks = Vec::new();
-    for (k, r) in readings.iter().take(4).enumerate() {
+    let shown: Vec<&Reading> = readings.iter().take(4).collect();
+    for (k, r) in shown.iter().enumerate() {
         let e = &r.entry;
-        if k > 0 {
+        // A word's parts of speech follow on; a different word is set apart.
+        if k > 0 && shown[k - 1].entry.word != e.word {
             blocks.push(Block {
                 id: None,
                 kind: BlockKind::SceneBreak,
@@ -226,13 +228,15 @@ pub fn entry_blocks(word: &str, readings: &[Reading]) -> Vec<Block> {
         } else {
             blocks.extend(items.into_iter().flatten());
         }
-        // Said once: a word's parts of speech often share an etymology.
-        let said_before = k > 0 && readings[k - 1].entry.etymology == e.etymology;
-        if let Some(ety) = e
-            .etymology
-            .as_deref()
-            .filter(|t| !t.is_empty() && !said_before)
-        {
+        // The etymology once, after all of a word's parts of speech, as a
+        // printed dictionary sets it.
+        let word_goes_on = shown.get(k + 1).is_some_and(|n| n.entry.word == e.word);
+        let etymology = shown[..=k]
+            .iter()
+            .rev()
+            .take_while(|p| p.entry.word == e.word)
+            .find_map(|p| p.entry.etymology.as_deref().filter(|t| !t.is_empty()));
+        if let Some(ety) = etymology.filter(|_| !word_goes_on) {
             let ety = if ety.chars().count() > 320 {
                 let cut: String = ety.chars().take(320).collect();
                 format!("{}…", cut.trim_end())
