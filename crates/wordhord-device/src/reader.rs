@@ -51,6 +51,8 @@ pub enum Effect {
     Chapter(i8),
     /// Bring up the bar over the top of the page.
     Menu,
+    /// Look up a word: its place among the page's words.
+    Look(usize),
     Close,
 }
 
@@ -139,7 +141,7 @@ impl<'t> Reader<'t> {
         } else if x > width * (1.0 - EDGE) {
             self.turn(1)
         } else {
-            Effect::Nothing
+            word_at(&t.pages[self.page], x, y).map_or(Effect::Nothing, Effect::Look)
         }
     }
 
@@ -160,6 +162,22 @@ impl<'t> Reader<'t> {
             _ => Effect::Nothing,
         }
     }
+}
+
+/// The word under a point, or the nearest on its line if the tap fell
+/// between two.
+fn word_at(page: &wordhord_typeset::page::Page, x: f32, y: f32) -> Option<usize> {
+    let on_line = |w: &&wordhord_typeset::page::Word| (w.y0..=w.y1).contains(&y);
+    page.words
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| on_line(w))
+        .min_by(|(_, a), (_, b)| {
+            let d = |w: &wordhord_typeset::page::Word| (w.x0 - x).max(x - w.x1).max(0.0);
+            d(a).total_cmp(&d(b))
+        })
+        .filter(|(_, w)| (w.x0 - x).max(x - w.x1) < 30.0)
+        .map(|(k, _)| k)
 }
 
 /// The link under a point: of those whose boxes hold it, the one whose
@@ -337,6 +355,26 @@ mod tests {
         // Even near an edge: the top wins over turning the page.
         assert_eq!(r.act(Gesture::Tap(1380, 60)), Effect::Menu);
         assert_eq!(r.page, 0);
+    }
+
+    #[test]
+    fn a_tap_on_a_word_looks_it_up() {
+        let mut t = book();
+        t.pages[0].words.push(wordhord_typeset::page::Word {
+            text: "mǫgu".into(),
+            continues: false,
+            block: "b1".into(),
+            x0: 600.0,
+            y0: 880.0,
+            x1: 700.0,
+            y1: 920.0,
+        });
+        let mut r = Reader::new(&t, 0);
+        assert_eq!(r.act(Gesture::Tap(650, 900)), Effect::Look(0));
+        // Just past the word's end still means it.
+        assert_eq!(r.act(Gesture::Tap(720, 900)), Effect::Look(0));
+        // Blank space means nothing.
+        assert_eq!(r.act(Gesture::Tap(650, 1300)), Effect::Nothing);
     }
 
     #[test]

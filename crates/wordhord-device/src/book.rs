@@ -209,6 +209,14 @@ impl Book {
         out
     }
 
+    /// The book's language, as its package gives it: `en`, `non`.
+    pub fn language(&self) -> String {
+        match &self.source {
+            Source::Epub { lang, .. } => lang.clone(),
+            Source::Compiled(_) => "en".into(),
+        }
+    }
+
     /// The book's title, as its package gives it.
     pub fn title(&self) -> String {
         match &self.source {

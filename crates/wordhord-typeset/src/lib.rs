@@ -127,6 +127,18 @@ pub fn lay_out(
     }
 }
 
+/// Blocks set on the pages of the panel that opens over the foot of the
+/// screen: the panel's box, and its pages, drawn from its corner.
+pub fn panel_pages(
+    blocks: &[wordhord_book::model::Block],
+    lang: &str,
+    profile: &profile::Profile,
+    fonts: &fonts::Fonts,
+) -> (page::Panel, Vec<page::Page>) {
+    let layout = layout::Layout::new(fonts, profile, lang);
+    (layout.panel(), layout.panel_blocks(blocks))
+}
+
 /// Typesets a chapter's blocks as `lay_out` does, into `out/pages.json`,
 /// with the images used copied to `out/images/` and, with `previews`, a PNG
 /// of each page and note.

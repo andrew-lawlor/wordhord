@@ -11,3 +11,8 @@ cp fonts/junicode/Junicode-*.otf fonts/dejavu/DejaVuSerif.ttf fonts/dejavu/DejaV
 cp fonts/junicode/OFL.txt "$APP/fonts/Junicode-OFL.txt"
 cp fonts/dejavu/LICENSE "$APP/fonts/DejaVu-LICENSE.txt"
 sed -e 's|"\.\./fonts/junicode/|"fonts/|' -e 's|"\.\./fonts/dejavu/|"fonts/|' profiles/elipsa-2e.toml >"$APP/profile.toml"
+# Dictionary packs built with `wordhord dictionary`, if any.
+mkdir -p "$APP/dictionaries"
+for pack in "$HOME"/.cache/wordhord-tools/kaikki/*.sqlite; do
+	[ -e "$pack" ] && cp "$pack" "$APP/dictionaries/"
+done

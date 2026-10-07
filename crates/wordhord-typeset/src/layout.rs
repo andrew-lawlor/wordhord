@@ -530,6 +530,32 @@ impl<'a> Layout<'a> {
         self.flow(&units, area)
     }
 
+    /// Any blocks set on panel pages, a little smaller than the text, with
+    /// no paragraph indents: for the dictionary, and other things that
+    /// open over the page.
+    pub fn panel_blocks(&self, blocks: &[Block]) -> Vec<Page> {
+        let p = self.profile;
+        let panel = self.panel();
+        let size = self.body * 0.85;
+        let mut units = Vec::new();
+        for (k, b) in blocks.iter().enumerate() {
+            let first = units.len();
+            self.block(b, 0.0, self.measure, size, true, &mut units);
+            // A little air between the parts: headline, senses, etymology.
+            if k > 0 {
+                if let Some(u) = units.get_mut(first) {
+                    u.space_before = u.space_before.max(self.leading(size) * 0.35);
+                }
+            }
+        }
+        let area = Area {
+            top: p.mm(5.0),
+            bottom: panel.height - p.mm(p.margins.bottom),
+            left: p.mm(p.margins.left),
+        };
+        self.flow(&units, area)
+    }
+
     fn block(
         &self,
         b: &Block,

@@ -14,6 +14,7 @@ use wordhord_typeset::profile::Profile;
 use wordhord_typeset::render::{self, Renderer};
 
 use crate::book::Book;
+use crate::lexicon::{self, Lexicon};
 use crate::library::{self, Entry, Library};
 use crate::platform::Platform;
 use crate::reader::{Effect, Reader};
@@ -55,6 +56,7 @@ pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), Str
         say(screen, &fonts_dir, &["Finding your books…"]);
     }
     let library = Library::scan(root, &index);
+    let lexicon = Lexicon::open(&app.join("dictionaries"));
     eprintln!("ready in {:?}", started.elapsed());
     let mut open = library::recent(app)
         .into_iter()
@@ -63,7 +65,13 @@ pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), Str
     let mut browser = Browser::default();
     loop {
         if let Some(path) = open.take() {
-            match read(screen, root, &path, app, &ui, &fonts) {
+            let tools = Tools {
+                ui: &ui,
+                fonts: &fonts,
+                profile: &profile,
+                lexicon: &lexicon,
+            };
+            match read(screen, root, &path, app, &tools) {
                 Ok(Leave::Library) => {}
                 Ok(Leave::Close) => return Ok(()),
                 Err(e) => {
@@ -272,6 +280,14 @@ fn browse(
 
 // ---- a book ------------------------------------------------------------------
 
+/// What reading needs besides the book.
+struct Tools<'a> {
+    ui: &'a Ui<'a>,
+    fonts: &'a Fonts,
+    profile: &'a Profile,
+    lexicon: &'a Lexicon,
+}
+
 /// Where reading goes from a chapter.
 enum Step {
     Next,
@@ -285,9 +301,9 @@ fn read(
     root: &Path,
     path: &str,
     app: &Path,
-    ui: &Ui,
-    fonts: &Fonts,
+    tools: &Tools,
 ) -> Result<Leave, String> {
+    let (ui, fonts) = (tools.ui, tools.fonts);
     let (width, height) = screen.size();
     let started = Instant::now();
     let book = Book::open(&root.join(path), app)?;
@@ -338,7 +354,7 @@ fn read(
         if ahead.is_none() {
             ahead = Some((chapter + 1, lay_out_ahead(&book, chapter)));
         }
-        let step = loop {
+        let step = 'reading: loop {
             let gesture = screen.next();
             let effect = reader.act(gesture);
             eprintln!("{gesture:?}: {effect:?}");
@@ -366,6 +382,62 @@ fn read(
                 }
                 Effect::ClosePanel => {
                     let top = t.panel.y as u32;
+                    let rows = &shown[top as usize * width as usize..];
+                    screen.draw(rows, width, height - top, 0, top, false);
+                }
+                Effect::Look(k) => {
+                    let words = &t.pages[reader.page].words;
+                    // A word hyphenated across lines is one word.
+                    let mut word = words[k].text.clone();
+                    if words[k].continues && k > 0 {
+                        word = format!("{}{word}", words[k - 1].text);
+                    }
+                    if words.get(k + 1).is_some_and(|w| w.continues) {
+                        word.push_str(&words[k + 1].text);
+                    }
+                    let word = wordhord_dict::key(&word);
+                    let looked = Instant::now();
+                    let lang = book.language();
+                    let blocks = match tools.lexicon.look_up(&word, &lang) {
+                        Some((_, readings)) => lexicon::entry_blocks(&word, &readings),
+                        None => lexicon::not_found(&word, &lang, !tools.lexicon.is_empty()),
+                    };
+                    let (area, pages) =
+                        wordhord_typeset::panel_pages(&blocks, &lang, tools.profile, fonts);
+                    eprintln!(
+                        "look up {word:?}: {} panel pages in {:?}",
+                        pages.len(),
+                        looked.elapsed()
+                    );
+                    let (w, h) = (area.width as u32, area.height as u32);
+                    let mut at = 0;
+                    loop {
+                        let pixels = render::panel(&mut chrome, &pages[at], w, h);
+                        screen.draw(&pixels, w, h, area.x as u32, area.y as u32, false);
+                        // In the panel, the right half pages on and the left
+                        // back; anything else closes it.
+                        let next = loop {
+                            match screen.next() {
+                                Gesture::Tap(x, y) if y as f32 >= area.y => {
+                                    if x as f32 >= area.width / 2.0 && at + 1 < pages.len() {
+                                        break at + 1;
+                                    }
+                                    if (x as f32) < area.width / 2.0 && at > 0 {
+                                        break at - 1;
+                                    }
+                                }
+                                Gesture::Hold | Gesture::Power => {
+                                    break 'reading Step::Leave(Leave::Close)
+                                }
+                                _ => break usize::MAX,
+                            }
+                        };
+                        if next == usize::MAX {
+                            break;
+                        }
+                        at = next;
+                    }
+                    let top = area.y as u32;
                     let rows = &shown[top as usize * width as usize..];
                     screen.draw(rows, width, height - top, 0, top, false);
                 }

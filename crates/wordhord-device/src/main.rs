@@ -17,6 +17,7 @@ mod book;
 mod desktop;
 #[cfg(target_arch = "arm")]
 mod kobo;
+mod lexicon;
 mod library;
 mod platform;
 mod reader;
