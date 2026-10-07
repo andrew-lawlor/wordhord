@@ -8,3 +8,4 @@ license.workspace = true
 [dependencies]
 roxmltree = "0.20"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+wordhord-book = { path = "../wordhord-book" }

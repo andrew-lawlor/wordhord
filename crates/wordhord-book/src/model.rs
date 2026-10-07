@@ -34,6 +34,14 @@ pub enum BlockKind {
     Figure(Vec<Block>),
     SceneBreak,
     Table(Vec<Vec<Vec<Inline>>>),
+    /// A list: each item is blocks. Numbered from `start` if ordered.
+    List {
+        ordered: bool,
+        start: u32,
+        items: Vec<Vec<Block>>,
+    },
+    /// Code or other text whose spaces and line breaks are kept as written.
+    Code(String),
     Note {
         label: String,
         blocks: Vec<Block>,
@@ -125,6 +133,8 @@ pub enum SpanKind {
         from: u32,
         to: u32,
     },
+    /// Code, in a monospace face.
+    Code,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,6 +193,11 @@ pub fn walk<'a>(blocks: &'a [Block], out: &mut Vec<&'a Block>) {
             | BlockKind::Note { blocks, .. }
             | BlockKind::Commentary { blocks, .. } => walk(blocks, out),
             BlockKind::Verse(v) | BlockKind::Stanza(v) => walk(&v.stanzas, out),
+            BlockKind::List { items, .. } => {
+                for item in items {
+                    walk(item, out);
+                }
+            }
             _ => {}
         }
     }

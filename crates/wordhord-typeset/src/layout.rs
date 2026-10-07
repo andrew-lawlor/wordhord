@@ -294,7 +294,9 @@ fn anchor_keys(on: &str) -> Vec<String> {
 
 impl<'a> Layout<'a> {
     pub fn new(fonts: &'a Fonts, profile: &'a Profile, lang: &str) -> Layout<'a> {
-        let hyphenator = (lang == "eng")
+        // English, however the book names it: `eng`, `en`, `en-GB`.
+        let english = lang == "eng" || lang == "en" || lang.starts_with("en-");
+        let hyphenator = english
             .then(|| Standard::from_embedded(Language::EnglishUS).ok())
             .flatten();
         let measure = profile.width as f32
@@ -642,6 +644,46 @@ impl<'a> Layout<'a> {
             // Gathered at the end of the chapter, and opened in the panel.
             BlockKind::Commentary { .. } => {}
             BlockKind::Table(rows) => units.push(self.table(rows, left, measure, size, &id)),
+            BlockKind::List {
+                ordered,
+                start,
+                items,
+            } => {
+                let indent = size * 1.8;
+                for (k, item) in items.iter().enumerate() {
+                    let first = units.len();
+                    for c in item {
+                        self.block(c, left + indent, measure - indent, size, true, units);
+                    }
+                    // The number or bullet hangs in the indent, beside the
+                    // item's first line.
+                    let marker = if *ordered {
+                        format!("{}.", *start as usize + k)
+                    } else {
+                        "•".to_string()
+                    };
+                    let line = units[first..]
+                        .iter_mut()
+                        .flat_map(|u| u.lines.iter_mut())
+                        .find(|l| !l.frags.is_empty());
+                    if let Some(line) = line {
+                        let style = Style {
+                            face: Face::Regular,
+                            size,
+                            smcp: false,
+                        };
+                        let (frags, w) = self.frags(&marker, style, 0.0);
+                        let x = left + indent - size * 0.5 - w;
+                        for f in frags {
+                            line.marks.push(Frag { x: x + f.x, ..f });
+                        }
+                    }
+                    if let Some(u) = units.get_mut(first) {
+                        u.space_before = self.leading(size) * 0.15;
+                    }
+                }
+            }
+            BlockKind::Code(text) => units.push(self.code(text, left, measure, size, &id)),
             BlockKind::SceneBreak => {
                 let atoms = vec![Atom::Text(
                     "*   *   *".into(),
@@ -742,6 +784,11 @@ impl<'a> Layout<'a> {
                             smcp: true,
                             ..style
                         },
+                        SpanKind::Code => Style {
+                            face: Face::Mono,
+                            size: style.size * 0.9,
+                            ..style
+                        },
                         // Emendations in italics, as editions print them.
                         SpanKind::Corr => Style {
                             face: style.face.italic(),
@@ -752,7 +799,23 @@ impl<'a> Layout<'a> {
                     self.push_atoms(inlines, s, out);
                 }
                 Inline::Link { inlines, .. } => self.push_atoms(inlines, style, out),
-                Inline::Image { .. } => {}
+                // Images aren't drawn yet: their description stands in.
+                Inline::Image { alt, .. } => {
+                    let text = plain_text(alt);
+                    let label = if text.trim().is_empty() {
+                        "[image]".to_string()
+                    } else {
+                        format!("[{}]", text.trim())
+                    };
+                    self.push_atoms(
+                        &[Inline::Text(label)],
+                        Style {
+                            face: style.face.italic(),
+                            ..style
+                        },
+                        out,
+                    );
+                }
                 Inline::NoteRef(label) => out.push(Atom::Note(label.clone())),
                 Inline::Caesura => out.push(Atom::Caesura),
                 Inline::LineBreak | Inline::SoftBreak => {
@@ -807,6 +870,15 @@ impl<'a> Layout<'a> {
     /// and breaks after dashes), spaces as glue, caesuras as fixed gaps.
     fn items(&self, atoms: &[Atom], size: f32, hyphenate: bool) -> (Vec<Item>, Vec<Content>) {
         let space = self.fonts.space(size);
+        // Code keeps its own, wider spaces: at the size of the code before.
+        let mono_space = |size: f32| -> f32 {
+            self.fonts
+                .shape(" ", Face::Mono, size, &[])
+                .iter()
+                .map(|s| s.width)
+                .sum()
+        };
+        let mut last_mono: Option<f32> = None;
         let mut items = Vec::new();
         let mut contents = Vec::new();
         let mut word: Vec<&Atom> = Vec::new();
@@ -885,10 +957,14 @@ impl<'a> Layout<'a> {
                 Atom::Space => {
                     flush(&mut word, &mut items, &mut contents);
                     if !items.is_empty() {
+                        let (width, give) = match last_mono {
+                            Some(size) => (mono_space(size), 0.0),
+                            None => (space, 1.0),
+                        };
                         items.push(Item::Glue {
-                            width: space,
-                            stretch: space * 0.5,
-                            shrink: space * 0.33,
+                            width,
+                            stretch: width * 0.5 * give,
+                            shrink: width * 0.33 * give,
                         });
                         contents.push(Content::None);
                     }
@@ -907,7 +983,12 @@ impl<'a> Layout<'a> {
                     });
                     contents.push(Content::Caesura);
                 }
-                other => word.push(other),
+                other => {
+                    if let Atom::Text(_, style) = other {
+                        last_mono = (style.face == Face::Mono).then_some(style.size);
+                    }
+                    word.push(other)
+                }
             }
         }
         flush(&mut word, &mut items, &mut contents);
@@ -1325,6 +1406,49 @@ impl<'a> Layout<'a> {
             .iter()
             .position(|c| matches!(c, Content::Caesura))?;
         Some(items[..at].iter().map(Item::width).sum())
+    }
+
+    /// Code: each line as written, its indentation kept, in the monospace
+    /// face. A line too long turns over, like verse.
+    fn code(&self, text: &str, left: f32, measure: f32, size: f32, block: &str) -> Unit {
+        let small = size * 0.85;
+        let style = Style {
+            face: Face::Mono,
+            size: small,
+            smcp: false,
+        };
+        let space: f32 = self
+            .fonts
+            .shape(" ", Face::Mono, small, &[])
+            .iter()
+            .map(|s| s.width)
+            .sum();
+        let mut unit = Unit {
+            space_before: self.leading(size) * 0.5,
+            split: true,
+            ..Default::default()
+        };
+        for line in text.lines() {
+            let trimmed = line.trim_start();
+            let lead: usize = line[..line.len() - trimmed.len()]
+                .chars()
+                .map(|c| if c == '\t' { 4 } else { 1 })
+                .sum();
+            if trimmed.is_empty() {
+                unit.lines.push(Line {
+                    size: small,
+                    height: self.leading(small),
+                    block: block.to_string(),
+                    ..Default::default()
+                });
+                continue;
+            }
+            let atoms = self.atoms(&[Inline::Text(trimmed.to_string())], style);
+            let x = left + size + lead as f32 * space;
+            let mut set = self.turn_over(&atoms, x, measure - (x - left), small, None, block);
+            unit.lines.append(&mut set);
+        }
+        unit
     }
 
     fn table(

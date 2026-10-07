@@ -28,23 +28,41 @@ pub fn typeset_chapter(
         .chapters
         .get(chapter.wrapping_sub(1))
         .ok_or_else(|| format!("{} has {} chapters", book.meta.id, book.chapters.len()))?;
-    let f = &profile.fonts;
-    let fonts = fonts::Fonts::load(
-        &profile.dir,
-        &f.regular,
-        &f.italic,
-        &f.bold,
-        &f.bold_italic,
-        f.fallback.as_deref(),
-    )?;
-    let layout = layout::Layout::new(&fonts, profile, &book.meta.lang);
-    let translated = translation.map_or_else(Vec::new, |t| {
+    let translations: Vec<Vec<wordhord_book::model::Block>> = translation
+        .map(|t| t.chapters.iter().map(|c| c.blocks.clone()).collect())
+        .unwrap_or_default();
+    typeset_blocks(
+        &ch.blocks,
+        &book.meta.lang,
+        profile,
+        out,
+        previews,
+        &translations,
+    )
+}
+
+/// Typesets a chapter's blocks, in a language (ISO 639: `eng`, `en`,
+/// `en-GB`), as `typeset_chapter` does. `translation` is a parallel book's
+/// chapters, or nothing.
+pub fn typeset_blocks(
+    blocks: &[wordhord_book::model::Block],
+    lang: &str,
+    profile: &profile::Profile,
+    out: &Path,
+    previews: bool,
+    translation: &[Vec<wordhord_book::model::Block>],
+) -> Result<page::Typeset, String> {
+    let fonts = fonts::Fonts::load(&profile.dir, &profile.fonts)?;
+    let layout = layout::Layout::new(&fonts, profile, lang);
+    let translated = if translation.is_empty() {
+        Vec::new()
+    } else {
         let chapters: Vec<&[wordhord_book::model::Block]> =
-            t.chapters.iter().map(|c| c.blocks.as_slice()).collect();
-        layout::translations(&ch.blocks, &chapters)
-    });
+            translation.iter().map(Vec::as_slice).collect();
+        layout::translations(blocks, &chapters)
+    };
     layout.translate(&translated);
-    let units = layout.chapter(&ch.blocks);
+    let units = layout.chapter(blocks);
     // The reference of the line each marker is first on.
     let mut on: HashMap<&str, Option<String>> = HashMap::new();
     for line in units.iter().flat_map(|u| &u.lines) {
@@ -61,7 +79,7 @@ pub fn typeset_chapter(
             }
         }
     }
-    let notes: Vec<page::Note> = layout::glosses(&ch.blocks)
+    let notes: Vec<page::Note> = layout::glosses(blocks)
         .iter()
         .chain(&translated)
         .map(|g| page::Note {

@@ -5,6 +5,7 @@
 //!
 //! Pure Rust, so it runs on the Kobo as well as the desktop.
 
+pub mod convert;
 pub mod css;
 pub mod package;
 pub mod xml;

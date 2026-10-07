@@ -55,16 +55,7 @@ fn load(source: &str) -> Book {
 fn with_source(source: &str, test: impl Fn(&Layout, &[wordhord_book::model::Block])) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let profile = Profile::load(&root.join("profiles/elipsa-2e.toml")).unwrap();
-    let f = &profile.fonts;
-    let fonts = Fonts::load(
-        &profile.dir,
-        &f.regular,
-        &f.italic,
-        &f.bold,
-        &f.bold_italic,
-        f.fallback.as_deref(),
-    )
-    .unwrap();
+    let fonts = Fonts::load(&profile.dir, &profile.fonts).unwrap();
     let layout = Layout::new(&fonts, &profile, "eng");
     let book = load(source);
     test(&layout, &book.chapters[0].blocks);

@@ -286,7 +286,11 @@ fn ncx_entries(node: roxmltree::Node, base: &str, depth: usize, out: &mut Vec<To
 }
 
 fn text_content(node: roxmltree::Node) -> String {
-    let text: String = node.descendants().filter_map(|n| n.text()).collect();
+    let text: String = node
+        .descendants()
+        .filter(|n| n.is_text())
+        .filter_map(|n| n.text())
+        .collect();
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 

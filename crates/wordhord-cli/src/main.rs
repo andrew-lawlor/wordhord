@@ -13,6 +13,8 @@ const USAGE: &str = "usage:
   wordhord align <translation> [<original>]
   wordhord import <epub> <recipe.toml> <new folder>
   wordhord typeset <book> <chapter> <profile.toml> <folder> [--no-preview] [--translation <book>]
+  wordhord epub <book.epub>
+  wordhord epub <book.epub> <document> <profile.toml> <folder>
 
 A book is a folder with book.toml and text/*.dj. The original defaults to
 the folder beside the translation named by its `original`.";
@@ -21,6 +23,8 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("check") if args.len() > 1 => check(&args[1..]),
+        Some("epub") if args.len() == 2 => epub_list(&args[1]),
+        Some("epub") if args.len() == 5 => epub_typeset(&args[1], &args[2], &args[3], &args[4]),
         Some("align") if args.len() == 2 || args.len() == 3 => align_books(&args[1], args.get(2)),
         Some("import") if args.len() == 4 => import(&args[1], &args[2], &args[3]),
         Some("typeset") if args.len() >= 5 => {
@@ -251,6 +255,66 @@ fn typeset(
             } else {
                 "pages.json"
             }
+        );
+        Ok(())
+    };
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// An EPUB's documents in reading order, with what the contents call them.
+fn epub_list(path: &str) -> ExitCode {
+    let epub = match wordhord_epub::Epub::open(Path::new(path)) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    println!("{} — {}", epub.meta.title, epub.meta.creators.join(", "));
+    for (k, item) in epub.spine.iter().enumerate() {
+        let label = epub
+            .toc
+            .iter()
+            .find(|t| t.target.split('#').next() == Some(item.path.as_str()))
+            .map_or("", |t| t.label.as_str());
+        let size = epub.bytes(&item.path).map_or(0, |b| b.len());
+        println!("{:>4}  {:>7} B  {}  {label}", k + 1, size, item.path);
+    }
+    ExitCode::SUCCESS
+}
+
+/// One document of an EPUB, converted and typeset, with previews.
+fn epub_typeset(path: &str, document: &str, profile: &str, out: &str) -> ExitCode {
+    let run = || -> Result<(), String> {
+        let epub = wordhord_epub::Epub::open(Path::new(path))?;
+        let n: usize = document
+            .parse()
+            .map_err(|_| format!("`{document}` isn't a document number"))?;
+        let item = epub
+            .spine
+            .get(n.wrapping_sub(1))
+            .ok_or_else(|| format!("the book has {} documents", epub.spine.len()))?;
+        let started = std::time::Instant::now();
+        let blocks = wordhord_epub::convert::chapter(&epub, &item.path)?;
+        let converted = started.elapsed();
+        let profile = wordhord_typeset::profile::Profile::load(Path::new(profile))?;
+        let lang = epub.meta.language.as_deref().unwrap_or("en");
+        let t =
+            wordhord_typeset::typeset_blocks(&blocks, lang, &profile, Path::new(out), true, &[])?;
+        let words: usize = t.pages.iter().map(|p| p.words.len()).sum();
+        println!(
+            "{}: {} blocks in {converted:?}; {} pages, {words} words, {} notes, in {:?}; previews in {out}",
+            item.path,
+            blocks.len(),
+            t.pages.len(),
+            t.notes.len(),
+            started.elapsed()
         );
         Ok(())
     };

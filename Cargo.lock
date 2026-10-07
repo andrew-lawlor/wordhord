@@ -691,6 +691,7 @@ name = "wordhord-cli"
 version = "0.1.0"
 dependencies = [
  "wordhord-book",
+ "wordhord-epub",
  "wordhord-import",
  "wordhord-typeset",
 ]
@@ -711,6 +712,7 @@ name = "wordhord-epub"
 version = "0.1.0"
 dependencies = [
  "roxmltree",
+ "wordhord-book",
  "zip",
 ]
 

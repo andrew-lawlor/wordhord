@@ -40,6 +40,8 @@ pub struct FontPaths {
     pub italic: String,
     pub bold: String,
     pub bold_italic: String,
+    /// For code.
+    pub mono: Option<String>,
     pub fallback: Option<String>,
 }
 

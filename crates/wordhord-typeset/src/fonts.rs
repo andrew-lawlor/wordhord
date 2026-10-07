@@ -6,6 +6,8 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
+use crate::profile::FontPaths;
+
 /// Which face of the family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Face {
@@ -13,6 +15,8 @@ pub enum Face {
     Italic,
     Bold,
     BoldItalic,
+    /// For code. Italic and bold stay monospace.
+    Mono,
 }
 
 impl Face {
@@ -47,7 +51,7 @@ pub struct Fonts {
     pub files: Vec<FontFile>,
     /// Each file parsed once: parsing per lookup made shaping crawl.
     parsed: Vec<rustybuzz::Face<'static>>,
-    faces: [usize; 4],
+    faces: [usize; 5],
     fallback: Option<usize>,
 }
 
@@ -71,14 +75,9 @@ pub struct Shaped {
 }
 
 impl Fonts {
-    pub fn load(
-        root: &Path,
-        regular: &str,
-        italic: &str,
-        bold: &str,
-        bold_italic: &str,
-        fallback: Option<&str>,
-    ) -> Result<Fonts, String> {
+    /// The profile's fonts, relative to `root`. Without a monospace face,
+    /// code is set in the regular one.
+    pub fn load(root: &Path, paths: &FontPaths) -> Result<Fonts, String> {
         let mut files: Vec<FontFile> = Vec::new();
         let mut add = |path: &str| -> Result<usize, String> {
             if let Some(k) = files.iter().position(|f| f.path == path) {
@@ -101,8 +100,18 @@ impl Fonts {
             });
             Ok(files.len() - 1)
         };
-        let faces = [add(regular)?, add(italic)?, add(bold)?, add(bold_italic)?];
-        let fallback = fallback.map(&mut add).transpose()?;
+        let regular = add(&paths.regular)?;
+        let faces = [
+            regular,
+            add(&paths.italic)?,
+            add(&paths.bold)?,
+            add(&paths.bold_italic)?,
+            match &paths.mono {
+                Some(m) => add(m)?,
+                None => regular,
+            },
+        ];
+        let fallback = paths.fallback.as_deref().map(&mut add).transpose()?;
         let parsed = files
             .iter()
             .map(|f| rustybuzz::Face::from_slice(f.data, 0).expect("checked when read"))
@@ -129,7 +138,7 @@ impl Fonts {
         Ok(Fonts {
             files,
             parsed,
-            faces: [0, 1.min(last), 2.min(last), 3.min(last)],
+            faces: [0, 1.min(last), 2.min(last), 3.min(last), 0],
             fallback: None,
         })
     }
