@@ -707,6 +707,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wordhord-epub"
+version = "0.1.0"
+dependencies = [
+ "roxmltree",
+ "zip",
+]
+
+[[package]]
 name = "wordhord-import"
 version = "0.1.0"
 dependencies = [

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/wordhord-book", "crates/wordhord-import", "crates/wordhord-typeset", "crates/wordhord-cli", "crates/wordhord-device"]
-default-members = ["crates/wordhord-cli", "crates/wordhord-device"]
+members = ["crates/wordhord-book", "crates/wordhord-import", "crates/wordhord-typeset", "crates/wordhord-cli", "crates/wordhord-device", "crates/wordhord-epub"]
+default-members = ["crates/wordhord-cli", "crates/wordhord-device", "crates/wordhord-epub"]
 
 [workspace.package]
 version = "0.1.0"

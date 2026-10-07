@@ -214,7 +214,7 @@ Small things that make it Wordhord's:
 
 Each ends in a go or no-go.
 
-1. **Any EPUB, one chapter.** Laid out on the desktop backend, then on the Kobo. Test set: *Children of Ash and Elm* (Basic Books), *The Prose Edda* and Michael Alexander's *Beowulf* (Penguin), Emily Wilson's *Odyssey* (Norton), Davidson's *Gods and Myths of Northern Europe* (Penguin), *The Hammer and the Cross* (Tor), *Learning Go* (O'Reilly), and Standard Ebooks' *Moby-Dick* and *Canterbury Tales* as controls. Go: you'd read them, and page turns meet budget.
+1. **Any EPUB, one chapter.** Laid out on the desktop backend, then on the Kobo. Test set: *Children of Ash and Elm* (Basic Books), *The Prose Edda* and Michael Alexander's *Beowulf* (Penguin), Emily Wilson's *Odyssey* (Norton), Davidson's *Gods and Myths of Northern Europe* (Penguin), Crawford's *Poetic Edda* (Hackett, with image drop caps), *The Hammer and the Cross* (Tor), *Learning Go* (O'Reilly), and Standard Ebooks' *Moby-Dick* and *Canterbury Tales* as controls. Go: you'd read them, and page turns meet budget.
 2. **Library and position.** Scan, list, open, resume. Go: launch to last page in under a second.
 3. **Dictionary.** English and Old Norse packs; tap a word, see the entry, inflected forms included. Go: four taps in five find the right entry.
 4. **Pen.** Ink, gestures, anchors, the log. Go: under 5 ms per point, and ink follows its paragraph through a font change.
