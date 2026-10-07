@@ -14,6 +14,8 @@ const USAGE: &str = "usage:
   wordhord import <epub> <recipe.toml> <new folder>
   wordhord typeset <book> <chapter> <profile.toml> <folder> [--no-preview] [--translation <book>]
   wordhord epub <book.epub>
+  wordhord dictionary <kaikki.jsonl> <language> <pack.sqlite>
+  wordhord look-up <pack.sqlite> <word>...
   wordhord epub <book.epub> <document> <profile.toml> <folder>
 
 A book is a folder with book.toml and text/*.dj. The original defaults to
@@ -24,6 +26,8 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("check") if args.len() > 1 => check(&args[1..]),
         Some("epub") if args.len() == 2 => epub_list(&args[1]),
+        Some("dictionary") if args.len() == 4 => dictionary(&args[1], &args[2], &args[3]),
+        Some("look-up") if args.len() >= 3 => look_up(&args[1], &args[2..]),
         Some("epub") if args.len() == 5 => epub_typeset(&args[1], &args[2], &args[3], &args[4]),
         Some("align") if args.len() == 2 || args.len() == 3 => align_books(&args[1], args.get(2)),
         Some("import") if args.len() == 4 => import(&args[1], &args[2], &args[3]),
@@ -333,4 +337,62 @@ fn epub_typeset(path: &str, document: &str, profile: &str, out: &str) -> ExitCod
             ExitCode::FAILURE
         }
     }
+}
+
+/// A dictionary pack from a kaikki.org extract.
+fn dictionary(jsonl: &str, language: &str, out: &str) -> ExitCode {
+    let started = std::time::Instant::now();
+    match wordhord_dict::build(Path::new(jsonl), language, Path::new(out)) {
+        Ok((entries, forms)) => {
+            let size = std::fs::metadata(out).map_or(0, |m| m.len());
+            println!(
+                "{out}: {entries} entries, {forms} forms, {:.1} MB, in {:?}",
+                size as f64 / 1e6,
+                started.elapsed()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Words looked up in a pack, as the panel would show them.
+fn look_up(pack: &str, words: &[String]) -> ExitCode {
+    let dictionary = match wordhord_dict::Dictionary::open(Path::new(pack)) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    for word in words {
+        let readings = dictionary.look_up(word);
+        if readings.is_empty() {
+            println!("{word}: not found");
+        }
+        for r in readings {
+            let e = &r.entry;
+            print!("{word}: {} ({})", e.head, e.pos);
+            if let Some(g) = r.grammar() {
+                print!(", {g}");
+            }
+            println!();
+            for (k, s) in e.senses.iter().enumerate().take(3) {
+                println!(
+                    "    {}. {}{}",
+                    k + 1,
+                    s.gloss,
+                    if s.tags.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [{}]", s.tags.join(", "))
+                    }
+                );
+            }
+        }
+    }
+    ExitCode::SUCCESS
 }
