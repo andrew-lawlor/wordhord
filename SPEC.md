@@ -1,179 +1,208 @@
 # Wordhord: spec
 
-Draft 1, 2026-10-06.
+Draft 2, 2026-10-07. Draft 1, a reader for old texts only, is in git history.
 
-> A reader for old texts. The original and the translation, line by line. Write in the margins with a pen. Cite any passage exactly.
+> A quiet e-reader for Kobo. Your books, your ink, your words, all in plain files on your device. Write in the margins with a pen. Tap any word for the whole of Wiktionary. Keep the words you meet.
 
-*Wordhord* is Old English for "word-hoard", a store of words. In *Beowulf* (line 259) the leader of the Geats, asked who he is, *wordhord onleac*: unlocked his word-hoard.
+*Wordhord* is Old English for "word-hoard", a store of words. In *Beowulf* (line 259) the leader of the Geats, asked who he is, *wordhord onleac*: unlocked his word-hoard. The vocab builder is the namesake.
 
 ## 1. Goal
 
-A reader for the study of classical and medieval texts: originals and their translations, read together. Built for writing on the page. Books are compiled on the desktop. The Kobo draws pages and records ink. Every word's place on every page is known before you open the book.
+A normal e-reader for stylus Kobos. Smaller and faster than KOReader. Built around three things the others do badly:
 
-**Target:** stylus Kobos (Elipsa 2E, Libra Colour), stock firmware. The reader is launched from NickelMenu and hands back to Nickel when it exits. Nickel stays installed and in charge of everything else: the store, USB, updates, sleep when the reader isn't running.
+1. **The pen.** Ink in the margins, on any book. Strokes are stored so any tool can read them.
+2. **Words.** Tap a word, even an inflected one, and get its full Wiktionary entry, offline. Keep it with the sentence you found it in. Review it later.
+3. **Your data.** No account, no cloud, no telemetry. Everything Wordhord knows is a file you can open, copy, diff and delete.
 
-Not goals:
-- Speed. E-ink refresh dwarfs layout time. Speed is not the pitch.
-- Store books. DRM stays out, as with KOReader.
-- Every EPUB's design. Books whose layout is the point (textbooks, comics, cookbooks) belong in another reader.
+**Target:** stylus Kobos (Elipsa 2E, Libra Colour), stock firmware. Kobos without a pen work too; they just lack ink. Launched from NickelMenu. Nickel pauses while Wordhord runs and resumes when it exits. Nickel stays in charge of the store, Wi-Fi setup, updates and USB.
 
 ## 2. Principles
 
-- **Record, don't infer.** Positions are known at build time. Nothing is guessed later.
-- **The device stays simple.** It draws glyphs where it's told, turns pages and records strokes. It never lays out text.
-- **Builds are deterministic.** The same source, fonts and profile give the same pages, byte for byte.
-- **Text is source.** A book is plain text in a folder, under git. Fixes are commits.
+- **Local first.** The device is the source of truth. Nothing needs a network. Sync is copying files, by whatever means you like.
+- **Plain files, documented formats.** If Wordhord vanished tomorrow, your notes, ink and words would still be readable. Every format is in this spec.
+- **Append, don't overwrite.** Notes, ink and reviews are logs. A deletion is a new record. History is never lost, and two copies merge.
+- **Small on purpose.** Each feature earns its place. No plugins, no scripting, no settings for settings.
+- **Fast where it shows.** Opening a book, turning a page, putting down ink. Budgets in §12.
+- **Record, don't infer.** Anchors store the exact text they point at. Ink stores the raw points. Nothing is reconstructed later from guesses.
 
-## 3. Pipeline
+## 3. What it does
+
+**Reading.** EPUB 2 and 3, reflowable, DRM-free. Font, size, margins, line spacing. Footnotes open in a panel at the foot of the page. A table of contents. Search within the book. Page turns by swipe or edge tap.
+
+**Library.** Every EPUB on the device, found by a scan. Sorted by last read, title or author. Shelves are folders. Covers in a grid or a plain list. Nothing is imported or copied: the file on disk is the book.
+
+**Pen.** Write anywhere on the page. Ink is drawn as you write, with the fast waveform. Gestures in §6.
+
+**Highlights and notes.** Underline with the pen, or press and drag with a finger. Add a typed or a written note.
+
+**Dictionary.** Tap a word. Its Wiktionary entry opens in the panel: dictionary form, the grammar of the form you tapped, senses, etymology. Works on inflected forms (§7).
+
+**Vocab.** One tap keeps a word, with its sentence, book and place. Review on the device. Export anywhere (§8).
+
+**Commonplace book.** Every highlight, note and kept word, across all books, in one place on the device and in one Markdown file on export.
+
+## 4. Not goals
+
+- Store books. Kobo's DRM stays out. Read those in Nickel.
+- PDFs and comics in v1. PDF with ink is the Elipsa's other big use. It's a later decision (§15).
+- Cloud sync, accounts, social anything.
+- Plugins and scripting.
+- Every EPUB's design. Wordhord keeps a book's structure and emphasis, not every CSS rule. Text is set Wordhord's way.
+- Translation, summaries, or any model on the device.
+
+## 5. Reading engine
+
+Wordhord lays out text on the device. The typesetter from draft 1 moves onto the Kobo: Knuth–Plass line breaking, hyphenation, real kerning and ligatures through rustybuzz, glyphs drawn with swash. It already runs there for drawing.
+
+**EPUB to blocks.** Each chapter's XHTML becomes Wordhord's block model: headings, paragraphs, quotes, lists, verse, tables, figures, notes. CSS is read only for what carries meaning: italics, bold, small caps, alignment, indents, page breaks, hidden text. The rest is dropped. Draft 1's importer does most of this already, one book at a time, by recipe. Here it must work without a recipe, on any reasonable EPUB.
+
+**Pages are computed once and cached.** A chapter is laid out the first time it's opened, then stored as glyph runs, the format draft 1 uses. The cache is keyed by book hash, chapter and settings. Change the font size and the cache rebuilds in the background, chapter by chapter, nearest first.
+
+**Layout is deterministic.** The same book and settings give the same pages, byte for byte. Page numbers mean something and stay put.
+
+**Footnotes** open in the panel. EPUB 3's `epub:type="noteref"` is used where present. Otherwise, links into a notes section are recognised by shape.
+
+**Images** are dithered to 16 greys on the Elipsa and drawn in colour on the Libra Colour.
+
+## 6. Pen
+
+The Kobo Stylus 2 has a tip, a button and an eraser end. Wordhord reads the pen's input device directly, draws each point from its own loop with the fast waveform, and records every point.
+
+**Gestures**, written with the pen:
+
+| Stroke | Means |
+|---|---|
+| A line under words | Highlight them |
+| A circle round one word | Look it up |
+| A circle, then a tick | Keep it as vocab |
+| A scribble over ink | Erase that ink |
+| Anything else | Ink, as drawn |
+
+Hold the button while writing: always ink, never a gesture. The eraser end: erase.
+
+**Ink belongs to the text, not the page.** Each stroke is anchored to the words nearest it, with its offset from them. Change the font size and a note in the margin moves with its paragraph. Ink across the text, like an underline, stays with its words. Ink that can't be anchored, on a blank page or an image, keeps its place for that layout.
+
+**Strokes are data.** Raw points with pressure and time, as recorded, in the log (§9). A stroke can be redrawn exactly, replayed, sent to a handwriting model or turned into SVG. Kollate already transcribes handwriting locally. It reads Wordhord's ink the same way.
+
+## 7. Dictionary
+
+**Source:** Wiktionary, through kaikki.org's structured extracts. CC BY-SA, credited on every entry.
+
+**One pack per language.** A SQLite file built on the desktop from kaikki's data: headwords, senses, etymology, pronunciation, and every inflected form with its grammar. Old Norse and Old English packs are a few megabytes. English is gigabytes raw and must be trimmed (§15). Packs go in `dictionaries/` and are found by language code.
+
+**Inflected forms.** The pack maps each form to its dictionary form and grammar, from Wiktionary's own tables. Tap *mǫgu* and get "accusative plural of *mǫgr*: son, boy, youth". Tap *went* and get "past of *go*". Nickel and KOReader look up the spelling you tapped, and often miss. Where a form has several readings, all are shown.
+
+**The book's language picks the pack.** It comes from the EPUB's `dc:language`, or from an element's `lang`, so a Latin phrase in an English book opens the Latin pack.
+
+**Etymology trail.** In an entry, ancestor words are links. *word* → Old English *word* → Proto-Germanic *\*wurdą* → Proto-Indo-European *\*wr̥dʰh₁om*. Each opens in the panel, if its language's pack is installed. Tap your way back four thousand years.
+
+**Corrections.** A small file per pack, `corrections.toml`, fixes or adds entries. Yours, versioned, merged when the pack is built.
+
+## 8. Vocab
+
+**Keeping a word** records the word as written, its dictionary form, the sense you were shown, the sentence, the book, the anchor and the time. From a tap in the dictionary panel, or the pen's circle and tick.
+
+**Review on the device.** Short sessions, one card at a time. The front shows the sentence with the word marked. The back shows the entry. Scheduled with FSRS, the open spaced-repetition algorithm Anki offers. Reviews are appended to the log, never edited, so the schedule can always be recomputed from history.
+
+**Your hoard.** A screen with every word you've kept: by book, by language, by date, or by how well you know it. Tap one to see every sentence you met it in.
+
+**Export.** Anki, CSV and Markdown. Kollate already builds Anki decks from Kobo vocab, with the sentence as the cue. It reads Wordhord's the same way.
+
+## 9. Data on the device
+
+Everything lives in one folder, `/mnt/onboard/.wordhord/`. It shows over USB like any other files.
 
 ```
-EPUB ──import──▶ source (Djot + vocabulary, book.toml)
-                   │
-                   ▼ typeset (desktop, per device profile)
-                 artifact (pages, word map, links)
-                   │
-                   ▼ copy to device
-                 Kobo reader ──▶ annotations (append-only)
-                                   │
-                                   ▼ copy back
-                                 Kollate
+.wordhord/
+  wordhord.toml          settings
+  library.sqlite         books found, positions, last read: a cache, rebuilt by a scan
+  books/<book hash>/
+    notes.jsonl          highlights, notes, ink, bookmarks: the log
+    pages/<settings>/    cached layout: safe to delete, rebuilt on demand
+  vocab.jsonl            kept words and reviews: the log
+  dictionaries/<lang>.sqlite
+  log/                   what went wrong, kept small
 ```
 
-## 4. Source
+**Books are known by content hash.** Rename the file, move it, download it again: its notes follow, because the hash is the same. A different edition gets a new hash, and its notes are re-anchored by quote (below).
 
-A book is a folder:
-
-```
-odyssey/
-  book.toml        metadata, source edition, reference scheme, originals
-  names.toml       name register: people, places, groups (optional)
-  text/*.dj        chapters, in Djot with the Wordhord vocabulary
-  images/          figures, as imported
-```
-
-- Syntax is [Djot](https://djot.net). Parser: `jotdown` (Rust).
-- Attributes sit on the line before a block. Values with dots are quoted. See the syntax rules in `VOCABULARY.md`.
-- Meaning comes from the vocabulary (`VOCABULARY.md`), drawn from TEI.
-- Every block gets a stable ID at import. IDs are never reused or renumbered.
-- A validator rejects anything outside the vocabulary. The typesetter never meets a surprise.
-
-### Import
-
-The converter turns EPUB XHTML into source. It keeps meaning (verse, notes, small caps, languages) and drops publisher styling. What it can't classify, it flags for a human. It never guesses silently.
-
-Test set: three hard books, including a verse epic.
-
-## 5. Parallel texts
-
-An original and its translations are separate books. They align by canonical reference: *Beowulf* line 1, *Völuspá* stanza 1.
-
-- Each text declares its reference scheme in `book.toml`.
-- Verse lines are counted, not tagged: `start=1` numbers the first line, the compiler numbers the rest.
-- Where a line covers two of the original's, an override says so: `{n=12-13}`.
-- Where lines don't match but stanzas do, align by stanza.
-
-The artifact records, for each line or stanza, the reference it matches. How the original appears (popover, toggle, interleaved page) is the reader's choice, not the source's.
-
-The same references are the keys for the research corpus. One format serves both.
-
-## 5a. Citation
-
-Three things make a passage citable, and the vocabulary carries all three:
-
-- **Canonical references**, for verse and prose: *Beowulf* 4–5, *Völuspá* 1, *Natural History* 12.42.
-- **Source pages**, from the printed edition: Gummere 1910, p. 2.
-- **Names**, keyed to a register, so every mention of Heimdallr can be found in every text.
-
-The word map carries all three for every word. A note made on the device can be cited exactly.
-
-## 6. Typesetting
-
-Desktop only. Rust.
-
-- Shaping: cosmic-text (rustybuzz underneath).
-- Line breaking: Knuth–Plass, with hyphenation patterns per language.
-- Fonts: chosen per profile, shipped with the build, never substituted.
-- Sizes: three to five presets per profile.
-- Profiles: one per device.
-
-| Profile | Screen | Notes |
-|---|---|---|
-| Elipsa 2E | 1404×1872, 227 ppi | greyscale |
-| Libra Colour | 1264×1680, 300 ppi | colour layer for figures |
-
-## 7. Artifact
-
-Glyph runs. The desktop decides every glyph and where it goes. The device only draws them.
-
-Per book, per profile, per size preset:
-
-- **Fonts.** The exact font files, pinned by hash. A glyph ID means nothing without its font.
-- **Pages.** For each page, lines of glyph runs: font, size, then each glyph's ID and position. Plus a few primitives: lines and rectangles for rules, borders and ornaments. Plus figures, placed by box.
-- **Word map.** Every word: its text, its glyphs, its boxes, its block ID and offset, its canonical reference, its source page, its names.
-- **Links.** Notes, cross-references and contents, as boxes with targets.
-- **Notes.** Each note set on its own, for the note panel.
-
-Notes don't take room from the page. Tap a marker and its note opens in a panel over the lower 40% of the screen. Tap outside it and it closes. A long note pages inside the panel. The page under it never changes, so citations and ink stay put.
-
-A marker is a few pixels wide. Its tap box is at least 6 mm. When boxes overlap, the nearest marker wins.
-
-Each note records the page its marker is on and the reference of that line (`inf.1.2`). The notes are also gathered at the end of the chapter, to read straight through. There each label links back to its marker's page.
-
-Commentary on a passage (`::: commentary`) opens the same way, from a small ring in the margin beside the passage, left of any stanza number. Its title names the passage: `Stanza 5`, `Stanzas 5–6`, or a prose passage's first words.
-- **Alignment.** References to the original, where the book has one.
-
-Positions are fixed on the desktop, so the device can't drift from it. Rendering on the device only decides how each glyph's pixels look: anti-aliasing tuned to the panel.
-
-Size: about 6–8 bytes a glyph and 2,000 glyphs a page. A long book in five sizes is about 80 MB raw, 15–25 MB compressed. Page images would be 300–600 MB.
-
-Figures stay images: 4-bit greyscale on the Elipsa, colour on the Libra Colour.
-
-A desktop tool renders any compiled page to PNG with the same code as the device. It is the preview, and the test that the device draws what the desktop meant.
-
-## 8. Annotations
-
-The device appends one record per stroke. It never edits or deletes earlier records. An erasure is a new record.
+**Logs are JSON Lines.** One record per line, append only, each with an ID and a time. Two copies of a log merge by taking every ID from both. That's all sync needs.
 
 ```json
-{"id":"s_20261006T141502_412","book":"odyssey","profile":"elipsa-2e","size":2,
- "page":118,"tool":"pen","color":"black","width":3,
- "points":[[412,880],[415,881]],"time":1790966503}
+{"id":"01J9Z2Q3","t":"2026-10-07T14:15:02Z","kind":"ink","book":"sha256:9f2c…",
+ "anchor":{"chapter":"ch04.xhtml","quote":"the wine-dark sea","prefix":"over ","suffix":", to"},
+ "offset":[-412,18],"tool":"pen","width":2,
+ "points":[[0,0,0.41,0],[3,1,0.47,8],[7,1,0.52,15]]}
 ```
 
-Kollate resolves strokes against the word map: which words, which block, which reference. Anchors for the long term are block ID plus a quote: the exact words, with a little text before and after (the W3C TextQuoteSelector). They survive font changes, rebuilds and text fixes.
+Points are `[x, y, pressure, ms]`, relative to the anchor's first word.
 
-## 9. Device
+**Anchors** follow the W3C Web Annotation model: the exact text quoted, with a little before and after. They survive re-layout, a new edition and fixed typos. A chapter path and character offset make lookup fast; the quote makes it safe.
 
-- Draws pages from glyph runs, with a glyph cache. Turns pages.
-- Glyph rendering: swash in Rust, or FreeType if built on KOReader's base.
-- Pen: raw input, drawn with the fast waveform from its own loop. Target: under 5 ms per point, no stalls.
-- Plumbing (suspend, frontlight, Wi-Fi, USB hand-off to Nickel) is borrowed, not written. Candidates: KOReader's device layer, Cadmus, FBInk.
-- **Launched from NickelMenu, alongside Nickel.** A menu entry starts the reader. Nickel is paused or stopped while it runs, and restarted when it exits, the way KOReader and Plato do it.
-- On exit, crash or USB connection, Nickel comes back. A crash must never leave the device stuck on a frozen screen.
-- No changes to the firmware or to Nickel's files. Installing is copying a folder and a NickelMenu config line; removing is deleting them.
+**Export** writes, for each book, Markdown (quotes, notes, and ink as SVG beside them) and W3C Web Annotation JSON-LD for tools that speak it. One more Markdown file holds the whole commonplace book.
 
-## 10. Kollate
+## 10. Local-first sync
 
-Kollate reads the annotation files and the word map. It transcribes handwriting as it does now.
+Wordhord has no server and wants none. Ways to move your data, all optional:
 
-Open: Kollate never writes to the Kobo. Something must put compiled books on it. Either that rule changes, or a separate tool does it, or the user copies files by hand.
+- **USB.** Plug in and copy `.wordhord/`. Kollate does this, read-only, as it does today.
+- **A folder over Wi-Fi.** Point Wordhord at a WebDAV folder on your own machine or NAS. It pushes its logs, pulls the others, and merges by ID. Two Kobos share notes and vocab this way.
+- **Syncthing**, if you run it, on the same folder.
 
-## 11. Open questions
+Books come by USB, by that same folder, or from an OPDS catalogue such as calibre's content server.
 
-- Colour figures on the Libra Colour: dither on the desktop, or leave to the device?
-- Books with mixed verse and prose in one paragraph.
-- Search on the device: from the word map, or not at all in v1.
-- Text selection without a pen.
-- Scripts beyond Latin: polytonic Greek is fonts; Hebrew runs right to left, which is real work for the typesetter.
-- Word lookup in the original: tap a word, see its dictionary form and meaning. The first thing students of originals will ask for.
-- Textual variants (TEI's apparatus criticus), where manuscripts disagree. For scholars. Later.
+## 11. Kollate
 
-## 12. Milestones
+Kollate is the desktop companion. It reads `.wordhord/` over USB and never writes to it. It shows notes and ink beside the text, transcribes handwriting locally, and builds Anki decks. Today it reads Nickel's database and KOReader's sidecars. Wordhord's logs become a third source, and the simplest.
+
+## 12. Budgets
+
+On the Elipsa 2E:
+
+| What | Budget |
+|---|---|
+| Launch to last page | under 1 s |
+| Page turn, before the e-ink refresh | under 50 ms |
+| Ink, pen to pixel | under 5 ms per point, no stalls |
+| Dictionary panel open | under 150 ms |
+| First open of a 300-page book | first page under 2 s, the rest in the background |
+| App size, without dictionaries | under 10 MB |
+
+Measured on the device and written to the log, so regressions show.
+
+## 13. Device
+
+Draft 1's device layer stays. FBInk draws and refreshes. Input devices are read raw. NickelMenu starts a script that pauses Nickel with SIGSTOP and saves its screen; both come back on exit or crash. Wordhord closes itself after 30 minutes untouched, so Nickel's sleep and power handling return.
+
+Nickel holds the power button and the sleep cover, so Wordhord can't grab them. A power press while Wordhord runs reaches Nickel when it resumes. Wordhord needs its own way out and, later, its own sleep.
+
+## 14. Spice
+
+Small things that make it Wordhord's:
+
+- **The hoard grows.** The home screen's one number is how many words you've kept. No streaks, no nagging.
+- **Words met before.** A faint mark under words you've kept, wherever they turn up again, in any book. Tap one to see where you first met it.
+- **Etymology trail** (§7). Tap your way to Proto-Indo-European.
+- **Quote cards.** Any highlight, set as a clean page in the book's own type, exported as an image to share.
+- **Margin index.** One screen with every page you wrote on, as thumbnails of the ink. Find a note by its shape.
+- **Reading ledger.** Time read, pages turned, words kept. Local, private, exportable.
+- **Editions.** Books in Wordhord's own source format (Djot with a TEI vocabulary, from draft 1, see VOCABULARY.md) still compile on the desktop into fine editions: verse set as verse, line numbers, commentary, and each stanza's translation in the panel. The *Völuspá* reads that way today.
+
+## 15. Open decisions
+
+- **The EPUB engine.** Write Wordhord's own on top of the existing typesetter, or reuse Plato's (Rust, built for Kobo, AGPL-3.0)? Reuse saves months, but makes Wordhord AGPL and brings Plato's design with it. Our own is more work, but gives full control, and the typesetting is already better than most.
+- **PDF with ink.** MuPDF is the obvious engine (AGPL). PDFs are where Elipsa owners write most. After v1, or in it?
+- **English dictionary size.** Trim to senses and forms, or ship it whole?
+- **Exit and sleep.** A gesture to leave and Wordhord's own sleep screen, or always hand back to Nickel?
+- **Searching ink.** That needs transcription. Kollate does it on the desktop today. Is that enough?
+
+## 16. Milestones
 
 Each ends in a go or no-go.
 
-1. **Converter.** Three hard books into source, validated. Go: nothing lost that a reader would miss.
-2. **Typeset chapter.** One chapter, one profile, one size, as glyph runs, previewed as PNG. Go: you would read it.
-3. **Parallel text.** Gummere's *Beowulf* and the Old English, lines 1–100, aligned. Go: every line finds its original.
-4. **Device viewer.** Glyph runs drawn on the Elipsa, from NickelMenu. Go: pages match the desktop preview, and page turns feel as good as KOReader.
-5. **Pen.** Strokes recorded and resolved by Kollate. Go: under 5 ms per point, no stalls, words exact.
+1. **Any EPUB, one chapter.** Five Standard Ebooks and five messy EPUBs laid out on the device. Go: you'd read them, and page turns meet budget.
+2. **Library and position.** Scan, list, open, resume. Go: launch to last page in under a second.
+3. **Dictionary.** English and Old Norse packs; tap a word, see the entry, inflected forms included. Go: four taps in five find the right entry.
+4. **Pen.** Ink, gestures, anchors, the log. Go: under 5 ms per point, and ink follows its paragraph through a font change.
+5. **Vocab.** Keep, review, export to Anki. Go: you use it for a week.
+6. **Kollate reads it all.** Notes, ink and words on the desktop. Go: a round trip with nothing lost.
