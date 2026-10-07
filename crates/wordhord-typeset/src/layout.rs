@@ -83,6 +83,8 @@ pub struct Unit {
     pub split: bool,
     /// Keep on the page with what follows (a heading).
     pub keep_with_next: bool,
+    /// Space wanted under it, before whatever follows (verse).
+    pub space_after: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -720,6 +722,31 @@ impl<'a> Layout<'a> {
                     }
                 }
             }
+            // A gloss: small italic, centred, with the lines it's beside.
+            BlockKind::Gloss(inlines) => {
+                let small = size * 0.85;
+                let atoms = self.atoms(
+                    inlines,
+                    Style {
+                        face: Face::Italic,
+                        size: small,
+                        smcp: false,
+                    },
+                );
+                units.push(Unit {
+                    space_before: self.leading(size) * 0.6,
+                    keep_with_next: true,
+                    lines: self.ragged(
+                        &atoms,
+                        left + measure * 0.1,
+                        measure * 0.8,
+                        small,
+                        true,
+                        &id,
+                    ),
+                    ..Default::default()
+                });
+            }
             // Centred text is set ragged on both sides; a figure's caption
             // a little smaller.
             BlockKind::Center(blocks) | BlockKind::Figure(blocks) => {
@@ -861,6 +888,7 @@ impl<'a> Layout<'a> {
             space_before: self.leading(self.body) * if level == 1 { 2.0 } else { 1.0 },
             split: false,
             keep_with_next: true,
+            ..Default::default()
         }
     }
 
@@ -1372,7 +1400,8 @@ impl<'a> Layout<'a> {
         let step = size * 1.5;
         let mut unit = Unit {
             space_before: self.leading(size) * 0.6,
-            split: lines.len() > 12,
+            space_after: self.leading(size) * 0.6,
+            split: lines.len() > 8,
             ..Default::default()
         };
         let style = Style {
@@ -1707,7 +1736,12 @@ impl<'a> Layout<'a> {
         for (k, u) in units.iter().enumerate() {
             let height: f32 = u.lines.iter().map(|l| l.height).sum();
             let at_top = y <= top + 0.5;
-            let before = if at_top { 0.0 } else { u.space_before };
+            // Space under the last unit counts toward this one's.
+            let space = match k.checked_sub(1).and_then(|p| units.get(p)) {
+                Some(p) => u.space_before.max(p.space_after),
+                None => u.space_before,
+            };
+            let before = if at_top { 0.0 } else { space };
             // A heading wants the first lines of what follows with it.
             let follow: f32 = if u.keep_with_next {
                 units.get(k + 1).map_or(0.0, |n| {
@@ -1724,7 +1758,7 @@ impl<'a> Layout<'a> {
                 pages.push(Page::default());
                 y = top;
             }
-            y += if y <= top + 0.5 { 0.0 } else { u.space_before };
+            y += if y <= top + 0.5 { 0.0 } else { space };
             let breaks = plan(&u.lines, y, top, bottom);
             for (n, line) in u.lines.iter().enumerate() {
                 if (breaks.contains(&n) || !fits(y, line.height)) && y > top + 0.5 {

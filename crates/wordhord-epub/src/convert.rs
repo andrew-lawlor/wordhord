@@ -265,6 +265,86 @@ impl<'e, 's> Converter<'e, 's> {
 
     // ---- the walk ----------------------------------------------------
 
+    /// A poem set as a table (see `is_verse_table`) as verse, broken
+    /// around each gloss.
+    fn verse_table(&mut self, node: Node, style: &Style) -> Vec<BlockKind> {
+        enum Row {
+            Line {
+                number: Option<String>,
+                inlines: Vec<Inline>,
+                opens: bool,
+            },
+            Gloss(Vec<Inline>),
+        }
+        let mut rows = Vec::new();
+        for tr in node.descendants().filter(|n| n.has_tag_name("tr")) {
+            let cells: Vec<Node> = tr.children().filter(|c| is_cell(*c)).collect();
+            let content = |cx: &mut Self, cell: Node| {
+                let s = cx.sheet.style(cell, style);
+                let mut i = cx.inlines(cell, &s);
+                trim(&mut i);
+                i
+            };
+            match cells.as_slice() {
+                [number, line] => {
+                    let number =
+                        Some(node_text(*number).trim().to_string()).filter(|n| !n.is_empty());
+                    // A verse paragraph's first line is indented.
+                    let opens = line
+                        .descendants()
+                        .find(|d| d.is_element() && d != line)
+                        .is_some_and(|p| self.sheet.style(p, style).text_indent.em > 0.5);
+                    rows.push(Row::Line {
+                        number,
+                        inlines: content(self, *line),
+                        opens,
+                    });
+                }
+                [gloss] => rows.push(Row::Gloss(content(self, *gloss))),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        let mut verse = Verse::default();
+        let mut group = 0;
+        let mut gap = false;
+        for row in rows {
+            match row {
+                Row::Line { inlines, .. } if inlines.is_empty() => gap = true,
+                Row::Line {
+                    number,
+                    inlines,
+                    opens,
+                } => {
+                    if (gap || opens) && !verse.lines.is_empty() {
+                        group += 1;
+                    }
+                    gap = false;
+                    verse.lines.push(VerseLine {
+                        indent: 0,
+                        group,
+                        inlines,
+                        reference: number,
+                        line: 0,
+                    });
+                }
+                Row::Gloss(inlines) if plain_text(&inlines).trim().is_empty() => {}
+                Row::Gloss(inlines) => {
+                    if !verse.lines.is_empty() {
+                        out.push(BlockKind::Verse(std::mem::take(&mut verse)));
+                        group = 0;
+                    }
+                    gap = false;
+                    out.push(BlockKind::Gloss(inlines));
+                }
+            }
+        }
+        if !verse.lines.is_empty() {
+            out.push(BlockKind::Verse(verse));
+        }
+        out
+    }
+
     fn has_blocks(&self, node: Node, style: &Style) -> bool {
         node.children().filter(|c| c.is_element()).any(|c| {
             let s = self.sheet.style(c, style);
@@ -388,6 +468,11 @@ impl<'e, 's> Converter<'e, 's> {
                         self,
                         out,
                     );
+                }
+            }
+            "table" if is_verse_table(node) => {
+                for kind in self.verse_table(node, style) {
+                    make(kind, self, out);
                 }
             }
             "table" => {
@@ -979,6 +1064,46 @@ fn leading_number(inlines: &mut Vec<Inline>) -> Option<String> {
 }
 
 /// "[40] swords and body-armour": a line number in brackets at the start
+fn is_cell(node: Node) -> bool {
+    node.has_tag_name("td") || node.has_tag_name("th")
+}
+
+fn node_text(node: Node) -> String {
+    node.descendants()
+        .filter(|d| d.is_text())
+        .filter_map(|d| d.text())
+        .collect()
+}
+
+/// A poem set as a table, as some editions do: each row a line number
+/// (or nothing) and a line, with empty lines between verse paragraphs;
+/// and rows of one cell, spanning both, for glosses in the margin. Most
+/// rows must be lines.
+fn is_verse_table(table: Node) -> bool {
+    let (mut rows, mut lines, mut glosses) = (0, 0, 0);
+    for tr in table.descendants().filter(|n| n.has_tag_name("tr")) {
+        let cells: Vec<Node> = tr.children().filter(|c| is_cell(*c)).collect();
+        match cells.as_slice() {
+            [number, line] => {
+                if !node_text(*number)
+                    .trim()
+                    .chars()
+                    .all(|c| c.is_ascii_digit())
+                {
+                    return false;
+                }
+                rows += 1;
+                if !node_text(*line).trim().is_empty() {
+                    lines += 1;
+                }
+            }
+            [_] => glosses += 1,
+            _ => return false,
+        }
+    }
+    lines >= 3 && glosses * 3 <= rows
+}
+
 /// of a line, as Penguin sets them, taken out.
 fn bracketed_number(inlines: &mut Vec<Inline>) -> Option<String> {
     let first = inlines

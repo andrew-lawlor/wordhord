@@ -16,7 +16,7 @@ use wordhord_typeset::page::Typeset;
 use wordhord_typeset::profile::Profile;
 
 /// Bumped when layout changes, so cached pages are laid out again.
-const LAYOUT: &str = "1";
+const LAYOUT: &str = "2";
 
 pub struct Book {
     /// Where the book's state lives: its position, and for an EPUB its

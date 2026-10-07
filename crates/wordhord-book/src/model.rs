@@ -31,6 +31,9 @@ pub enum BlockKind {
     Letter(Vec<Block>),
     Quote(Vec<Block>),
     Center(Vec<Block>),
+    /// A gloss in the margin: a few words on what the lines beside it
+    /// tell, as some editions of long poems give.
+    Gloss(Vec<Inline>),
     Figure(Vec<Block>),
     SceneBreak,
     Table(Vec<Vec<Vec<Inline>>>),
@@ -212,7 +215,7 @@ pub fn walk<'a>(blocks: &'a [Block], out: &mut Vec<&'a Block>) {
 pub fn block_inlines(b: &Block) -> Vec<&[Inline]> {
     match &b.kind {
         BlockKind::Heading { text, .. } => vec![text.as_slice()],
-        BlockKind::Paragraph(i) => vec![i.as_slice()],
+        BlockKind::Paragraph(i) | BlockKind::Gloss(i) => vec![i.as_slice()],
         BlockKind::Verse(v) | BlockKind::Stanza(v) => {
             v.lines.iter().map(|l| l.inlines.as_slice()).collect()
         }

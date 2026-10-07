@@ -231,3 +231,47 @@ fn code_and_lists() {
     assert!(!ordered);
     assert_eq!(items.len(), 2);
 }
+
+#[test]
+fn a_poem_set_as_a_table_is_verse_with_its_glosses() {
+    let row = |n: &str, line: &str| format!(r#"<tr><td>{n}</td><td><p>{line}</p></td></tr>"#);
+    let body = [
+        row("", "So. The Spear-Danes in days gone by"),
+        row(
+            "",
+            "and the kings who ruled them had courage and greatness.",
+        ),
+        r#"<tr><td colspan="2"><p><span class="i">The Danes have legends</span></p></td></tr>"#
+            .into(),
+        row("", "There was Shield Sheafson, scourge of many tribes,"),
+        row("10", "beyond the whale-road had to yield to him"),
+        row("", ""),
+        row("", "Afterwards a boy-child was born to Shield,"),
+    ]
+    .concat();
+    let blocks = convert(&format!("<table>{body}</table>"), "");
+    let kinds: Vec<&str> = blocks
+        .iter()
+        .map(|b| match &b.kind {
+            BlockKind::Verse(_) => "verse",
+            BlockKind::Gloss(_) => "gloss",
+            _ => "other",
+        })
+        .collect();
+    assert_eq!(kinds, ["verse", "gloss", "verse"], "{blocks:?}");
+    let BlockKind::Verse(v) = &blocks[2].kind else {
+        unreachable!()
+    };
+    assert_eq!(v.lines[1].reference.as_deref(), Some("10"));
+    assert_eq!(v.lines[2].group, 1, "an empty row starts a new group");
+}
+
+#[test]
+fn a_table_of_data_stays_a_table() {
+    let blocks = convert(
+        "<table><tr><td>Odin</td><td>Allfather</td></tr><tr><td>Thor</td><td>Thunderer</td></tr>\
+         <tr><td>Loki</td><td>Trickster</td></tr></table>",
+        "",
+    );
+    assert!(matches!(blocks[0].kind, BlockKind::Table(_)), "{blocks:?}");
+}
