@@ -274,6 +274,7 @@ fn browse(
                 }
                 Gesture::Tap(x, y) => match s.hit(x as f32, y as f32) {
                     Some(Action::Open(path)) => return Some(path.clone()),
+                    Some(Action::Close) => return None,
                     Some(a) => {
                         let a = a.clone();
                         // Back from home has nowhere to go.

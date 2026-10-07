@@ -45,6 +45,8 @@ pub enum Action {
     /// The reader's bar: back to the library, or to the contents.
     Library,
     Contents,
+    /// Close Wordhord, back to the Kobo's own reader.
+    Close,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -473,6 +475,19 @@ impl<'f> Ui<'f> {
             ));
             y += row;
         }
+        // Close, at the foot of the page.
+        let foot = self.h - self.mm(12.0);
+        let close = "close wordhord";
+        let w = self.centred(&mut s.page, close, label, foot);
+        s.hits.push((
+            Rect {
+                x0: (self.w - w) / 2.0 - self.mm(10.0),
+                y0: foot - self.mm(10.0),
+                x1: (self.w + w) / 2.0 + self.mm(10.0),
+                y1: self.h,
+            },
+            Action::Close,
+        ));
         s
     }
 
