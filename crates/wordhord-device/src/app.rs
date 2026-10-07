@@ -49,7 +49,12 @@ pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), Str
         }
     };
     let ui = Ui::new(&fonts, width, height, profile.ppi);
-    let library = Library::scan(root, &app.join("library.json"));
+    let index = app.join("library.json");
+    // The first scan opens every book: say so, rather than show nothing.
+    if !index.exists() {
+        say(screen, &fonts_dir, &["Finding your books…"]);
+    }
+    let library = Library::scan(root, &index);
     eprintln!("ready in {:?}", started.elapsed());
     let mut open = library::recent(app)
         .into_iter()
