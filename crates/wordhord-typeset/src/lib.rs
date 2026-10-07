@@ -42,27 +42,25 @@ pub fn typeset_chapter(
     )
 }
 
-/// Typesets a chapter's blocks, in a language (ISO 639: `eng`, `en`,
-/// `en-GB`), as `typeset_chapter` does. `translation` is a parallel book's
-/// chapters, or nothing. With `images`, which reads an image's file by its
-/// source, images are laid out and drawn, and the ones used are copied to
-/// `out/images/`.
-pub fn typeset_blocks(
+/// Lays out a chapter's blocks, in a language (ISO 639: `eng`, `en`,
+/// `en-GB`), with fonts already loaded from the profile. Nothing is
+/// written: this is what the device runs. `translation` is a parallel
+/// book's chapters, or nothing; with `images`, which reads an image's file
+/// by its source, images are laid out.
+pub fn lay_out(
     blocks: &[wordhord_book::model::Block],
     lang: &str,
     profile: &profile::Profile,
-    out: &Path,
-    previews: bool,
+    fonts: &fonts::Fonts,
     translation: &[Vec<wordhord_book::model::Block>],
     images: Option<&render::ReadImage>,
-) -> Result<page::Typeset, String> {
-    let fonts = fonts::Fonts::load(&profile.dir, &profile.fonts)?;
+) -> page::Typeset {
     let sizes = |src: &str| {
         images
             .and_then(|read| read(src))
             .and_then(|b| render::image_size(&b))
     };
-    let mut layout = layout::Layout::new(&fonts, profile, lang);
+    let mut layout = layout::Layout::new(fonts, profile, lang);
     if images.is_some() {
         layout = layout.with_images(&sizes);
     }
@@ -111,6 +109,39 @@ pub fn typeset_blocks(
         .collect();
     let panel = layout.panel();
 
+    page::Typeset {
+        profile: profile.name.clone(),
+        width: profile.width,
+        height: profile.height,
+        fonts: fonts
+            .files
+            .iter()
+            .map(|f| page::FontRef {
+                path: f.path.clone(),
+                sha256: f.sha256.clone(),
+            })
+            .collect(),
+        pages,
+        panel,
+        notes,
+    }
+}
+
+/// Typesets a chapter's blocks as `lay_out` does, into `out/pages.json`,
+/// with the images used copied to `out/images/` and, with `previews`, a PNG
+/// of each page and note.
+pub fn typeset_blocks(
+    blocks: &[wordhord_book::model::Block],
+    lang: &str,
+    profile: &profile::Profile,
+    out: &Path,
+    previews: bool,
+    translation: &[Vec<wordhord_book::model::Block>],
+    images: Option<&render::ReadImage>,
+) -> Result<page::Typeset, String> {
+    let fonts = fonts::Fonts::load(&profile.dir, &profile.fonts)?;
+    let typeset = lay_out(blocks, lang, profile, &fonts, translation, images);
+    let (pages, notes, panel) = (&typeset.pages, &typeset.notes, &typeset.panel);
     std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
     // The images the pages use go with them.
     if let Some(read) = images {
@@ -152,7 +183,7 @@ pub fn typeset_blocks(
         // page.
         let height = panel.height as u32;
         let mut shown = std::collections::HashSet::new();
-        for note in &notes {
+        for note in notes {
             let name: String = note
                 .id
                 .chars()
@@ -182,22 +213,6 @@ pub fn typeset_blocks(
             }
         }
     }
-    let typeset = page::Typeset {
-        profile: profile.name.clone(),
-        width: profile.width,
-        height: profile.height,
-        fonts: fonts
-            .files
-            .iter()
-            .map(|f| page::FontRef {
-                path: f.path.clone(),
-                sha256: f.sha256.clone(),
-            })
-            .collect(),
-        pages,
-        panel,
-        notes,
-    };
     let json = serde_json::to_string(&typeset).map_err(|e| e.to_string())?;
     std::fs::write(out.join("pages.json"), json).map_err(|e| e.to_string())?;
     Ok(typeset)

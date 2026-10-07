@@ -13,18 +13,19 @@ use crate::platform::Platform;
 use crate::reader::{Effect, Reader};
 use crate::touch::Gesture;
 
-pub fn run(screen: &mut dyn Platform, library: &Path, fonts: &Path) -> Result<(), String> {
+pub fn run(screen: &mut dyn Platform, library: &Path, app: &Path) -> Result<(), String> {
+    let fonts = app.join("fonts");
     let (width, height) = screen.size();
     let started = Instant::now();
-    let loaded = book::choose(library)
+    let opened = book::choose(library)
         .ok_or_else(|| format!("no books in {}", library.display()))
-        .and_then(|dir| Book::load(&dir, fonts));
-    let book = match loaded {
+        .and_then(|path| Book::open(&path, app));
+    let book = match opened {
         Ok(b) => b,
         Err(e) => {
             say(
                 screen,
-                fonts,
+                &fonts,
                 &[
                     "Wordhord can't open a book.",
                     &e,
@@ -35,61 +36,97 @@ pub fn run(screen: &mut dyn Platform, library: &Path, fonts: &Path) -> Result<()
             return Err(e);
         }
     };
-    let t = &book.typeset;
     eprintln!(
-        "{}: {} pages, {} notes, loaded in {:?}",
-        book.dir.display(),
-        t.pages.len(),
-        t.notes.len(),
+        "{}: {} chapters, opened in {:?}",
+        book.name,
+        book.chapters(),
         started.elapsed()
     );
-    if (t.width, t.height) != (width, height) {
-        let e = format!(
-            "These pages are set for a {}×{} screen. This one is {width}×{height}.",
-            t.width, t.height
-        );
-        say(screen, fonts, &[&e, "Hold a finger down to go back."]);
-        wait_to_close(screen);
-        return Err(e);
-    }
-    if let (Some(name), Some(parent)) = (book.dir.file_name(), book.dir.parent()) {
-        let _ = std::fs::write(parent.join("last"), name.to_string_lossy().as_bytes());
-    }
-    // A compiled book keeps its images beside its pages.
-    let images = book.dir.join("images");
-    let read = move |src: &str| std::fs::read(images.join(src)).ok();
-    let mut renderer = Renderer::new(&book.fonts).with_images(&read);
-    let mut reader = Reader::new(t, book.position());
-    // The page as drawn, to put back where the panel was.
-    let mut shown = draw(screen, &mut renderer, &t.pages[reader.page], true);
+    let _ = std::fs::write(library.join("last"), book.name.as_bytes());
+    let (mut chapter, mut page) = book.position();
+    let mut flash = true;
     loop {
-        let gesture = screen.next();
-        let effect = reader.act(gesture);
-        eprintln!("{gesture:?}: {effect:?}");
-        match effect {
-            Effect::Nothing => {}
-            Effect::Close => break,
-            Effect::Page { flash } => {
-                shown = draw(screen, &mut renderer, &t.pages[reader.page], flash);
-                book.remember(reader.page);
+        let t = match book.chapter(chapter) {
+            Ok(t) => t,
+            Err(e) => {
+                say(
+                    screen,
+                    &fonts,
+                    &[
+                        "Wordhord can't open this chapter.",
+                        &e,
+                        "Hold a finger down to go back.",
+                    ],
+                );
+                wait_to_close(screen);
+                return Err(e);
             }
-            Effect::Panel => {
-                let Some(open) = reader.open else { continue };
-                let area = &t.panel;
-                let (w, h) = (area.width as u32, area.height as u32);
-                let page = &t.notes[open.note].pages[open.page];
-                let pixels = render::panel(&mut renderer, page, w, h);
-                screen.draw(&pixels, w, h, area.x as u32, area.y as u32, false);
+        };
+        if (t.width, t.height) != (width, height) {
+            let e = format!(
+                "These pages are set for a {}×{} screen. This one is {width}×{height}.",
+                t.width, t.height
+            );
+            say(screen, &fonts, &[&e, "Hold a finger down to go back."]);
+            wait_to_close(screen);
+            return Err(e);
+        }
+        let read = |src: &str| book.image(src);
+        let mut renderer = Renderer::new(&book.fonts).with_images(&read);
+        let mut reader = Reader::new(&t, page);
+        book.remember(chapter, reader.page);
+        // The page as drawn, to put back where the panel was.
+        let mut shown = draw(screen, &mut renderer, &t.pages[reader.page], flash);
+        flash = false;
+        let step = loop {
+            let gesture = screen.next();
+            let effect = reader.act(gesture);
+            eprintln!("{gesture:?}: {effect:?}");
+            match effect {
+                Effect::Nothing => {}
+                Effect::Close => break None,
+                // At the book's first or last page, there's nowhere to go.
+                Effect::Chapter(step)
+                    if (step > 0 && chapter + 1 < book.chapters()) || (step < 0 && chapter > 0) =>
+                {
+                    break Some(step)
+                }
+                Effect::Chapter(_) => {}
+                Effect::Page { flash } => {
+                    shown = draw(screen, &mut renderer, &t.pages[reader.page], flash);
+                    book.remember(chapter, reader.page);
+                }
+                Effect::Panel => {
+                    let Some(open) = reader.open else { continue };
+                    let area = &t.panel;
+                    let (w, h) = (area.width as u32, area.height as u32);
+                    let page = &t.notes[open.note].pages[open.page];
+                    let pixels = render::panel(&mut renderer, page, w, h);
+                    screen.draw(&pixels, w, h, area.x as u32, area.y as u32, false);
+                }
+                Effect::ClosePanel => {
+                    let top = t.panel.y as u32;
+                    let rows = &shown[top as usize * width as usize..];
+                    screen.draw(rows, width, height - top, 0, top, false);
+                }
             }
-            Effect::ClosePanel => {
-                let top = t.panel.y as u32;
-                let rows = &shown[top as usize * width as usize..];
-                screen.draw(rows, width, height - top, 0, top, false);
+        };
+        match step {
+            None => {
+                book.remember(chapter, reader.page);
+                return Ok(());
+            }
+            Some(step) if step > 0 => {
+                chapter += 1;
+                page = 0;
+            }
+            Some(_) => {
+                chapter -= 1;
+                // The previous chapter opens at its last page.
+                page = usize::MAX;
             }
         }
     }
-    book.remember(reader.page);
-    Ok(())
 }
 
 /// Draws a whole page; returns its pixels.

@@ -3,9 +3,12 @@
 //! the desktop it runs in a window, for development.
 //!
 //! ```text
-//! wordhord-reader <library> <fonts> <screen file>      on a Kobo
-//! wordhord-reader --restore <screen file>              on a Kobo
-//! wordhord-reader <library> <fonts> [--scale N]        on the desktop
+//! wordhord-reader <library> <app folder> <screen file>   on a Kobo
+//! wordhord-reader --restore <screen file>                on a Kobo
+//! wordhord-reader <library> <app folder> [--scale N]     on the desktop
+//!
+//! A library holds EPUBs and compiled editions. The app folder holds
+//! `profile.toml`, the fonts it names, and the cache of laid-out pages.
 //! ```
 
 mod app;

@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 wordhord-typeset = { path = "../wordhord-typeset" }
+wordhord-epub = { path = "../wordhord-epub" }
 serde_json = "1"
 sha2 = "0.10"
 libc = "0.2"

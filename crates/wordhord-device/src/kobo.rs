@@ -34,10 +34,10 @@ pub fn main() -> ExitCode {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     match args.as_slice() {
         ["--restore", screen] => restore(screen),
-        [library, fonts, screen] => run(Path::new(library), Path::new(fonts), screen),
+        [library, app, screen] => run(Path::new(library), Path::new(app), screen),
         _ => {
             eprintln!(
-                "usage: wordhord-reader <library> <fonts> <screen file> | --restore <screen file>"
+                "usage: wordhord-reader <library> <app folder> <screen file> | --restore <screen file>"
             );
             ExitCode::from(2)
         }
@@ -66,7 +66,7 @@ struct Input {
     types: u32,
 }
 
-fn run(library: &Path, fonts: &Path, screen: &str) -> ExitCode {
+fn run(library: &Path, app: &Path, screen: &str) -> ExitCode {
     let path = CString::new(screen).expect("no NUL in a path");
     let fd = unsafe { wh_open() };
     if fd < 0 {
@@ -120,7 +120,7 @@ fn run(library: &Path, fonts: &Path, screen: &str) -> ExitCode {
         inputs,
         gestures: Gestures::default(),
     };
-    let result = app::run(&mut kobo, library, fonts);
+    let result = app::run(&mut kobo, library, app);
     let Kobo { fd, inputs, .. } = kobo;
 
     for i in &inputs {

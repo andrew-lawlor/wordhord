@@ -43,6 +43,9 @@ pub enum Effect {
     Panel,
     /// Put the page back where the panel was.
     ClosePanel,
+    /// Past the chapter's end (1) or before its start (-1): the next or
+    /// previous chapter.
+    Chapter(i8),
     Close,
 }
 
@@ -82,7 +85,7 @@ impl<'t> Reader<'t> {
     fn turn(&mut self, by: isize) -> Effect {
         let to = self.page as isize + by;
         if to < 0 || to as usize >= self.t.pages.len() {
-            return Effect::Nothing;
+            return Effect::Chapter(by.signum() as i8);
         }
         self.page = to as usize;
         self.open = None;
@@ -245,14 +248,14 @@ mod tests {
     fn swipes_and_edge_taps_turn_pages() {
         let t = book();
         let mut r = Reader::new(&t, 0);
-        assert_eq!(r.act(Gesture::SwipeRight), Effect::Nothing);
+        assert_eq!(r.act(Gesture::SwipeRight), Effect::Chapter(-1));
         assert_eq!(r.act(Gesture::SwipeLeft), Effect::Page { flash: false });
         assert_eq!(
             r.act(Gesture::Tap(1380, 900)),
             Effect::Page { flash: false }
         );
         assert_eq!(r.page, 2);
-        assert_eq!(r.act(Gesture::Tap(1380, 900)), Effect::Nothing);
+        assert_eq!(r.act(Gesture::Tap(1380, 900)), Effect::Chapter(1));
         assert_eq!(r.act(Gesture::Tap(20, 900)), Effect::Page { flash: false });
         assert_eq!(r.page, 1);
         // The middle of the page does nothing.

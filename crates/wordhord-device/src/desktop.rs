@@ -3,8 +3,8 @@
 //! over a second a hold. The arrow keys turn pages; Escape closes.
 //!
 //! ```text
-//! wordhord-reader <library> <fonts> [--scale N] [--screen 1404x1872]
-//! wordhord-reader <library> <fonts> --script "tap 700 300, swipe left, hold" <frames>
+//! wordhord-reader <library> <app folder> [--scale N] [--screen 1404x1872]
+//! wordhord-reader <library> <app folder> --script "tap 700 300, swipe left, hold" <frames>
 //! ```
 //!
 //! With `--script`, there's no window: the gestures are played in order and
@@ -23,10 +23,10 @@ use crate::touch::Gesture;
 pub fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.len() < 2 {
-        eprintln!("usage: wordhord-reader <library> <fonts> [--scale N] [--screen WxH] [--script GESTURES FRAMES]");
+        eprintln!("usage: wordhord-reader <library> <app folder> [--scale N] [--screen WxH] [--script GESTURES FRAMES]");
         return ExitCode::from(2);
     }
-    let (library, fonts) = (PathBuf::from(&args[0]), PathBuf::from(&args[1]));
+    let (library, app) = (PathBuf::from(&args[0]), PathBuf::from(&args[1]));
     let mut scale = 2;
     let mut size = (1404, 1872);
     let mut script = None;
@@ -51,11 +51,11 @@ pub fn main() -> ExitCode {
     }
     let result = match script {
         Some((gestures, frames)) => match Script::new(size, &gestures, &frames) {
-            Ok(mut s) => app::run(&mut s, &library, &fonts),
+            Ok(mut s) => app::run(&mut s, &library, &app),
             Err(e) => Err(e),
         },
         None => match Desktop::new(size, scale) {
-            Ok(mut d) => app::run(&mut d, &library, &fonts),
+            Ok(mut d) => app::run(&mut d, &library, &app),
             Err(e) => Err(e),
         },
     };
@@ -69,7 +69,7 @@ pub fn main() -> ExitCode {
 }
 
 fn usage() -> ExitCode {
-    eprintln!("usage: wordhord-reader <library> <fonts> [--scale N] [--screen WxH] [--script GESTURES FRAMES]");
+    eprintln!("usage: wordhord-reader <library> <app folder> [--scale N] [--screen WxH] [--script GESTURES FRAMES]");
     ExitCode::from(2)
 }
 
