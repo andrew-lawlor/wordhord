@@ -19,7 +19,7 @@ use crate::library::{self, Entry, Library};
 use crate::platform::Platform;
 use crate::reader::{Effect, Reader};
 use crate::touch::Gesture;
-use crate::ui::{Action, Recent, Row, Screen, Shelf, Ui, COVER};
+use crate::ui::{Action, Part, Recent, Row, Screen, Shelf, Ui, COVER};
 
 /// How a book was left.
 enum Leave {
@@ -137,9 +137,19 @@ impl Browser {
         let progress = |path: &str| recent.iter().find(|o| o.path == path).map(|o| o.progress);
         let row = |e: &Entry| Row {
             title: e.title.clone(),
-            detail: e.byline(),
+            detail: {
+                let (author, series) = e.byline();
+                let mut parts = vec![Part::Caps(author)];
+                if let Some(s) = series {
+                    parts.push(Part::Plain("  ·  ".into()));
+                    parts.push(Part::Italic(s));
+                }
+                parts
+            },
             cover: Some((e.path.clone(), e.cover_size.unwrap_or((0, 0)))),
             progress: progress(&e.path),
+            count: None,
+            mark: false,
             action: Action::Open(e.path.clone()),
             depth: 0,
         };
@@ -185,16 +195,19 @@ impl Browser {
                     .enumerate()
                     .map(|(k, (name, books))| Row {
                         title: name.clone(),
-                        detail: match (shelf, books.len()) {
-                            (Shelf::Series, _) => books
+                        detail: match shelf {
+                            Shelf::Series => books
                                 .first()
                                 .and_then(|b| b.authors.first().cloned())
-                                .unwrap_or_default(),
-                            (_, 1) => "1 book".into(),
-                            (_, n) => format!("{n} books"),
+                                .map(Part::Caps)
+                                .into_iter()
+                                .collect(),
+                            _ => Vec::new(),
                         },
                         cover: None,
                         progress: None,
+                        count: Some(books.len()),
+                        mark: false,
                         action: Action::Group(shelf, k),
                         depth: 0,
                     })
@@ -512,22 +525,25 @@ fn contents(
 ) -> Option<Result<usize, Leave>> {
     let (width, height) = screen.size();
     let entries = book.contents();
-    let rows: Vec<Row> = entries
-        .iter()
-        .map(|(label, depth, chapter)| Row {
-            title: label.clone(),
-            detail: String::new(),
-            cover: None,
-            progress: None,
-            action: Action::Chapter(*chapter),
-            depth: *depth,
-        })
-        .collect();
-    // Open at the page that holds the chapter being read.
+    // The entry for the chapter being read: the last one at or before it.
     let at = entries
         .iter()
         .rposition(|(_, _, c)| *c <= current)
         .unwrap_or(0);
+    let rows: Vec<Row> = entries
+        .iter()
+        .enumerate()
+        .map(|(k, (label, depth, chapter))| Row {
+            title: label.clone(),
+            detail: Vec::new(),
+            cover: None,
+            progress: None,
+            count: None,
+            mark: k == at,
+            action: Action::Chapter(*chapter),
+            depth: *depth,
+        })
+        .collect();
     let per_page = ui
         .list("Contents", &rows, 0, true)
         .hits

@@ -81,14 +81,28 @@ impl Screen {
 /// A row in a list.
 pub struct Row {
     pub title: String,
-    pub detail: String,
+    /// The line under the title: author in small caps, series in italic.
+    pub detail: Vec<Part>,
     /// A book's cover: its path in the library, and its size.
     pub cover: Option<(String, (u32, u32))>,
     /// How far through, for a book that's been opened.
     pub progress: Option<f32>,
+    /// How many books, for an author, series or tag: set at the right,
+    /// after leaders.
+    pub count: Option<usize>,
+    /// The chapter being read, in contents.
+    pub mark: bool,
     pub action: Action,
     /// Indent steps, for contents.
     pub depth: usize,
+}
+
+/// A piece of a row's detail line, and how it's set.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Part {
+    Caps(String),
+    Italic(String),
+    Plain(String),
 }
 
 /// A book on the Continue shelf.
@@ -97,6 +111,37 @@ pub struct Recent {
     pub title: String,
     pub cover: Option<(u32, u32)>,
     pub progress: f32,
+}
+
+/// How a piece of text is set: its face and size, whether in small caps,
+/// and the letterspacing, in ems. Figures are always old-style.
+#[derive(Debug, Clone, Copy)]
+struct Type {
+    face: Face,
+    size: f32,
+    caps: bool,
+    track: f32,
+}
+
+impl Type {
+    fn new(face: Face, size: f32) -> Type {
+        Type {
+            face,
+            size,
+            caps: false,
+            track: 0.0,
+        }
+    }
+
+    /// Small caps, spaced by `track` ems. Capitals stay full height; set
+    /// a label in lower case to have it all in small caps.
+    fn caps(self, track: f32) -> Type {
+        Type {
+            caps: true,
+            track,
+            ..self
+        }
+    }
 }
 
 pub struct Ui<'f> {
@@ -132,58 +177,99 @@ impl<'f> Ui<'f> {
         self.mm(9.0)
     }
 
+    /// Glyph runs for `text`, from x = 0, and their width.
+    fn set(&self, text: &str, t: Type) -> (Vec<Run>, f32) {
+        let features: &[&str] = if t.caps { &["onum", "smcp"] } else { &["onum"] };
+        let track = t.track * t.size;
+        let mut runs = Vec::new();
+        let mut x = 0.0;
+        let mut first = true;
+        for s in self.fonts.shape(text, t.face, t.size, features) {
+            let mut glyphs = Vec::with_capacity(s.glyphs.len());
+            let mut extra = 0.0;
+            for g in &s.glyphs {
+                if !first {
+                    extra += track;
+                }
+                first = false;
+                glyphs.push((g.id, g.x + extra, g.y));
+            }
+            runs.push(Run {
+                font: s.font,
+                size: s.size,
+                x,
+                y: 0.0,
+                glyphs,
+            });
+            x += s.width + extra;
+        }
+        (runs, x)
+    }
+
+    fn width(&self, text: &str, t: Type) -> f32 {
+        self.set(text, t).1
+    }
+
     /// Text at a baseline, cut with an ellipsis to fit `max` pixels. Returns
     /// its width.
-    #[allow(clippy::too_many_arguments)]
-    fn text(
-        &self,
-        page: &mut Page,
-        text: &str,
-        face: Face,
-        size: f32,
-        x: f32,
-        y: f32,
-        max: f32,
-    ) -> f32 {
-        let width = |t: &str| -> f32 {
-            self.fonts
-                .shape(t, face, size, &[])
-                .iter()
-                .map(|s| s.width)
-                .sum()
-        };
-        let mut shown = text.to_string();
-        if width(&shown) > max {
+    fn text(&self, page: &mut Page, text: &str, t: Type, x: f32, y: f32, max: f32) -> f32 {
+        let mut set = self.set(text, t);
+        if set.1 > max {
             let chars: Vec<char> = text.chars().collect();
             let mut n = chars.len();
             while n > 0 {
                 n -= 1;
-                shown = chars[..n].iter().collect::<String>().trim_end().to_string() + "…";
-                if width(&shown) <= max {
+                let shown = chars[..n].iter().collect::<String>().trim_end().to_string() + "…";
+                set = self.set(&shown, t);
+                if set.1 <= max {
                     break;
                 }
             }
         }
-        let mut cx = x;
-        for s in self.fonts.shape(&shown, face, size, &[]) {
-            page.runs.push(Run {
-                font: s.font,
-                size: s.size,
-                x: cx,
-                y,
-                glyphs: s.glyphs.iter().map(|g| (g.id, g.x, g.y)).collect(),
-            });
-            cx += s.width;
+        let (runs, width) = set;
+        for mut r in runs {
+            r.x += x;
+            r.y = y;
+            page.runs.push(r);
         }
-        cx - x
+        width
     }
 
-    fn width(&self, text: &str, face: Face, size: f32) -> f32 {
-        self.fonts
-            .shape(text, face, size, &[])
-            .iter()
-            .map(|s| s.width)
-            .sum()
+    /// Text centred on the page.
+    fn centred(&self, page: &mut Page, text: &str, t: Type, y: f32) -> f32 {
+        let max = self.w - 2.0 * self.margin();
+        let w = self.width(text, t).min(max);
+        self.text(page, text, t, (self.w - w) / 2.0, y, max)
+    }
+
+    /// Dots from `x0` to `x1` on a baseline, on a grid shared by every
+    /// row, so the leaders of a list line up.
+    fn leaders(&self, page: &mut Page, x0: f32, x1: f32, y: f32, size: f32) {
+        let Some(dot) = self
+            .fonts
+            .shape(".", Face::Regular, size, &[])
+            .into_iter()
+            .next()
+        else {
+            return;
+        };
+        let Some(id) = dot.glyphs.first().map(|g| g.id) else {
+            return;
+        };
+        let step = size * 0.55;
+        let mut x = (x0 / step).ceil() * step;
+        let mut glyphs = Vec::new();
+        while x + dot.width <= x1 {
+            glyphs.push((id, x, 0.0));
+            x += step;
+        }
+        page.runs.push(Run {
+            font: dot.font,
+            size: dot.size,
+            x: 0.0,
+            y,
+            glyphs,
+        });
     }
 
     fn rule(&self, page: &mut Page, x: f32, y: f32, width: f32, height: f32, grey: u8) {
@@ -194,6 +280,12 @@ impl<'f> Ui<'f> {
             height,
             grey,
         });
+    }
+
+    /// A hairline across the text block.
+    fn hairline(&self, page: &mut Page, y: f32, grey: u8) {
+        let m = self.margin();
+        self.rule(page, m, y, self.w - 2.0 * m, 1.0, grey);
     }
 
     /// A cover fitted in a box, centred, or a framed blank without one.
@@ -211,53 +303,58 @@ impl<'f> Ui<'f> {
         match size {
             Some((cw, ch)) if cw > 0 && ch > 0 => {
                 let scale = (w / cw as f32).min(h / ch as f32);
-                let (dw, dh) = (cw as f32 * scale, ch as f32 * scale);
+                let (dw, dh) = ((cw as f32 * scale).round(), (ch as f32 * scale).round());
+                let (ix, iy) = ((x + (w - dw) / 2.0).round(), (y + (h - dh)).round());
                 page.images.push(PageImage {
                     src: format!("{COVER}{path}"),
-                    x: x + (w - dw) / 2.0,
-                    y: y + (h - dh),
-                    width: dw.round(),
-                    height: dh.round(),
+                    x: ix,
+                    y: iy,
+                    width: dw,
+                    height: dh,
                 });
+                // A pale edge, for covers that are white at the edge.
+                self.frame(page, ix - 1.0, iy - 1.0, dw + 2.0, dh + 2.0, 170);
             }
-            _ => {
-                let t = self.mm(0.3).max(1.0);
-                self.rule(page, x, y, w, t, 0);
-                self.rule(page, x, y + h - t, w, t, 0);
-                self.rule(page, x, y, t, h, 0);
-                self.rule(page, x + w - t, y, t, h, 0);
-            }
+            _ => self.frame(page, x, y, w, h, 0),
         }
     }
 
-    /// A progress bar: a thin line, filled `share` of its length.
-    fn bar(&self, page: &mut Page, x: f32, y: f32, w: f32, share: f32) {
-        let t = self.mm(0.4).max(2.0);
-        self.rule(page, x, y, w, t, 187);
-        self.rule(page, x, y - t / 2.0, w * share.clamp(0.0, 1.0), t * 2.0, 0);
+    fn frame(&self, page: &mut Page, x: f32, y: f32, w: f32, h: f32, grey: u8) {
+        self.rule(page, x, y, w, 1.0, grey);
+        self.rule(page, x, y + h - 1.0, w, 1.0, grey);
+        self.rule(page, x, y, 1.0, h, grey);
+        self.rule(page, x + w - 1.0, y, 1.0, h, grey);
     }
 
-    /// The title along the top, with ‹ to go back and the page count.
+    /// How far through: a hairline, with the part read drawn heavier.
+    fn bar(&self, page: &mut Page, x: f32, y: f32, w: f32, share: f32) {
+        self.rule(page, x, y, w, 1.0, 170);
+        let t = self.mm(0.35).max(2.0);
+        self.rule(page, x, y - t / 2.0 + 0.5, w * share.clamp(0.0, 1.0), t, 0);
+    }
+
+    /// The title along the top in spaced small caps, with ‹ to go back and
+    /// the page count.
     fn header(&self, s: &mut Screen, title: &str, back: bool, page: usize) -> f32 {
         let m = self.margin();
-        let size = self.pt(14.0);
+        let size = self.pt(13.0);
         let baseline = self.mm(9.0) + size;
-        let tw = self.width(title, Face::Regular, size).min(self.w - 4.0 * m);
+        let t = Type::new(Face::Regular, size).caps(0.12);
+        let lower = title.to_lowercase();
+        let tw = self.width(&lower, t).min(self.w - 6.0 * m);
         self.text(
             &mut s.page,
-            title,
-            Face::Regular,
-            size,
+            &lower,
+            t,
             (self.w - tw) / 2.0,
             baseline,
-            self.w - 4.0 * m,
+            self.w - 6.0 * m,
         );
         if back {
             self.text(
                 &mut s.page,
                 "‹",
-                Face::Regular,
-                size * 1.4,
+                Type::new(Face::Regular, size * 1.5),
                 m,
                 baseline,
                 m * 2.0,
@@ -273,32 +370,18 @@ impl<'f> Ui<'f> {
             ));
         }
         if s.pages > 1 {
-            let small = self.pt(9.0);
-            let label = format!("{} / {}", page + 1, s.pages);
-            let lw = self.width(&label, Face::Regular, small);
-            self.text(
-                &mut s.page,
-                &label,
-                Face::Regular,
-                small,
-                self.w - m - lw,
-                baseline,
-                m * 3.0,
-            );
+            let t = Type::new(Face::Italic, self.pt(9.5));
+            let label = format!("{} of {}", page + 1, s.pages);
+            let lw = self.width(&label, t);
+            self.text(&mut s.page, &label, t, self.w - m - lw, baseline, m * 3.0);
         }
-        let y = baseline + size * 0.8;
-        self.rule(
-            &mut s.page,
-            m,
-            y,
-            self.w - 2.0 * m,
-            self.mm(0.3).max(1.0),
-            0,
-        );
+        let y = baseline + size * 0.9;
+        self.hairline(&mut s.page, y, 0);
         y + self.mm(3.0)
     }
 
-    /// Home: the books read lately, then the shelves with their sizes.
+    /// Home: a masthead, the books read lately, then the shelves with
+    /// their sizes.
     pub fn home(&self, recent: &[Recent], shelves: [(Shelf, usize); 4]) -> Screen {
         let mut s = Screen {
             page: Page::default(),
@@ -306,69 +389,79 @@ impl<'f> Ui<'f> {
             pages: 1,
         };
         let m = self.margin();
-        let mut y = self.header(&mut s, "Wordhord", false, 0);
-        let label = self.pt(10.0);
+        let mut y = self.mm(11.0) + self.pt(22.0);
+        self.centred(
+            &mut s.page,
+            "wordhord",
+            Type::new(Face::Regular, self.pt(22.0)).caps(0.18),
+            y,
+        );
+        y += self.pt(15.0);
+        self.centred(
+            &mut s.page,
+            "wordhord onleac",
+            Type::new(Face::Italic, self.pt(10.5)),
+            y,
+        );
+        y += self.pt(20.0);
+        self.centred(&mut s.page, "❧", Type::new(Face::Regular, self.pt(14.0)), y);
+        y += self.mm(8.0);
+        let label = Type::new(Face::Regular, self.pt(10.0)).caps(0.14);
         if !recent.is_empty() {
-            y += label;
-            self.text(&mut s.page, "Continue", Face::Italic, label, m, y, self.w);
-            y += self.mm(3.0);
+            self.centred(&mut s.page, "continue reading", label, y);
+            y += self.mm(4.0);
             let gap = self.mm(5.0);
             let cw = (self.w - 2.0 * m - 3.0 * gap) / 4.0;
             let ch = cw * 1.5;
-            let small = self.pt(8.5);
+            let small = Type::new(Face::Italic, self.pt(9.0));
+            // Fewer than four sit in the middle.
+            let shown = recent.len().min(4);
+            let left = m + (4 - shown) as f32 * (cw + gap) / 2.0;
             for (k, r) in recent.iter().take(4).enumerate() {
-                let x = m + k as f32 * (cw + gap);
+                let x = left + k as f32 * (cw + gap);
                 self.cover(&mut s.page, &r.path, r.cover, x, y, cw, ch);
+                self.bar(&mut s.page, x, y + ch + self.mm(2.0), cw, r.progress);
                 self.text(
                     &mut s.page,
                     &r.title,
-                    Face::Regular,
                     small,
                     x,
-                    y + ch + small * 1.4,
+                    y + ch + self.mm(2.0) + small.size * 1.5,
                     cw,
                 );
-                self.bar(&mut s.page, x, y + ch + small * 2.3, cw, r.progress);
                 s.hits.push((
                     Rect {
                         x0: x,
                         y0: y,
                         x1: x + cw,
-                        y1: y + ch + small * 2.6,
+                        y1: y + ch + self.mm(2.0) + small.size * 2.0,
                     },
                     Action::Open(r.path.clone()),
                 ));
             }
-            y += ch + small * 2.6 + self.mm(8.0);
+            y += ch + self.mm(2.0) + small.size * 2.0 + self.mm(12.0);
         }
-        let size = self.pt(13.0);
-        let row = self.mm(16.0);
+        self.centred(&mut s.page, "the shelves", label, y);
+        y += self.mm(4.0);
+        let name = Type::new(Face::Regular, self.pt(14.0));
+        let figure = Type::new(Face::Regular, self.pt(12.0));
+        let row = self.mm(14.0);
         for (shelf, count) in shelves {
             if count == 0 {
                 continue;
             }
-            let baseline = y + (row + size * 0.6) / 2.0;
-            self.text(
-                &mut s.page,
-                shelf.name(),
-                Face::Regular,
-                size,
-                m,
-                baseline,
-                self.w,
-            );
+            let baseline = y + (row + name.size * 0.6) / 2.0;
+            let nw = self.text(&mut s.page, shelf.name(), name, m, baseline, self.w);
             let n = count.to_string();
-            let nw = self.width(&n, Face::Regular, self.pt(10.0));
-            self.text(
+            let fw = self.width(&n, figure);
+            self.text(&mut s.page, &n, figure, self.w - m - fw, baseline, self.w);
+            self.leaders(
                 &mut s.page,
-                &n,
-                Face::Regular,
-                self.pt(10.0),
-                self.w - m - nw,
+                m + nw + self.mm(3.0),
+                self.w - m - fw - self.mm(3.0),
                 baseline,
-                self.w,
+                figure.size,
             );
-            self.rule(&mut s.page, m, y + row, self.w - 2.0 * m, 1.0, 153);
             s.hits.push((
                 Rect {
                     x0: 0.0,
@@ -383,11 +476,21 @@ impl<'f> Ui<'f> {
         s
     }
 
-    /// A list: a page of its rows, under a title.
+    /// A list: a page of its rows, under a title. Books are set like a
+    /// catalogue: title in italic, author in small caps, then the series.
+    /// Authors, series and tags run to their counts on leaders. Contents
+    /// set parts in spaced small caps and mark the chapter being read.
     pub fn list(&self, title: &str, rows: &[Row], page: usize, back: bool) -> Screen {
         let books = rows.iter().any(|r| r.cover.is_some());
-        let row_h = if books { self.mm(22.0) } else { self.mm(13.0) };
-        let top_guess = self.mm(9.0) + self.pt(14.0) * 1.8 + self.mm(3.0);
+        let contents = rows.iter().all(|r| r.count.is_none() && r.cover.is_none());
+        let row_h = if books {
+            self.mm(22.0)
+        } else if contents {
+            self.mm(9.5)
+        } else {
+            self.mm(12.0)
+        };
+        let top_guess = self.mm(9.0) + self.pt(13.0) * 1.9 + self.mm(3.0);
         let per_page = (((self.h - top_guess - self.mm(8.0)) / row_h).floor() as usize).max(1);
         let pages = rows.len().div_ceil(per_page).max(1);
         let page = page.min(pages - 1);
@@ -398,10 +501,11 @@ impl<'f> Ui<'f> {
         };
         let m = self.margin();
         let mut y = self.header(&mut s, title, back, page);
-        let size = self.pt(11.0);
-        let small = self.pt(8.5);
-        for r in rows.iter().skip(page * per_page).take(per_page) {
-            let mut x = m + r.depth as f32 * self.mm(5.0);
+        let size = self.pt(11.5);
+        let small = self.pt(9.0);
+        let first_row = page * per_page;
+        for (k, r) in rows.iter().enumerate().skip(first_row).take(per_page) {
+            let mut x = m + r.depth as f32 * self.mm(6.0);
             if books {
                 let (cw, ch) = (self.mm(12.0), self.mm(18.0));
                 if let Some((path, size)) = &r.cover {
@@ -410,28 +514,72 @@ impl<'f> Ui<'f> {
                 }
                 x += cw + self.mm(5.0);
             }
-            let width = self.w - m - x;
+            // A part of the contents: an entry with entries under it.
+            let part = contents && rows.get(k + 1).is_some_and(|n| n.depth > r.depth);
+            let lines = if r.detail.is_empty() { 1.0 } else { 2.0 };
             let first = if books {
                 y + self.mm(2.0) + size
             } else {
-                y + (row_h + size * 0.6) / 2.0 - small * 0.6
+                y + row_h / 2.0 + size * 0.3 - (lines - 1.0) * small * 0.7
             };
-            self.text(&mut s.page, &r.title, Face::Regular, size, x, first, width);
-            if !r.detail.is_empty() {
-                self.text(
+            let mut tt = if books || r.detail.iter().any(|p| matches!(p, Part::Caps(_))) {
+                Type::new(Face::Italic, size)
+            } else {
+                Type::new(Face::Regular, size)
+            };
+            let mut text = r.title.clone();
+            if part {
+                tt = Type::new(Face::Regular, size).caps(0.1);
+                text = text.to_lowercase();
+            }
+            let right = match r.count {
+                Some(n) => {
+                    let t = Type::new(Face::Regular, size);
+                    let n = n.to_string();
+                    let w = self.width(&n, t);
+                    self.text(&mut s.page, &n, t, self.w - m - w, first, w + 1.0);
+                    w + self.mm(3.0)
+                }
+                None => 0.0,
+            };
+            let width = self.w - m - x - right;
+            let tw = self.text(&mut s.page, &text, tt, x, first, width);
+            if r.count.is_some() {
+                self.leaders(
                     &mut s.page,
-                    &r.detail,
-                    Face::Italic,
-                    small,
-                    x,
-                    first + small * 1.6,
-                    width,
+                    x + tw + self.mm(3.0),
+                    self.w - m - right,
+                    first,
+                    size,
                 );
             }
-            if let Some(p) = r.progress {
-                self.bar(&mut s.page, x, first + small * 3.2, self.mm(30.0), p);
+            if r.mark {
+                let t = Type::new(Face::Regular, size * 0.8);
+                let w = self.width("❧", t);
+                self.text(&mut s.page, "❧", t, x - w - self.mm(2.5), first, w + 1.0);
             }
-            self.rule(&mut s.page, m, y + row_h, self.w - 2.0 * m, 1.0, 187);
+            if !r.detail.is_empty() {
+                let mut dx = x;
+                let dy = first + small * 1.6;
+                for p in &r.detail {
+                    let (t, text) = match p {
+                        Part::Caps(t) => (Type::new(Face::Regular, small).caps(0.04), t),
+                        Part::Italic(t) => (Type::new(Face::Italic, small), t),
+                        Part::Plain(t) => (Type::new(Face::Regular, small), t),
+                    };
+                    let left = self.w - m - right - dx;
+                    if left < small {
+                        break;
+                    }
+                    dx += self.text(&mut s.page, text, t, dx, dy, left);
+                }
+            }
+            if let Some(p) = r.progress {
+                self.bar(&mut s.page, x, first + small * 3.3, self.mm(30.0), p);
+            }
+            if !contents {
+                self.hairline(&mut s.page, y + row_h, 204);
+            }
             s.hits.push((
                 Rect {
                     x0: 0.0,
@@ -458,38 +606,30 @@ impl<'f> Ui<'f> {
         let size = self.pt(11.0);
         let height = self.mm(16.0);
         let baseline = (height + size * 0.6) / 2.0;
-        let lw = self.text(
-            &mut s.page,
-            "‹ Library",
-            Face::Regular,
-            size,
-            m,
-            baseline,
-            self.w / 3.0,
-        );
-        let cw = self.width("Contents", Face::Regular, size);
+        let label = Type::new(Face::Regular, size).caps(0.12);
+        let lw = self.text(&mut s.page, "‹ library", label, m, baseline, self.w / 3.0);
+        let cw = self.width("contents", label);
         self.text(
             &mut s.page,
-            "Contents",
-            Face::Regular,
-            size,
+            "contents",
+            label,
             self.w - m - cw,
             baseline,
             self.w / 3.0,
         );
+        let t = Type::new(Face::Italic, size);
         let tw = self
-            .width(title, Face::Italic, size * 0.9)
+            .width(title, t)
             .min(self.w - 2.0 * m - lw - cw - 2.0 * m);
         self.text(
             &mut s.page,
             title,
-            Face::Italic,
-            size * 0.9,
+            t,
             (self.w - tw) / 2.0,
             baseline,
             tw.max(1.0),
         );
-        self.rule(&mut s.page, 0.0, height - 3.0, self.w, 3.0, 0);
+        self.rule(&mut s.page, 0.0, height - 2.0, self.w, 2.0, 0);
         s.hits.push((
             Rect {
                 x0: 0.0,

@@ -189,13 +189,14 @@ impl Entry {
     }
 
     /// "Harry Harrison · The Hammer and the Cross 2"
-    pub fn byline(&self) -> String {
+    pub fn byline(&self) -> (String, Option<String>) {
         let author = self.authors.first().cloned().unwrap_or_default();
-        match (&self.series, self.series_index) {
-            (Some(s), Some(n)) => format!("{author} · {s} {}", number(n)),
-            (Some(s), None) => format!("{author} · {s}"),
-            _ => author,
-        }
+        let series = match (&self.series, self.series_index) {
+            (Some(s), Some(n)) => Some(format!("{s} {}", number(n))),
+            (Some(s), None) => Some(s.clone()),
+            _ => None,
+        };
+        (author, series)
     }
 }
 
