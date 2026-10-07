@@ -1,12 +1,14 @@
 //! The dictionary on the device: the packs in the app folder's
 //! `dictionaries/`, each named by its language (`non.sqlite`), and a looked-up
-//! word set as a printed dictionary sets it.
+//! word set as a printed dictionary sets it:
 //!
-//! **mǫgr** NOUN *m (genitive magar, plural megir)*
-//! *mǫgu*: accusative plural
-//! 1. son, boy, youth
-//!    *mǫgu Heimdallar* — sons of Heimdall
+//! ```text
+//! mǫgr  NOUN  m (genitive magar, plural megir)
+//! mǫgu: accusative plural
+//! son, boy, youth
+//!     meiri ok minni / mǫgu Heimdallar — greater and smaller / sons of Heimdall
 //! ETYMOLOGY. From Proto-Norse …
+//! ```
 
 use std::path::Path;
 
