@@ -226,7 +226,13 @@ pub fn entry_blocks(word: &str, readings: &[Reading]) -> Vec<Block> {
         } else {
             blocks.extend(items.into_iter().flatten());
         }
-        if let Some(ety) = e.etymology.as_deref().filter(|t| !t.is_empty()) {
+        // Said once: a word's parts of speech often share an etymology.
+        let said_before = k > 0 && readings[k - 1].entry.etymology == e.etymology;
+        if let Some(ety) = e
+            .etymology
+            .as_deref()
+            .filter(|t| !t.is_empty() && !said_before)
+        {
             let ety = if ety.chars().count() > 320 {
                 let cut: String = ety.chars().take(320).collect();
                 format!("{}…", cut.trim_end())

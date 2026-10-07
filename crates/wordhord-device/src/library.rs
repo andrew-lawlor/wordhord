@@ -280,7 +280,10 @@ fn find(root: &Path, dir: &Path, out: &mut Vec<(String, u64, u64)>) {
     for e in entries.flatten() {
         let path = e.path();
         let name = e.file_name().to_string_lossy().into_owned();
-        let Ok(meta) = e.metadata() else { continue };
+        // Following links: a library may be linked in from elsewhere.
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
+        };
         if meta.is_dir() {
             if !name.starts_with('.') {
                 find(root, &path, out);

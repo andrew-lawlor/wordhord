@@ -10,6 +10,8 @@
 //! Wiktionary is CC BY-SA; every pack says so in its `meta` table.
 
 use std::collections::BTreeMap;
+
+pub mod dictfile;
 use std::io::BufRead;
 use std::path::Path;
 
@@ -208,8 +210,29 @@ impl Dictionary {
         Ok(Dictionary { db })
     }
 
-    /// Every reading of a word as it appears in a text, headwords first.
+    /// Every reading of a word as it appears in a text, the likeliest
+    /// first: names after common words when the word isn't capitalised, and
+    /// readings only of the past ("obsolete", "archaic") after living ones.
     pub fn look_up(&self, word: &str) -> Vec<Reading> {
+        let mut out = self.all_readings(word);
+        let lowercase = word
+            .chars()
+            .find(|c| c.is_alphabetic())
+            .is_some_and(|c| c.is_lowercase());
+        out.sort_by_key(|r| {
+            let name = matches!(r.entry.pos.as_str(), "proper noun" | "name");
+            let past = !r.entry.senses.is_empty()
+                && r.entry.senses.iter().all(|s| {
+                    s.tags.iter().any(|t| {
+                        matches!(t.as_str(), "obsolete" | "archaic" | "dated" | "historical")
+                    })
+                });
+            (name && lowercase) as u8 * 2 + past as u8
+        });
+        out
+    }
+
+    fn all_readings(&self, word: &str) -> Vec<Reading> {
         let mut readings = self.readings("key", &key(word));
         if readings.is_empty() {
             readings = self.readings("fold", &fold(word));
@@ -386,130 +409,176 @@ const TABLE_TAGS: [&str; 5] = [
 /// Tags that only clutter a reading.
 const QUIET_TAGS: [&str; 3] = ["form-of", "error-unknown-tag", "alt-of"];
 
+/// Writes a pack: entries and their forms, then indexes and what the pack
+/// says about itself.
+pub(crate) struct Builder {
+    db: Connection,
+    entries: usize,
+    forms: usize,
+}
+
+impl Builder {
+    pub(crate) fn new(out: &Path) -> Result<Builder, String> {
+        let _ = std::fs::remove_file(out);
+        let db = Connection::open(out).map_err(|e| format!("{}: {e}", out.display()))?;
+        db.execute_batch(
+            "PRAGMA journal_mode = OFF;
+             PRAGMA synchronous = OFF;
+             CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+             CREATE TABLE entry (id INTEGER PRIMARY KEY, word TEXT NOT NULL, pos TEXT NOT NULL,
+                                 head TEXT NOT NULL, senses TEXT NOT NULL, etymology TEXT);
+             CREATE TABLE form (key TEXT NOT NULL, fold TEXT NOT NULL, entry INTEGER NOT NULL, tags TEXT NOT NULL);
+             BEGIN;",
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(Builder {
+            db,
+            entries: 0,
+            forms: 0,
+        })
+    }
+
+    /// An entry, and its forms with their grammar ("" if unknown). The
+    /// headword is a form of itself.
+    pub(crate) fn add(
+        &mut self,
+        word: &str,
+        pos: &str,
+        head: &str,
+        senses: &[Sense],
+        etymology: Option<&str>,
+        forms: &[(String, String)],
+    ) -> Result<(), String> {
+        self.entries += 1;
+        let id = self.entries as i64;
+        let json = serde_json::to_string(senses).map_err(|e| e.to_string())?;
+        self.db
+            .prepare_cached("INSERT INTO entry (id, word, pos, head, senses, etymology) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")
+            .and_then(|mut q| q.execute(params![id, word, pos, head, json, etymology]))
+            .map_err(|e| e.to_string())?;
+        let mut seen: BTreeMap<(String, String), ()> = BTreeMap::new();
+        seen.insert((key(word), String::new()), ());
+        for (form, tags) in forms {
+            seen.insert((key(form), tags.clone()), ());
+        }
+        for (k, tags) in seen.into_keys() {
+            if k.is_empty() {
+                continue;
+            }
+            self.db
+                .prepare_cached("INSERT INTO form (key, fold, entry, tags) VALUES (?1, ?2, ?3, ?4)")
+                .and_then(|mut q| q.execute(params![k, fold(&k), id, tags]))
+                .map_err(|e| e.to_string())?;
+            self.forms += 1;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn finish(self, language: &str, source: &Path) -> Result<(usize, usize), String> {
+        let source = source
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.db
+            .execute_batch(
+                "COMMIT;
+                 CREATE INDEX form_key ON form (key);
+                 CREATE INDEX form_fold ON form (fold);
+                 CREATE INDEX entry_word ON entry (word);",
+            )
+            .map_err(|e| e.to_string())?;
+        for (k, v) in [
+            ("language", language),
+            ("source", "Wiktionary"),
+            ("file", source.as_str()),
+            ("licence", "CC BY-SA 4.0 and GFDL, as Wiktionary"),
+        ] {
+            self.db
+                .execute(
+                    "INSERT INTO meta (key, value) VALUES (?1, ?2)",
+                    params![k, v],
+                )
+                .map_err(|e| e.to_string())?;
+        }
+        self.db
+            .execute_batch("VACUUM;")
+            .map_err(|e| e.to_string())?;
+        Ok((self.entries, self.forms))
+    }
+}
+
 /// Builds a pack from a kaikki.org JSON Lines file. Returns how many entries
 /// and forms went in.
 pub fn build(jsonl: &Path, language: &str, out: &Path) -> Result<(usize, usize), String> {
-    let _ = std::fs::remove_file(out);
-    let mut db = Connection::open(out).map_err(|e| format!("{}: {e}", out.display()))?;
-    db.execute_batch(
-        "PRAGMA journal_mode = OFF;
-         PRAGMA synchronous = OFF;
-         CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
-         CREATE TABLE entry (id INTEGER PRIMARY KEY, word TEXT NOT NULL, pos TEXT NOT NULL,
-                             head TEXT NOT NULL, senses TEXT NOT NULL, etymology TEXT);
-         CREATE TABLE form (key TEXT NOT NULL, fold TEXT NOT NULL, entry INTEGER NOT NULL, tags TEXT NOT NULL);",
-    )
-    .map_err(|e| e.to_string())?;
     let file = std::fs::File::open(jsonl).map_err(|e| format!("{}: {e}", jsonl.display()))?;
-    let (mut entries, mut forms) = (0, 0);
-    let tx = db.transaction().map_err(|e| e.to_string())?;
-    {
-        let mut add_entry = tx
-            .prepare("INSERT INTO entry (id, word, pos, head, senses, etymology) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")
-            .map_err(|e| e.to_string())?;
-        let mut add_form = tx
-            .prepare("INSERT INTO form (key, fold, entry, tags) VALUES (?1, ?2, ?3, ?4)")
-            .map_err(|e| e.to_string())?;
-        for line in std::io::BufReader::new(file).lines() {
-            let line = line.map_err(|e| e.to_string())?;
-            let Ok(r) = serde_json::from_str::<Record>(&line) else {
-                continue;
-            };
-            let senses: Vec<Sense> = r
-                .senses
-                .iter()
-                .filter(|s| !s.glosses.is_empty())
-                .map(|s| Sense {
-                    gloss: s.glosses.last().cloned().unwrap_or_default(),
-                    tags: s
-                        .tags
-                        .iter()
-                        .filter(|t| !QUIET_TAGS.contains(&t.as_str()))
-                        .cloned()
-                        .collect(),
-                    examples: s
-                        .examples
-                        .iter()
-                        .filter(|e| !e.text.is_empty())
-                        .take(2)
-                        .map(|e| Example {
-                            text: e.text.clone(),
-                            english: e.english.clone().or_else(|| e.translation.clone()),
-                            source: e.reference.clone(),
-                        })
-                        .collect(),
-                    form_of: s.form_of.first().map(|f| f.word.clone()),
-                })
-                .collect();
-            if senses.is_empty() {
-                continue;
-            }
-            entries += 1;
-            let id = entries as i64;
-            let head = r
-                .head_templates
-                .first()
-                .map(|h| h.expansion.clone())
-                .unwrap_or_else(|| r.word.clone());
-            let json = serde_json::to_string(&senses).map_err(|e| e.to_string())?;
-            add_entry
-                .execute(params![id, r.word, r.pos, head, json, r.etymology_text])
-                .map_err(|e| e.to_string())?;
-            // The headword itself, then each form with its grammar: one row
-            // per distinct form and grammar.
-            let mut seen: BTreeMap<(String, String), ()> = BTreeMap::new();
-            seen.insert((key(&r.word), String::new()), ());
-            for f in &r.forms {
-                if f.tags.iter().any(|t| TABLE_TAGS.contains(&t.as_str()))
-                    || f.form.trim().is_empty()
-                    || f.form == "-"
-                {
-                    continue;
-                }
+    let mut builder = Builder::new(out)?;
+    for line in std::io::BufReader::new(file).lines() {
+        let line = line.map_err(|e| e.to_string())?;
+        let Ok(r) = serde_json::from_str::<Record>(&line) else {
+            continue;
+        };
+        let senses: Vec<Sense> = r
+            .senses
+            .iter()
+            .filter(|s| !s.glosses.is_empty())
+            .map(|s| Sense {
+                gloss: s.glosses.last().cloned().unwrap_or_default(),
+                tags: s
+                    .tags
+                    .iter()
+                    .filter(|t| !QUIET_TAGS.contains(&t.as_str()))
+                    .cloned()
+                    .collect(),
+                examples: s
+                    .examples
+                    .iter()
+                    .filter(|e| !e.text.is_empty())
+                    .take(2)
+                    .map(|e| Example {
+                        text: e.text.clone(),
+                        english: e.english.clone().or_else(|| e.translation.clone()),
+                        source: e.reference.clone(),
+                    })
+                    .collect(),
+                form_of: s.form_of.first().map(|f| f.word.clone()),
+            })
+            .collect();
+        if senses.is_empty() {
+            continue;
+        }
+        let head = r
+            .head_templates
+            .first()
+            .map(|h| h.expansion.clone())
+            .unwrap_or_else(|| r.word.clone());
+        let forms: Vec<(String, String)> = r
+            .forms
+            .iter()
+            .filter(|f| {
+                !f.tags.iter().any(|t| TABLE_TAGS.contains(&t.as_str()))
+                    && !f.form.trim().is_empty()
+                    && f.form != "-"
+            })
+            .map(|f| {
                 let tags: Vec<&str> = f
                     .tags
                     .iter()
                     .map(String::as_str)
                     .filter(|t| !QUIET_TAGS.contains(t))
                     .collect();
-                seen.insert((key(&f.form), tags.join(" ")), ());
-            }
-            for (k, tags) in seen.into_keys() {
-                if k.is_empty() {
-                    continue;
-                }
-                add_form
-                    .execute(params![k, fold(&k), id, tags])
-                    .map_err(|e| e.to_string())?;
-                forms += 1;
-            }
-        }
+                (f.form.clone(), tags.join(" "))
+            })
+            .collect();
+        builder.add(
+            &r.word,
+            &r.pos,
+            &head,
+            &senses,
+            r.etymology_text.as_deref(),
+            &forms,
+        )?;
     }
-    tx.commit().map_err(|e| e.to_string())?;
-    db.execute_batch(
-        "CREATE INDEX form_key ON form (key);
-         CREATE INDEX form_fold ON form (fold);
-         CREATE INDEX entry_word ON entry (word);",
-    )
-    .map_err(|e| e.to_string())?;
-    let source = jsonl
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    for (k, v) in [
-        ("language", language),
-        ("source", "Wiktionary, by way of kaikki.org"),
-        ("file", source.as_str()),
-        ("licence", "CC BY-SA 4.0 and GFDL, as Wiktionary"),
-    ] {
-        db.execute(
-            "INSERT INTO meta (key, value) VALUES (?1, ?2)",
-            params![k, v],
-        )
-        .map_err(|e| e.to_string())?;
-    }
-    db.execute_batch("VACUUM;").map_err(|e| e.to_string())?;
-    Ok((entries, forms))
+    builder.finish(language, jsonl)
 }
 
 #[cfg(test)]
@@ -605,6 +674,31 @@ mod tests {
             Some("dative masculine singular strong or dative plural strong")
         );
         assert_eq!(describe(&[]), None);
+    }
+
+    #[test]
+    fn living_words_before_dead_ones_and_names() {
+        let dir = std::env::temp_dir().join(format!("wordhord-dict-rank-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("en.jsonl");
+        std::fs::write(
+            &src,
+            r#"{"word":"went","pos":"noun","senses":[{"glosses":["a path"],"tags":["obsolete"]}]}
+{"word":"Went","pos":"proper noun","senses":[{"glosses":["a river"]}]}
+{"word":"go","pos":"verb","senses":[{"glosses":["to move"]}],"forms":[{"form":"went","tags":["past"]}]}"#,
+        )
+        .unwrap();
+        let out = dir.join("en.sqlite");
+        build(&src, "eng", &out).unwrap();
+        let d = Dictionary::open(&out).unwrap();
+        let order: Vec<String> = d
+            .look_up("went")
+            .iter()
+            .map(|r| format!("{} {}", r.entry.word, r.entry.pos))
+            .collect();
+        assert_eq!(order, ["go verb", "went noun", "Went proper noun"]);
+        // Capitalised in the text, a name is as likely as anything.
+        assert_eq!(d.look_up("Went")[0].entry.word, "Went");
     }
 
     #[test]

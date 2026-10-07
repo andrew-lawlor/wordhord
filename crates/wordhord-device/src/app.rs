@@ -395,13 +395,16 @@ fn read(
                     if words.get(k + 1).is_some_and(|w| w.continues) {
                         word.push_str(&words[k + 1].text);
                     }
-                    let word = wordhord_dict::key(&word);
+                    // Looked up as printed, so a capital can say it's a name;
+                    // shown as the dictionary keys it.
+                    let shown_as = wordhord_dict::key(&word);
                     let looked = Instant::now();
                     let lang = book.language();
                     let blocks = match tools.lexicon.look_up(&word, &lang) {
-                        Some((_, readings)) => lexicon::entry_blocks(&word, &readings),
-                        None => lexicon::not_found(&word, &lang, !tools.lexicon.is_empty()),
+                        Some((_, readings)) => lexicon::entry_blocks(&shown_as, &readings),
+                        None => lexicon::not_found(&shown_as, &lang, !tools.lexicon.is_empty()),
                     };
+                    let word = shown_as;
                     let (area, pages) =
                         wordhord_typeset::panel_pages(&blocks, &lang, tools.profile, fonts);
                     eprintln!(

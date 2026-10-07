@@ -14,7 +14,7 @@ const USAGE: &str = "usage:
   wordhord import <epub> <recipe.toml> <new folder>
   wordhord typeset <book> <chapter> <profile.toml> <folder> [--no-preview] [--translation <book>]
   wordhord epub <book.epub>
-  wordhord dictionary <kaikki.jsonl> <language> <pack.sqlite>
+  wordhord dictionary <kaikki.jsonl | dictfile.df[.bz2]> <language> <pack.sqlite>
   wordhord look-up <pack.sqlite> <word>...
   wordhord epub <book.epub> <document> <profile.toml> <folder>
 
@@ -342,7 +342,13 @@ fn epub_typeset(path: &str, document: &str, profile: &str, out: &str) -> ExitCod
 /// A dictionary pack from a kaikki.org extract.
 fn dictionary(jsonl: &str, language: &str, out: &str) -> ExitCode {
     let started = std::time::Instant::now();
-    match wordhord_dict::build(Path::new(jsonl), language, Path::new(out)) {
+    // kaikki.org's JSON Lines, or reader.dict's DictFile (plain or .bz2).
+    let built = if jsonl.ends_with(".df") || jsonl.ends_with(".df.bz2") {
+        wordhord_dict::dictfile::build(Path::new(jsonl), language, Path::new(out))
+    } else {
+        wordhord_dict::build(Path::new(jsonl), language, Path::new(out))
+    };
+    match built {
         Ok((entries, forms)) => {
             let size = std::fs::metadata(out).map_or(0, |m| m.len());
             println!(
