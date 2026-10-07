@@ -150,7 +150,14 @@ impl Platform for Desktop {
             if !self.window.is_open() {
                 return Gesture::Power;
             }
-            for key in self.window.get_keys_pressed(KeyRepeat::Yes) {
+            // One press, one page; and no keys at all without focus, where
+            // a key can look held down forever.
+            let keys = if self.window.is_active() {
+                self.window.get_keys_pressed(KeyRepeat::No)
+            } else {
+                Vec::new()
+            };
+            for key in keys {
                 match key {
                     Key::Right | Key::PageDown | Key::Space => return Gesture::SwipeLeft,
                     Key::Left | Key::PageUp => return Gesture::SwipeRight,
