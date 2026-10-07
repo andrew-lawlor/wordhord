@@ -468,25 +468,29 @@ impl<'a> Layout<'a> {
                 }
             }
         }
-        // A translated stanza's number opens the translation.
+        // A translated stanza's number opens the translation, and so does
+        // the margin beside any of its lines: a number is a small target.
         let translated = matches!(b.kind, BlockKind::Stanza(_))
             && b.reference
                 .as_ref()
                 .is_some_and(|r| self.translated.borrow().contains(r));
         if let (true, Some(r)) = (translated, &b.reference) {
-            if let Some(line) = units[first..]
+            let mut lines = units[first..]
                 .iter_mut()
                 .flat_map(|u| u.lines.iter_mut())
-                .find(|l| !l.frags.is_empty())
-            {
-                let number = line
-                    .marks
-                    .iter()
-                    .filter(|f| f.x < line.x)
-                    .map(|f| (f.x, f.x + frag_width(f)))
-                    .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)));
-                if let Some((x0, x1)) = number {
-                    line.margin_links.push((format!("tr-{r}"), x0, x1));
+                .filter(|l| !l.frags.is_empty());
+            // From the screen's edge to where the verse starts.
+            let edge = -self.profile.mm(self.profile.margins.left);
+            let numbered = lines.next().is_some_and(|line| {
+                let numbered = line.marks.iter().any(|f| f.x < line.x);
+                if numbered {
+                    line.margin_links.push((format!("tr-{r}"), edge, line.x));
+                }
+                numbered
+            });
+            if numbered {
+                for line in lines {
+                    line.margin_links.push((format!("tr-{r}"), edge, line.x));
                 }
             }
         }

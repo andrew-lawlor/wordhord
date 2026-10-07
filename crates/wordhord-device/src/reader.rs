@@ -20,7 +20,10 @@ use crate::touch::Gesture;
 const FLASH_EVERY: usize = 6;
 /// Taps this close to the left or right edge, as a share of the width,
 /// turn the page.
-const EDGE: f32 = 0.1;
+const EDGE: f32 = 0.15;
+/// A tap that misses every link, but by less than this many pixels, takes
+/// the nearest: fingers are blunt, and links sit close to gaps.
+const NEAR: f32 = 40.0;
 
 /// A note open in the panel: which, and which of its pages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,15 +152,30 @@ impl<'t> Reader<'t> {
 }
 
 /// The link under a point: of those whose boxes hold it, the one whose
-/// middle is nearest.
+/// middle is nearest. Failing that, the nearest box within `NEAR`. A link
+/// below the point counts as nearer than one as far above it: a stanza's
+/// number is at its top, so a tap in the space between two stanzas means
+/// the one below.
 pub fn link_at(links: &[Link], x: f32, y: f32) -> Option<&Link> {
+    let middle = |l: &Link| ((l.x0 + l.x1) / 2.0 - x).powi(2) + ((l.y0 + l.y1) / 2.0 - y).powi(2);
+    let gap = |l: &Link| {
+        let dx = (l.x0 - x).max(x - l.x1).max(0.0);
+        let dy = if l.y0 > y {
+            (l.y0 - y) / 2.0
+        } else {
+            (y - l.y1).max(0.0)
+        };
+        (dx * dx + dy * dy).sqrt()
+    };
     links
         .iter()
         .filter(|l| (l.x0..=l.x1).contains(&x) && (l.y0..=l.y1).contains(&y))
-        .min_by(|a, b| {
-            let d =
-                |l: &Link| ((l.x0 + l.x1) / 2.0 - x).powi(2) + ((l.y0 + l.y1) / 2.0 - y).powi(2);
-            d(a).total_cmp(&d(b))
+        .min_by(|a, b| middle(a).total_cmp(&middle(b)))
+        .or_else(|| {
+            links
+                .iter()
+                .filter(|l| gap(l) <= NEAR)
+                .min_by(|a, b| gap(a).total_cmp(&gap(b)))
         })
 }
 
@@ -289,6 +307,15 @@ mod tests {
             .map(|_| r.act(Gesture::SwipeLeft) == Effect::Page { flash: true })
             .collect();
         assert_eq!(flashes, [false, false, false, false, false, true, false]);
+    }
+
+    #[test]
+    fn a_tap_just_off_a_link_still_takes_it() {
+        let t = book();
+        let mut r = Reader::new(&t, 0);
+        // 25 px above the stanza number's box.
+        assert_eq!(r.act(Gesture::Tap(60, 255)), Effect::Panel);
+        assert_eq!(r.open, Some(Open { note: 1, page: 0 }));
     }
 
     #[test]
