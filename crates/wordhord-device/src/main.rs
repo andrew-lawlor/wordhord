@@ -15,6 +15,7 @@
 mod book;
 #[cfg(target_arch = "arm")]
 mod device;
+mod reader;
 mod touch;
 
 use std::process::ExitCode;

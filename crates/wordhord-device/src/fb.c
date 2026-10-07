@@ -46,15 +46,15 @@ void wh_state(uint32_t out[6])
 	out[5] = s.touch_mirror_y;
 }
 
-// Draws a full screen of 8-bit grey and refreshes it. A flash clears the
-// ghosting of earlier pages; it's slower.
-int wh_draw(int fd, const uint8_t* grey, uint32_t w, uint32_t h, int flash)
+// Draws a w×h block of 8-bit grey at (x, y) and refreshes it. A flash
+// clears the ghosting of earlier pages; it's slower.
+int wh_draw(int fd, const uint8_t* grey, uint32_t w, uint32_t h, uint32_t x, uint32_t y, int flash)
 {
 	FBInkConfig c  = cfg;
 	c.ignore_alpha = true;
 	c.is_flashing  = flash != 0;
 	c.wfm_mode     = flash ? WFM_GC16 : WFM_AUTO;
-	return fbink_print_raw_data(fd, grey, (int) w, (int) h, (size_t) w * h, 0, 0, &c);
+	return fbink_print_raw_data(fd, grey, (int) w, (int) h, (size_t) w * h, (short int) x, (short int) y, &c);
 }
 
 // Saves the screen to a file, to put back on exit.

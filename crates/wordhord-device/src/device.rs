@@ -7,16 +7,17 @@ use std::time::Instant;
 
 use wordhord_typeset::fonts::{Face, FontFile, Fonts};
 use wordhord_typeset::page::{Page, Run};
-use wordhord_typeset::render::Renderer;
+use wordhord_typeset::render::{self, Renderer};
 
 use crate::book::{self, Book};
-use crate::touch::{self, Action, Event, Gestures, Panel, EVENT_SIZE};
+use crate::reader::{Effect, Reader};
+use crate::touch::{self, Event, Gesture, Gestures, Panel, EVENT_SIZE};
 
 extern "C" {
     fn wh_open() -> c_int;
     fn wh_close(fd: c_int);
     fn wh_state(out: *mut u32);
-    fn wh_draw(fd: c_int, grey: *const u8, w: u32, h: u32, flash: c_int) -> c_int;
+    fn wh_draw(fd: c_int, grey: *const u8, w: u32, h: u32, x: u32, y: u32, flash: c_int) -> c_int;
     fn wh_save(fd: c_int, path: *const c_char) -> c_int;
     fn wh_restore(fd: c_int, path: *const c_char) -> c_int;
     fn wh_inputs(fds: *mut c_int, types: *mut u32, max: c_int) -> c_int;
@@ -27,8 +28,6 @@ const INPUT_TABLET: u32 = 1 << 5;
 /// `_IOW('E', 0x90, int)`: take a device's events for ourselves, so
 /// Nickel doesn't find our taps waiting when it resumes.
 const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
-/// A full refresh every so many pages clears the ghosts of earlier ones.
-const FLASH_EVERY: usize = 6;
 /// Nickel's sleep timer is paused with it, so the reader closes itself
 /// after this long untouched, and Nickel takes over again.
 const IDLE_MS: c_int = 30 * 60 * 1000;
@@ -107,7 +106,15 @@ fn run(library: &Path, fonts: &Path, screen: &str) -> ExitCode {
         .collect();
     for i in &inputs {
         let grabbed = unsafe { libc::ioctl(i.fd, EVIOCGRAB as _, 1 as c_int) } == 0;
-        eprintln!("input fd {} types {:#x} grabbed {grabbed}", i.fd, i.types);
+        let why = if grabbed {
+            String::new()
+        } else {
+            format!(" ({})", std::io::Error::last_os_error())
+        };
+        eprintln!(
+            "input fd {} types {:#x} grabbed {grabbed}{why}",
+            i.fd, i.types
+        );
     }
 
     let result = read(fd, &panel, &inputs, library, fonts);
@@ -182,34 +189,43 @@ fn read(
         let _ = std::fs::write(parent.join("last"), name.to_string_lossy().as_bytes());
     }
     let mut renderer = Renderer::new(&book.fonts);
-    let mut page = book.position();
-    let mut turns = 0;
-    draw(fd, &mut renderer, &t.pages[page], panel, true);
+    let mut reader = Reader::new(t, book.position());
+    // The page as drawn, to put back where the panel was.
+    let mut shown = draw(fd, &mut renderer, &t.pages[reader.page], panel, true);
     let mut gestures = Gestures::default();
     loop {
-        let action = next_action(panel, inputs, &mut gestures);
-        let to = match action {
-            Action::Close => break,
-            Action::Next if page + 1 < t.pages.len() => page + 1,
-            Action::Previous if page > 0 => page - 1,
-            _ => continue,
-        };
-        page = to;
-        turns += 1;
-        draw(
-            fd,
-            &mut renderer,
-            &t.pages[page],
-            panel,
-            turns % FLASH_EVERY == 0,
-        );
-        book.remember(page);
+        let gesture = next_gesture(panel, inputs, &mut gestures);
+        let effect = reader.act(gesture);
+        eprintln!("{gesture:?}: {effect:?}");
+        match effect {
+            Effect::Nothing => {}
+            Effect::Close => break,
+            Effect::Page { flash } => {
+                shown = draw(fd, &mut renderer, &t.pages[reader.page], panel, flash);
+                book.remember(reader.page);
+            }
+            Effect::Panel => {
+                let Some(open) = reader.open else { continue };
+                let area = &t.panel;
+                let (w, h) = (area.width as u32, area.height as u32);
+                let page = &t.notes[open.note].pages[open.page];
+                let pixels = render::panel(&mut renderer, page, w, h);
+                unsafe { wh_draw(fd, pixels.as_ptr(), w, h, area.x as u32, area.y as u32, 0) };
+            }
+            Effect::ClosePanel => {
+                let top = t.panel.y as u32;
+                let rows = &shown[top as usize * panel.width as usize..];
+                let h = panel.height - top;
+                unsafe { wh_draw(fd, rows.as_ptr(), panel.width, h, 0, top, 0) };
+            }
+        }
     }
-    book.remember(page);
+    book.remember(reader.page);
     Ok(())
 }
 
-fn draw(fd: c_int, renderer: &mut Renderer, page: &Page, panel: &Panel, flash: bool) {
+/// Draws a whole page; returns its pixels.
+fn draw(fd: c_int, renderer: &mut Renderer, page: &Page, panel: &Panel, flash: bool) -> Vec<u8> {
     let started = Instant::now();
     let pixels = renderer.page(page, panel.width, panel.height);
     let rendered = started.elapsed();
@@ -219,6 +235,8 @@ fn draw(fd: c_int, renderer: &mut Renderer, page: &Page, panel: &Panel, flash: b
             pixels.as_ptr(),
             panel.width,
             panel.height,
+            0,
+            0,
             flash as c_int,
         )
     };
@@ -226,11 +244,12 @@ fn draw(fd: c_int, renderer: &mut Renderer, page: &Page, panel: &Panel, flash: b
         "page: rendered in {rendered:?}, shown in {:?} (rc {rc})",
         started.elapsed() - rendered
     );
+    pixels
 }
 
-/// Blocks until a tap, a long press or the power button means something,
-/// or until the reader has sat untouched too long.
-fn next_action(panel: &Panel, inputs: &[Input], gestures: &mut Gestures) -> Action {
+/// Blocks until a finger lifts or the power button is pressed. After too
+/// long untouched, it's as if the power button were.
+fn next_gesture(panel: &Panel, inputs: &[Input], gestures: &mut Gestures) -> Gesture {
     // Fingers come from the touch screen; a pen's own device is ignored
     // for now. If the touch screen also takes a pen, it's still the one.
     let fingers = inputs
@@ -248,12 +267,12 @@ fn next_action(panel: &Panel, inputs: &[Input], gestures: &mut Gestures) -> Acti
     loop {
         if polls.is_empty() {
             // Nothing to read from: nothing can close the reader.
-            return Action::Close;
+            return Gesture::Power;
         }
         let n = unsafe { libc::poll(polls.as_mut_ptr(), polls.len() as _, IDLE_MS) };
         if n == 0 {
             eprintln!("untouched for {} minutes: closing", IDLE_MS / 60_000);
-            return Action::Close;
+            return Gesture::Power;
         }
         if n < 0 {
             continue;
@@ -271,15 +290,15 @@ fn next_action(panel: &Panel, inputs: &[Input], gestures: &mut Gestures) -> Acti
                 }
                 for chunk in buf[..got as usize].chunks_exact(EVENT_SIZE) {
                     let e = Event::parse(chunk.try_into().expect("16 bytes"));
-                    let action = if Some(k) == fingers {
+                    let gesture = if Some(k) == fingers {
                         gestures.touch(e, panel)
                     } else if inputs[k].types & (INPUT_TOUCHSCREEN | INPUT_TABLET) == 0 {
                         touch::key(e)
                     } else {
                         None
                     };
-                    if let Some(a) = action {
-                        return a;
+                    if let Some(g) = gesture {
+                        return g;
                     }
                 }
             }
@@ -289,7 +308,10 @@ fn next_action(panel: &Panel, inputs: &[Input], gestures: &mut Gestures) -> Acti
 
 fn wait_to_close(panel: &Panel, inputs: &[Input]) {
     let mut gestures = Gestures::default();
-    while next_action(panel, inputs, &mut gestures) != Action::Close {}
+    while !matches!(
+        next_gesture(panel, inputs, &mut gestures),
+        Gesture::Hold | Gesture::Power
+    ) {}
 }
 
 /// A few lines of text, centred on a white screen: for when there's no book

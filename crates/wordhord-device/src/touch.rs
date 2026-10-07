@@ -1,13 +1,14 @@
-//! Touches and keys, from raw input events to what the reader does.
+//! Touches and keys, from raw input events to gestures.
 //!
-//! A tap on the left third of the page goes back; anywhere else goes on.
-//! Holding a finger down for over a second, or pressing the power button,
-//! closes the reader.
+//! A finger that lifts close to where it landed is a tap. One that moved
+//! far sideways is a swipe. One held down for over a second is a hold.
+//! The power button is a key.
 
 /// One `struct input_event` as a 32-bit Kobo reads it: seconds and
 /// microseconds as 32-bit words, then type, code and value.
 pub const EVENT_SIZE: usize = 16;
 
+const EV_SYN: u16 = 0;
 const EV_KEY: u16 = 1;
 const EV_ABS: u16 = 3;
 const ABS_X: u16 = 0;
@@ -17,6 +18,9 @@ const ABS_MT_POSITION_Y: u16 = 54;
 const ABS_MT_TRACKING_ID: u16 = 57;
 const BTN_TOUCH: u16 = 330;
 const KEY_POWER: u16 = 116;
+
+/// Held this long, a touch is a hold, not a tap.
+const HOLD_SECONDS: f64 = 1.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Event {
@@ -40,10 +44,15 @@ impl Event {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Action {
-    Next,
-    Previous,
-    Close,
+pub enum Gesture {
+    /// Where on the screen.
+    Tap(i32, i32),
+    /// The finger moved left: on to the next page.
+    SwipeLeft,
+    /// The finger moved right: back to the previous page.
+    SwipeRight,
+    Hold,
+    Power,
 }
 
 /// How the panel's axes sit on the screen, as FBInk knows them per model.
@@ -79,12 +88,14 @@ impl Panel {
 pub struct Gestures {
     down: Option<f64>,
     raw: (i32, i32),
+    /// Where the finger landed, on screen, once its first position is in.
+    start: Option<(i32, i32)>,
 }
 
 impl Gestures {
-    /// Feeds an event from the touch screen; returns an action when a
+    /// Feeds an event from the touch screen; returns a gesture when a
     /// finger lifts.
-    pub fn touch(&mut self, e: Event, panel: &Panel) -> Option<Action> {
+    pub fn touch(&mut self, e: Event, panel: &Panel) -> Option<Gesture> {
         match (e.kind, e.code) {
             (EV_ABS, ABS_MT_POSITION_X | ABS_X) => {
                 self.raw.0 = e.value;
@@ -94,6 +105,9 @@ impl Gestures {
                 self.raw.1 = e.value;
                 self.down.get_or_insert(e.time);
             }
+            (EV_SYN, _) if self.down.is_some() && self.start.is_none() => {
+                self.start = Some(panel.place(self.raw.0, self.raw.1));
+            }
             (EV_ABS, ABS_MT_TRACKING_ID) if e.value >= 0 => {
                 self.down.get_or_insert(e.time);
             }
@@ -101,16 +115,22 @@ impl Gestures {
                 self.down.get_or_insert(e.time);
             }
             (EV_ABS, ABS_MT_TRACKING_ID) | (EV_KEY, BTN_TOUCH) => {
-                let start = self.down.take()?;
-                if e.time - start > 1.0 {
-                    return Some(Action::Close);
+                let landed = self.down.take()?;
+                let end = panel.place(self.raw.0, self.raw.1);
+                let start = self.start.take().unwrap_or(end);
+                let (dx, dy) = (end.0 - start.0, end.1 - start.1);
+                // A swipe crosses an eighth of the screen, mostly sideways.
+                if dx.abs() >= panel.width as i32 / 8 && dx.abs() > 2 * dy.abs() {
+                    return Some(if dx < 0 {
+                        Gesture::SwipeLeft
+                    } else {
+                        Gesture::SwipeRight
+                    });
                 }
-                let (x, _) = panel.place(self.raw.0, self.raw.1);
-                return Some(if x < panel.width as i32 / 3 {
-                    Action::Previous
-                } else {
-                    Action::Next
-                });
+                if e.time - landed > HOLD_SECONDS {
+                    return Some(Gesture::Hold);
+                }
+                return Some(Gesture::Tap(start.0, start.1));
             }
             _ => {}
         }
@@ -118,9 +138,9 @@ impl Gestures {
     }
 }
 
-/// A key press: the power button closes the reader.
-pub fn key(e: Event) -> Option<Action> {
-    (e.kind == EV_KEY && e.code == KEY_POWER && e.value == 1).then_some(Action::Close)
+/// A key press: the power button.
+pub fn key(e: Event) -> Option<Gesture> {
+    (e.kind == EV_KEY && e.code == KEY_POWER && e.value == 1).then_some(Gesture::Power)
 }
 
 #[cfg(test)]
@@ -144,12 +164,17 @@ mod tests {
         }
     }
 
-    fn tap(g: &mut Gestures, raw_x: i32, raw_y: i32, held: f64) -> Option<Action> {
+    /// A finger down at one raw position, up at another.
+    fn touch(g: &mut Gestures, from: (i32, i32), to: (i32, i32), held: f64) -> Option<Gesture> {
         let mut out = None;
         for e in [
             ev(0.0, EV_ABS, ABS_MT_TRACKING_ID, 1),
-            ev(0.0, EV_ABS, ABS_MT_POSITION_X, raw_x),
-            ev(0.0, EV_ABS, ABS_MT_POSITION_Y, raw_y),
+            ev(0.0, EV_ABS, ABS_MT_POSITION_X, from.0),
+            ev(0.0, EV_ABS, ABS_MT_POSITION_Y, from.1),
+            ev(0.0, EV_SYN, 0, 0),
+            ev(held, EV_ABS, ABS_MT_POSITION_X, to.0),
+            ev(held, EV_ABS, ABS_MT_POSITION_Y, to.1),
+            ev(held, EV_SYN, 0, 0),
             ev(held, EV_ABS, ABS_MT_TRACKING_ID, -1),
         ] {
             out = g.touch(e, &ELIPSA).or(out);
@@ -176,17 +201,30 @@ mod tests {
     }
 
     #[test]
-    fn taps_turn_pages_and_a_long_press_closes() {
+    fn taps_swipes_and_holds() {
         let mut g = Gestures::default();
-        // Screen x comes from the panel's y.
-        assert_eq!(tap(&mut g, 900, 100, 0.1), Some(Action::Previous));
-        assert_eq!(tap(&mut g, 900, 1200, 0.1), Some(Action::Next));
-        assert_eq!(tap(&mut g, 900, 1200, 1.5), Some(Action::Close));
+        // Screen x comes from the panel's y; screen y is the panel's x, upside down.
+        assert_eq!(
+            touch(&mut g, (900, 100), (905, 102), 0.1),
+            Some(Gesture::Tap(100, 971))
+        );
+        assert_eq!(
+            touch(&mut g, (900, 1200), (900, 400), 0.3),
+            Some(Gesture::SwipeLeft)
+        );
+        assert_eq!(
+            touch(&mut g, (900, 400), (950, 1200), 0.3),
+            Some(Gesture::SwipeRight)
+        );
+        assert_eq!(
+            touch(&mut g, (900, 700), (900, 700), 1.5),
+            Some(Gesture::Hold)
+        );
     }
 
     #[test]
-    fn the_power_button_closes() {
-        assert_eq!(key(ev(0.0, EV_KEY, KEY_POWER, 1)), Some(Action::Close));
+    fn the_power_button_is_a_key() {
+        assert_eq!(key(ev(0.0, EV_KEY, KEY_POWER, 1)), Some(Gesture::Power));
         assert_eq!(key(ev(0.0, EV_KEY, KEY_POWER, 0)), None);
     }
 }
