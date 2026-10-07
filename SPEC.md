@@ -56,6 +56,10 @@ Wordhord lays out text on the device. The typesetter from draft 1 moves onto the
 
 **EPUB to blocks.** Each chapter's XHTML becomes Wordhord's block model: headings, paragraphs, quotes, lists, verse, tables, figures, notes. CSS is read only for what carries meaning: italics, bold, small caps, alignment, indents, page breaks, hidden text. The rest is dropped. Draft 1's importer does most of this already, one book at a time, by recipe. Here it must work without a recipe, on any reasonable EPUB.
 
+**Our own engine.** Decided 2026-10-07: no Plato, no crengine. Wordhord stays GPL-3.0, and its pages are set the way its typesetter sets them.
+
+**No desktop step for books.** Copy an EPUB to the Kobo and open it. The desktop builds only dictionary packs and, if you want them, editions (§14).
+
 **Pages are computed once and cached.** A chapter is laid out the first time it's opened, then stored as glyph runs, the format draft 1 uses. The cache is keyed by book hash, chapter and settings. Change the font size and the cache rebuilds in the background, chapter by chapter, nearest first.
 
 **Layout is deterministic.** The same book and settings give the same pages, byte for byte. Page numbers mean something and stay put.
@@ -190,7 +194,6 @@ Small things that make it Wordhord's:
 
 ## 15. Open decisions
 
-- **The EPUB engine.** Write Wordhord's own on top of the existing typesetter, or reuse Plato's (Rust, built for Kobo, AGPL-3.0)? Reuse saves months, but makes Wordhord AGPL and brings Plato's design with it. Our own is more work, but gives full control, and the typesetting is already better than most.
 - **PDF with ink.** MuPDF is the obvious engine (AGPL). PDFs are where Elipsa owners write most. After v1, or in it?
 - **English dictionary size.** Trim to senses and forms, or ship it whole?
 - **Exit and sleep.** A gesture to leave and Wordhord's own sleep screen, or always hand back to Nickel?
