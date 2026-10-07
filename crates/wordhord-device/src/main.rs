@@ -1,21 +1,23 @@
-//! The Wordhord reader on a Kobo. NickelMenu starts it through
-//! `wordhord.sh`, which pauses Nickel first and resumes it afterwards.
+//! The Wordhord reader. On a Kobo, NickelMenu starts it through
+//! `wordhord.sh`, which pauses Nickel first and resumes it afterwards. On
+//! the desktop it runs in a window, for development.
 //!
 //! ```text
-//! wordhord-reader <library> <fonts> <screen file>
-//! wordhord-reader --restore <screen file>
+//! wordhord-reader <library> <fonts> <screen file>      on a Kobo
+//! wordhord-reader --restore <screen file>              on a Kobo
+//! wordhord-reader <library> <fonts> [--scale N]        on the desktop
 //! ```
-//!
-//! It saves the screen Nickel left, reads the book read last, and puts
-//! Nickel's screen back on exit. If it fails, the script runs it again with
-//! `--restore`, so the screen always comes back.
 
-#![cfg_attr(not(target_arch = "arm"), allow(dead_code))]
-
+mod app;
 mod book;
+#[cfg(not(target_arch = "arm"))]
+mod desktop;
 #[cfg(target_arch = "arm")]
-mod device;
+mod kobo;
+mod platform;
 mod reader;
+// Raw input events are the Kobo's; the desktop only needs gestures.
+#[cfg_attr(not(target_arch = "arm"), allow(dead_code))]
 mod touch;
 
 use std::process::ExitCode;
@@ -23,11 +25,10 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     #[cfg(target_arch = "arm")]
     {
-        device::main()
+        kobo::main()
     }
     #[cfg(not(target_arch = "arm"))]
     {
-        eprintln!("wordhord-reader runs on a Kobo: build it with scripts/package-kobo.sh");
-        ExitCode::FAILURE
+        desktop::main()
     }
 }

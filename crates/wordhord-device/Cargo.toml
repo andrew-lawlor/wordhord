@@ -17,3 +17,6 @@ libc = "0.2"
 
 [build-dependencies]
 cc = "1"
+
+[target.'cfg(not(target_arch = "arm"))'.dependencies]
+minifb = "0.28"
