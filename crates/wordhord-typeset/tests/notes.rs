@@ -253,3 +253,25 @@ fn a_stanzas_number_opens_its_translation() {
             }));
     });
 }
+
+#[test]
+fn a_paragraph_after_a_scene_break_starts_flush() {
+    let source = "\
+{#ch01-0001}
+First paragraph.
+
+{#ch01-0002}
+Second paragraph.
+
+* * *
+
+{#ch01-0004}
+After the break.
+";
+    with_source(source, |layout, blocks| {
+        let pages = layout.paginate(&layout.chapter(blocks));
+        let x = |text: &str| pages[0].words.iter().find(|w| w.text == text).unwrap().x0;
+        assert!(x("Second") > x("First") + 10.0, "a paragraph is indented");
+        assert!((x("After") - x("First")).abs() < 0.5, "after a break it isn't");
+    });
+}

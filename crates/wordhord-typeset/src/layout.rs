@@ -348,7 +348,8 @@ impl<'a> Layout<'a> {
                 continue;
             }
             self.block(b, 0.0, self.measure, self.body, after_heading, &mut units);
-            after_heading = matches!(b.kind, BlockKind::Heading { .. });
+            // After a heading or a scene break, a paragraph starts flush.
+            after_heading = matches!(b.kind, BlockKind::Heading { .. } | BlockKind::SceneBreak);
         }
         for (kind, title) in [
             (GlossKind::Commentary, "Commentary"),
