@@ -20,7 +20,7 @@ use wordhord_book::model::{plain_text, walk, Block, BlockKind, Inline, SpanKind,
 
 use crate::fonts::{Face, Fonts, Glyph};
 use crate::linebreak::{self, Item, INFINITY};
-use crate::page::{Link, Page, Panel, Run, Target, Word};
+use crate::page::{Link, Page, PageImage, Panel, Run, Target, Word};
 use crate::profile::Profile;
 
 /// Glyphs in one font, placed within a line.
@@ -70,6 +70,8 @@ pub struct Line {
     /// Baseline to baseline.
     pub height: f32,
     pub block: String,
+    /// An image on a line of its own: its source, width and height.
+    pub image: Option<(String, f32, f32)>,
 }
 
 /// Lines that are set together: a paragraph, a stanza, a heading.
@@ -107,6 +109,9 @@ enum Content {
     Caesura,
 }
 
+/// An image's size in pixels, by its source.
+pub type ImageSize<'a> = dyn Fn(&str) -> Option<(u32, u32)> + 'a;
+
 pub struct Layout<'a> {
     pub fonts: &'a Fonts,
     pub profile: &'a Profile,
@@ -120,6 +125,9 @@ pub struct Layout<'a> {
     /// The stanzas a parallel translation has, by reference: their numbers
     /// open it.
     translated: RefCell<HashSet<String>>,
+    /// An image's size in pixels, by its source: without it, images are
+    /// described, not drawn.
+    image_size: Option<&'a ImageSize<'a>>,
 }
 
 /// Commentary by the reference or `#id` it's on, and which have a mark.
@@ -310,7 +318,77 @@ impl<'a> Layout<'a> {
             measure,
             anchors: RefCell::default(),
             translated: RefCell::default(),
+            image_size: None,
         }
+    }
+
+    /// Lay out images, sized by `size`.
+    pub fn with_images(mut self, size: &'a ImageSize<'a>) -> Layout<'a> {
+        self.image_size = Some(size);
+        self
+    }
+
+    /// A paragraph that is only images, as images: each centred on a line
+    /// of its own, at its natural size (CSS pixels at 96 to the inch), or
+    /// at the share of the line its CSS asks for. Never wider than the
+    /// text, nor taller than most of a page.
+    fn images(
+        &self,
+        inlines: &[Inline],
+        left: f32,
+        measure: f32,
+        size: f32,
+        block: &str,
+    ) -> Option<Unit> {
+        let sizes = self.image_size?;
+        let mut images = Vec::new();
+        for i in inlines {
+            match i {
+                Inline::Image {
+                    src, width, height, ..
+                } => images.push((src, *width, *height)),
+                Inline::Text(t) if t.trim().is_empty() => {}
+                Inline::LineBreak | Inline::SoftBreak | Inline::PageBreak { .. } => {}
+                _ => return None,
+            }
+        }
+        if images.is_empty() {
+            return None;
+        }
+        let p = self.profile;
+        let page = p.height as f32 - p.mm(p.margins.top) - p.mm(p.margins.bottom) - self.body;
+        let mut unit = Unit {
+            space_before: self.leading(size) * 0.4,
+            split: true,
+            ..Default::default()
+        };
+        for (src, share, ems) in images {
+            let (iw, ih) = sizes(src)?;
+            if iw == 0 || ih == 0 {
+                return None;
+            }
+            let aspect = iw as f32 / ih as f32;
+            let mut w = match (share, ems) {
+                (Some(share), _) => measure * share,
+                (None, Some(ems)) => ems * self.body * aspect,
+                (None, None) => iw as f32 * p.ppi / 96.0,
+            }
+            .min(measure);
+            let mut h = w * ih as f32 / iw as f32;
+            if h > page * 0.85 {
+                w *= page * 0.85 / h;
+                h = page * 0.85;
+            }
+            unit.lines.push(Line {
+                x: left + (measure - w) / 2.0,
+                size,
+                height: h + self.leading(size) * 0.4,
+                block: block.to_string(),
+                image: Some((src.clone(), w, h)),
+                ..Default::default()
+            });
+        }
+        Some(unit)
     }
 
     fn leading(&self, size: f32) -> f32 {
@@ -616,9 +694,35 @@ impl<'a> Layout<'a> {
                     }
                 }
             }
+            // Centred text is set ragged on both sides; a figure's caption
+            // a little smaller.
             BlockKind::Center(blocks) | BlockKind::Figure(blocks) => {
+                let figure = matches!(b.kind, BlockKind::Figure(_));
                 for c in blocks {
-                    self.block(c, left, measure, size, true, units);
+                    let BlockKind::Paragraph(inlines) = &c.kind else {
+                        self.block(c, left, measure, size, true, units);
+                        continue;
+                    };
+                    if let Some(u) = self.images(inlines, left, measure, size, &id) {
+                        units.push(u);
+                        continue;
+                    }
+                    let small = if figure { size * 0.9 } else { size };
+                    let atoms = self.atoms(
+                        inlines,
+                        Style {
+                            face: Face::Regular,
+                            size: small,
+                            smcp: false,
+                        },
+                    );
+                    let c_id = c.id.clone().unwrap_or_else(|| id.clone());
+                    units.push(Unit {
+                        space_before: self.leading(size) * 0.3,
+                        split: true,
+                        lines: self.ragged(&atoms, left, measure, small, true, &c_id),
+                        ..Default::default()
+                    });
                 }
             }
             BlockKind::Speech { speaker, blocks } => {
@@ -1160,6 +1264,9 @@ impl<'a> Layout<'a> {
         indent: bool,
         block: &str,
     ) -> Unit {
+        if let Some(unit) = self.images(inlines, left, measure, size, block) {
+            return unit;
+        }
         let atoms = self.atoms(
             inlines,
             Style {
@@ -1629,6 +1736,16 @@ impl<'a> Layout<'a> {
     }
 
     fn place(&self, page: &mut Page, line: &Line, left: f32, top: f32) {
+        if let Some((src, width, height)) = &line.image {
+            page.images.push(PageImage {
+                src: src.clone(),
+                x: left + line.x,
+                y: top + (line.height - height) / 2.0,
+                width: *width,
+                height: *height,
+            });
+            return;
+        }
         let (ascent, descent) = self.fonts.ascent_descent(line.size);
         // Centre the line's ink in its slot.
         let baseline = top + (line.height - (ascent + descent)) / 2.0 + ascent;
@@ -1685,7 +1802,7 @@ impl<'a> Layout<'a> {
 
 /// An empty line: the space between groups of verse lines.
 fn is_gap(line: &Line) -> bool {
-    line.frags.is_empty() && line.marks.is_empty()
+    line.frags.is_empty() && line.marks.is_empty() && line.image.is_none()
 }
 
 /// Where a unit's lines start new pages, if it starts at `y`. Verse breaks

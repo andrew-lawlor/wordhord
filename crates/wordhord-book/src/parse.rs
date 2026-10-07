@@ -562,6 +562,8 @@ impl<'s> P<'s> {
             Event::Start(Container::Image(src, _), _) => Some(Inline::Image {
                 src: src.to_string(),
                 alt: self.inlines(),
+                width: None,
+                height: None,
             }),
             Event::Start(c, _) => {
                 self.report(

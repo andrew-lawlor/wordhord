@@ -12,10 +12,17 @@ use swash::FontRef;
 use crate::fonts::Fonts;
 use crate::page::Page;
 
+/// Reads an image file's bytes by the source the book gives it.
+pub type ReadImage<'a> = dyn Fn(&str) -> Option<Vec<u8>> + 'a;
+
 pub struct Renderer<'a> {
     fonts: &'a Fonts,
     context: ScaleContext,
     cache: HashMap<(usize, u32, u16), Option<Image>>,
+    /// An image file's bytes, by its source.
+    images: Option<&'a ReadImage<'a>>,
+    /// Images decoded, scaled and dithered, by source and size.
+    pictures: HashMap<(String, u32, u32), Option<Vec<u8>>>,
 }
 
 impl<'a> Renderer<'a> {
@@ -24,7 +31,28 @@ impl<'a> Renderer<'a> {
             fonts,
             context: ScaleContext::new(),
             cache: HashMap::new(),
+            images: None,
+            pictures: HashMap::new(),
         }
+    }
+
+    /// Draw images, read by `bytes`.
+    pub fn with_images(mut self, bytes: &'a ReadImage<'a>) -> Renderer<'a> {
+        self.images = Some(bytes);
+        self
+    }
+
+    /// An image in grey at `w`×`h`, dithered to the panel's 16 greys.
+    fn picture(&mut self, src: &str, w: u32, h: u32) -> Option<&Vec<u8>> {
+        let key = (src.to_string(), w, h);
+        if !self.pictures.contains_key(&key) {
+            let picture = self
+                .images
+                .and_then(|read| read(src))
+                .and_then(|bytes| picture(&bytes, w, h));
+            self.pictures.insert(key.clone(), picture);
+        }
+        self.pictures.get(&key).and_then(|p| p.as_ref())
     }
 
     fn glyph(&mut self, font: usize, size: f32, id: u16) -> Option<&Image> {
@@ -46,6 +74,27 @@ impl<'a> Renderer<'a> {
     pub fn page(&mut self, page: &Page, width: u32, height: u32) -> Vec<u8> {
         let (w, h) = (width as i32, height as i32);
         let mut pixels = vec![255u8; (width * height) as usize];
+        // Images first, so text can sit on them.
+        for img in &page.images {
+            let (w, h) = (img.width.round() as u32, img.height.round() as u32);
+            let (x0, y0) = (img.x.round() as i32, img.y.round() as i32);
+            let Some(picture) = self.picture(&img.src, w, h) else {
+                continue;
+            };
+            for row in 0..h as i32 {
+                let py = y0 + row;
+                if !(0..height as i32).contains(&py) {
+                    continue;
+                }
+                for col in 0..w as i32 {
+                    let px = x0 + col;
+                    if (0..width as i32).contains(&px) {
+                        pixels[(py * width as i32 + px) as usize] =
+                            picture[(row * w as i32 + col) as usize];
+                    }
+                }
+            }
+        }
         for run in &page.runs {
             for &(id, gx, gy) in &run.glyphs {
                 let (x, y) = ((run.x + gx).round() as i32, (run.y + gy).round() as i32);
@@ -86,6 +135,58 @@ pub fn panel(renderer: &mut Renderer, page: &Page, width: u32, height: u32) -> V
         *p = 0;
     }
     pixels
+}
+
+/// An image file as grey pixels at `w`×`h`: transparency on white,
+/// scaled, then dithered to 16 greys (Floyd–Steinberg), so photographs
+/// keep their tones on e-ink instead of banding.
+pub fn picture(bytes: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let decoded = image::load_from_memory(bytes).ok()?.to_luma_alpha8();
+    let scaled = image::imageops::resize(&decoded, w, h, image::imageops::FilterType::CatmullRom);
+    let mut grey: Vec<f32> = scaled
+        .pixels()
+        .map(|p| {
+            let [l, a] = p.0;
+            let a = a as f32 / 255.0;
+            l as f32 * a + 255.0 * (1.0 - a)
+        })
+        .collect();
+    let (w, h) = (w as usize, h as usize);
+    let mut out = vec![0u8; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            let old = grey[i].clamp(0.0, 255.0);
+            let new = ((old / 17.0).round() * 17.0).clamp(0.0, 255.0);
+            out[i] = new as u8;
+            let err = old - new;
+            if x + 1 < w {
+                grey[i + 1] += err * 7.0 / 16.0;
+            }
+            if y + 1 < h {
+                if x > 0 {
+                    grey[i + w - 1] += err * 3.0 / 16.0;
+                }
+                grey[i + w] += err * 5.0 / 16.0;
+                if x + 1 < w {
+                    grey[i + w + 1] += err / 16.0;
+                }
+            }
+        }
+    }
+    Some(out)
+}
+
+/// An image's size in pixels, from its header, without decoding it.
+pub fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()
 }
 
 pub fn write_png(path: &Path, pixels: &[u8], width: u32, height: u32) -> Result<(), String> {

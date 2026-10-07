@@ -57,6 +57,18 @@ pub struct Page {
     pub runs: Vec<Run>,
     pub words: Vec<Word>,
     pub links: Vec<Link>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<PageImage>,
+}
+
+/// An image on the page: its file, as the book names it, and its box.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PageImage {
+    pub src: String,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
 }
 
 /// A box to tap, and where it goes.

@@ -38,12 +38,15 @@ pub fn typeset_chapter(
         out,
         previews,
         &translations,
+        None,
     )
 }
 
 /// Typesets a chapter's blocks, in a language (ISO 639: `eng`, `en`,
 /// `en-GB`), as `typeset_chapter` does. `translation` is a parallel book's
-/// chapters, or nothing.
+/// chapters, or nothing. With `images`, which reads an image's file by its
+/// source, images are laid out and drawn, and the ones used are copied to
+/// `out/images/`.
 pub fn typeset_blocks(
     blocks: &[wordhord_book::model::Block],
     lang: &str,
@@ -51,9 +54,18 @@ pub fn typeset_blocks(
     out: &Path,
     previews: bool,
     translation: &[Vec<wordhord_book::model::Block>],
+    images: Option<&render::ReadImage>,
 ) -> Result<page::Typeset, String> {
     let fonts = fonts::Fonts::load(&profile.dir, &profile.fonts)?;
-    let layout = layout::Layout::new(&fonts, profile, lang);
+    let sizes = |src: &str| {
+        images
+            .and_then(|read| read(src))
+            .and_then(|b| render::image_size(&b))
+    };
+    let mut layout = layout::Layout::new(&fonts, profile, lang);
+    if images.is_some() {
+        layout = layout.with_images(&sizes);
+    }
     let translated = if translation.is_empty() {
         Vec::new()
     } else {
@@ -100,9 +112,31 @@ pub fn typeset_blocks(
     let panel = layout.panel();
 
     std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
+    // The images the pages use go with them.
+    if let Some(read) = images {
+        let mut used: Vec<&str> = pages
+            .iter()
+            .flat_map(|p| &p.images)
+            .map(|i| i.src.as_str())
+            .collect();
+        used.sort_unstable();
+        used.dedup();
+        for src in used {
+            if let Some(bytes) = read(src) {
+                let path = out.join("images").join(src);
+                if let Some(dir) = path.parent() {
+                    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+                }
+                std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+            }
+        }
+    }
     if previews {
         std::fs::create_dir_all(out.join("notes")).map_err(|e| e.to_string())?;
         let mut renderer = render::Renderer::new(&fonts);
+        if let Some(read) = images {
+            renderer = renderer.with_images(read);
+        }
         let mut rendered = Vec::with_capacity(pages.len());
         for (n, p) in pages.iter().enumerate() {
             let pixels = renderer.page(p, profile.width, profile.height);

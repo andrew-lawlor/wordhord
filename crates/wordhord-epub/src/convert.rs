@@ -412,7 +412,7 @@ impl<'e, 's> Converter<'e, 's> {
                 }
             }
             "img" | "svg" | "image" => {
-                if let Some(image) = self.image(node) {
+                if let Some(image) = self.image(node, style) {
                     let para = Block {
                         id: None,
                         kind: BlockKind::Paragraph(vec![image]),
@@ -550,7 +550,7 @@ impl<'e, 's> Converter<'e, 's> {
             "img" | "image" | "svg" => {
                 if let Some(cap) = self.drop_cap(n) {
                     out.push(Inline::Text(cap));
-                } else if let Some(image) = self.image(n) {
+                } else if let Some(image) = self.image(n, &s) {
                     out.push(image);
                 }
                 return;
@@ -608,7 +608,8 @@ impl<'e, 's> Converter<'e, 's> {
         out.extend(wrapped);
     }
 
-    fn image(&self, n: Node) -> Option<Inline> {
+    /// An image, with the share of the line its CSS asks for.
+    fn image(&self, n: Node, style: &Style) -> Option<Inline> {
         let src = n
             .attribute("src")
             .or_else(|| {
@@ -626,6 +627,15 @@ impl<'e, 's> Converter<'e, 's> {
                     })
             })?;
         let alt = n.attribute("alt").unwrap_or_default().trim();
+        let width = style
+            .width
+            .filter(|w| w.percent > 0.0)
+            .map(|w| w.percent.min(1.0));
+        // In ems of the body text, whatever size the image's own text is.
+        let height = style
+            .height
+            .filter(|h| h.em > 0.0)
+            .map(|h| h.em * style.size);
         Some(Inline::Image {
             src: resolve(&self.path, src),
             alt: if alt.is_empty() {
@@ -633,6 +643,8 @@ impl<'e, 's> Converter<'e, 's> {
             } else {
                 vec![Inline::Text(alt.to_string())]
             },
+            width,
+            height,
         })
     }
 

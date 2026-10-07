@@ -97,6 +97,11 @@ pub enum Inline {
     Image {
         src: String,
         alt: Vec<Inline>,
+        /// The share of the text's width it asks for (`width: 50%`), if
+        /// any.
+        width: Option<f32>,
+        /// The height it asks for, in ems of the body text (`height: 5em`).
+        height: Option<f32>,
     },
     NoteRef(String),
     /// The break between half-lines in verse.

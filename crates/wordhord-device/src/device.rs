@@ -188,7 +188,10 @@ fn read(
     if let (Some(name), Some(parent)) = (book.dir.file_name(), book.dir.parent()) {
         let _ = std::fs::write(parent.join("last"), name.to_string_lossy().as_bytes());
     }
-    let mut renderer = Renderer::new(&book.fonts);
+    // A compiled book keeps its images beside its pages.
+    let images = book.dir.join("images");
+    let read = move |src: &str| std::fs::read(images.join(src)).ok();
+    let mut renderer = Renderer::new(&book.fonts).with_images(&read);
     let mut reader = Reader::new(t, book.position());
     // The page as drawn, to put back where the panel was.
     let mut shown = draw(fd, &mut renderer, &t.pages[reader.page], panel, true);

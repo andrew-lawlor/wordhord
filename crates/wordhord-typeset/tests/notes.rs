@@ -272,6 +272,68 @@ After the break.
         let pages = layout.paginate(&layout.chapter(blocks));
         let x = |text: &str| pages[0].words.iter().find(|w| w.text == text).unwrap().x0;
         assert!(x("Second") > x("First") + 10.0, "a paragraph is indented");
-        assert!((x("After") - x("First")).abs() < 0.5, "after a break it isn't");
+        assert!(
+            (x("After") - x("First")).abs() < 0.5,
+            "after a break it isn't"
+        );
     });
+}
+
+fn image_paragraph(width: Option<f32>, height: Option<f32>) -> Vec<wordhord_book::model::Block> {
+    use wordhord_book::model::{Block, BlockKind, Inline};
+    vec![Block {
+        id: Some("f1".into()),
+        kind: BlockKind::Paragraph(vec![Inline::Image {
+            src: "map.png".into(),
+            alt: vec![],
+            width,
+            height,
+        }]),
+        lang: None,
+        reference: None,
+        line: 0,
+    }]
+}
+
+#[test]
+fn images_take_their_css_size_and_never_overflow() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let profile = Profile::load(&root.join("profiles/elipsa-2e.toml")).unwrap();
+    let fonts = Fonts::load(&profile.dir, &profile.fonts).unwrap();
+    let size = |_: &str| Some((800u32, 400u32));
+    let layout = Layout::new(&fonts, &profile, "en").with_images(&size);
+    let place = |blocks: Vec<wordhord_book::model::Block>| {
+        let pages = layout.paginate(&layout.chapter(&blocks));
+        pages[0].images[0].clone()
+    };
+    // Half the line.
+    let half = place(image_paragraph(Some(0.5), None));
+    assert!((half.width - layout.measure / 2.0).abs() < 0.5);
+    assert!((half.height - half.width / 2.0).abs() < 0.5);
+    // Five ems tall.
+    let ems = place(image_paragraph(None, Some(5.0)));
+    assert!((ems.height - 5.0 * layout.body).abs() < 0.5);
+    // Natural size, at 96 CSS pixels to the inch: 800 px is 1,892 on the
+    // Elipsa, wider than the line, so it's cut to the line.
+    let natural = place(image_paragraph(None, None));
+    assert!((natural.width - layout.measure).abs() < 0.5);
+    // Centred.
+    let left = profile.mm(profile.margins.left);
+    assert!((half.x - (left + layout.measure / 4.0)).abs() < 0.5);
+}
+
+#[test]
+fn pictures_are_dithered_to_sixteen_greys() {
+    // A smooth ramp from black to white.
+    let ramp = image::GrayImage::from_fn(64, 8, |x, _| image::Luma([(x * 4) as u8]));
+    let mut png = Vec::new();
+    ramp.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    assert_eq!(wordhord_typeset::render::image_size(&png), Some((64, 8)));
+    let out = wordhord_typeset::render::picture(&png, 64, 8).unwrap();
+    assert!(out.iter().all(|p| p % 17 == 0), "only the panel's greys");
+    // Dithering keeps the tone: the mean barely moves.
+    let mean = |v: &[u8]| v.iter().map(|&p| p as f32).sum::<f32>() / v.len() as f32;
+    let source: Vec<u8> = ramp.into_raw();
+    assert!((mean(&out) - mean(&source)).abs() < 3.0);
 }

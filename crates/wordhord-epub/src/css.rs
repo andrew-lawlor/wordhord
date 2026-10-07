@@ -74,6 +74,10 @@ pub struct Style {
     pub break_before: bool,
     /// Size against the body text: 1.0 is body size.
     pub size: f32,
+    /// `width`, for images: a share of the line, or ems.
+    pub width: Option<Length>,
+    /// `height`, for images.
+    pub height: Option<Length>,
 }
 
 impl Default for Style {
@@ -95,6 +99,8 @@ impl Default for Style {
             pre: false,
             break_before: false,
             size: 1.0,
+            width: None,
+            height: None,
         }
     }
 }
@@ -147,6 +153,8 @@ enum Decl {
     SizeRelative(f32),
     /// Against the body (`px`, `pt`, `rem`, `large`).
     SizeAbsolute(f32),
+    Width(Length),
+    Height(Length),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -378,6 +386,8 @@ fn apply(s: &mut Style, decl: &Decl, parent: &Style) {
         Decl::BreakBefore(b) => s.break_before = *b,
         Decl::SizeRelative(f) => s.size = parent.size * f,
         Decl::SizeAbsolute(f) => s.size = *f,
+        Decl::Width(l) => s.width = Some(*l),
+        Decl::Height(l) => s.height = Some(*l),
     }
 }
 
@@ -828,6 +838,8 @@ fn decls_for(prop: &str, v: &str) -> Vec<Decl> {
             _ => None,
         }),
         "font-size" => one(size(v)),
+        "width" => one(length(v).map(Decl::Width)),
+        "height" => one(length(v).map(Decl::Height)),
         _ => Vec::new(),
     }
 }

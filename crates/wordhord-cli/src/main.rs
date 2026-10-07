@@ -305,8 +305,16 @@ fn epub_typeset(path: &str, document: &str, profile: &str, out: &str) -> ExitCod
         let converted = started.elapsed();
         let profile = wordhord_typeset::profile::Profile::load(Path::new(profile))?;
         let lang = epub.meta.language.as_deref().unwrap_or("en");
-        let t =
-            wordhord_typeset::typeset_blocks(&blocks, lang, &profile, Path::new(out), true, &[])?;
+        let read = |src: &str| epub.bytes(src).ok();
+        let t = wordhord_typeset::typeset_blocks(
+            &blocks,
+            lang,
+            &profile,
+            Path::new(out),
+            true,
+            &[],
+            Some(&read),
+        )?;
         let words: usize = t.pages.iter().map(|p| p.words.len()).sum();
         println!(
             "{}: {} blocks in {converted:?}; {} pages, {words} words, {} notes, in {:?}; previews in {out}",
