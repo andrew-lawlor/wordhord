@@ -89,7 +89,7 @@ fn main() {
             println!("  BROKEN {b}");
         }
         let mut top: Vec<_> = classes.into_iter().collect();
-        top.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+        top.sort_by_key(|(_, (n, _, _))| std::cmp::Reverse(*n));
         for (class, (n, s, tag)) in top.into_iter().take(8) {
             println!("    {tag}.{class} ×{n}: {}", describe(&s));
         }
