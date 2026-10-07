@@ -27,6 +27,92 @@ pub struct Meta {
     pub identifier: Option<String>,
     /// 2.0 or 3.0.
     pub version: String,
+    /// The title to sort by: "Hammer and the Cross, The".
+    pub title_sort: Option<String>,
+    /// The first author, to sort by: "Harrison, Harry".
+    pub author_sort: Option<String>,
+    pub series: Option<String>,
+    /// The book's number in its series: 1, 2, 2.5.
+    pub series_index: Option<f32>,
+    /// Subjects: Calibre's tags.
+    pub tags: Vec<String>,
+    /// The cover image's archive path, once the manifest is read.
+    pub cover: Option<String>,
+}
+
+/// What a package document says about its book, from Dublin Core,
+/// Calibre's `calibre:` metadata, and EPUB 3's refinements. A Calibre
+/// library's `metadata.opf` is read the same way.
+pub fn read_meta(doc: &roxmltree::Document) -> Meta {
+    let mut meta = Meta {
+        version: doc
+            .root_element()
+            .attribute("version")
+            .unwrap_or("2.0")
+            .to_string(),
+        ..Meta::default()
+    };
+    let dc = |name: &str| {
+        doc.descendants()
+            .filter(|n| n.tag_name().name() == name && n.tag_name().namespace() == Some(DC))
+            .collect::<Vec<_>>()
+    };
+    let text = |n: &roxmltree::Node| n.text().unwrap_or_default().trim().to_string();
+    meta.title = dc("title").first().map(text).unwrap_or_default();
+    let creators = dc("creator");
+    meta.creators = creators
+        .iter()
+        .map(text)
+        .filter(|t| !t.is_empty())
+        .collect();
+    meta.language = dc("language").first().map(text).filter(|t| !t.is_empty());
+    meta.identifier = dc("identifier").first().map(text).filter(|t| !t.is_empty());
+    meta.tags = dc("subject")
+        .iter()
+        .map(text)
+        .filter(|t| !t.is_empty())
+        .collect();
+    // `<meta name="calibre:series" content="…"/>`, and EPUB 3's
+    // `<meta property="…" refines="#id">…</meta>`.
+    let named = |name: &str| {
+        doc.descendants()
+            .find(|n| n.has_tag_name("meta") && n.attribute("name") == Some(name))
+            .and_then(|n| n.attribute("content"))
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty())
+    };
+    let refining = |id: Option<&str>, property: &str| {
+        let id = id?;
+        doc.descendants()
+            .find(|n| {
+                n.has_tag_name("meta")
+                    && n.attribute("property") == Some(property)
+                    && n.attribute("refines") == Some(&format!("#{id}"))
+            })
+            .map(|n| text(&n))
+    };
+    meta.title_sort = named("calibre:title_sort");
+    meta.author_sort = creators.first().and_then(|c| {
+        c.attributes()
+            .find(|a| a.name() == "file-as")
+            .map(|a| a.value().to_string())
+            .or_else(|| refining(c.attribute("id"), "file-as"))
+    });
+    meta.series = named("calibre:series");
+    meta.series_index = named("calibre:series_index").and_then(|n| n.parse().ok());
+    if meta.series.is_none() {
+        if let Some(c) = doc.descendants().find(|n| {
+            n.has_tag_name("meta") && n.attribute("property") == Some("belongs-to-collection")
+        }) {
+            let kind = refining(c.attribute("id"), "collection-type");
+            if kind.as_deref().is_none_or(|k| k == "series") {
+                meta.series = Some(text(&c)).filter(|t| !t.is_empty());
+                meta.series_index =
+                    refining(c.attribute("id"), "group-position").and_then(|n| n.parse().ok());
+            }
+        }
+    }
+    meta
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +193,30 @@ impl Epub {
         Ok(xml::fix_entities(text).into_owned())
     }
 
+    /// Whether the book is locked by DRM: Adobe's `rights.xml`, or anything
+    /// but a font named in `encryption.xml`. (Fonts are often obfuscated, a
+    /// different and harmless thing.)
+    pub fn drm(&self) -> bool {
+        if self.bytes("META-INF/rights.xml").is_ok() {
+            return true;
+        }
+        let Ok(text) = self.text("META-INF/encryption.xml") else {
+            return false;
+        };
+        let Ok(doc) = xml::parse(&text) else {
+            return true;
+        };
+        doc.descendants()
+            .filter(|n| n.has_tag_name("CipherReference"))
+            .filter_map(|n| n.attribute("URI"))
+            .any(|uri| {
+                let uri = uri.to_lowercase();
+                ![".otf", ".ttf", ".woff", ".woff2"]
+                    .iter()
+                    .any(|f| uri.ends_with(f))
+            })
+    }
+
     /// The manifest item at a path.
     pub fn item(&self, path: &str) -> Option<&Item> {
         self.manifest.iter().find(|i| i.path == path)
@@ -137,19 +247,7 @@ impl Epub {
     fn read_package(&mut self, opf_path: &str) -> Result<(), String> {
         let opf = self.text(opf_path)?;
         let doc = xml::parse(&opf).map_err(|e| format!("{opf_path}: {e}"))?;
-        let root = doc.root_element();
-        self.meta.version = root.attribute("version").unwrap_or("2.0").to_string();
-        let text_of = |name: &str| {
-            doc.descendants()
-                .filter(|n| n.tag_name().name() == name && n.tag_name().namespace() == Some(DC))
-                .map(|n| n.text().unwrap_or_default().trim().to_string())
-                .filter(|t| !t.is_empty())
-                .collect::<Vec<_>>()
-        };
-        self.meta.title = text_of("title").into_iter().next().unwrap_or_default();
-        self.meta.creators = text_of("creator");
-        self.meta.language = text_of("language").into_iter().next();
-        self.meta.identifier = text_of("identifier").into_iter().next();
+        self.meta = read_meta(&doc);
         self.manifest = doc
             .descendants()
             .filter(|n| n.has_tag_name("item"))
@@ -181,6 +279,29 @@ impl Epub {
                 })
             })
             .collect();
+        // The cover: EPUB 3's `cover-image`, EPUB 2's `<meta name="cover">`,
+        // or an image called cover.
+        let named = doc
+            .descendants()
+            .find(|n| n.has_tag_name("meta") && n.attribute("name") == Some("cover"))
+            .and_then(|n| n.attribute("content"));
+        let image = |i: &&Item| i.media_type.starts_with("image/");
+        self.meta.cover = self
+            .manifest
+            .iter()
+            .find(|i| i.properties.iter().any(|p| p == "cover-image"))
+            .or_else(|| {
+                self.manifest
+                    .iter()
+                    .filter(image)
+                    .find(|i| Some(i.id.as_str()) == named)
+            })
+            .or_else(|| {
+                self.manifest.iter().filter(image).find(|i| {
+                    i.id.to_lowercase().contains("cover") || i.path.to_lowercase().contains("cover")
+                })
+            })
+            .map(|i| i.path.clone());
         if self.spine.is_empty() {
             return Err(format!("{opf_path}: no spine"));
         }

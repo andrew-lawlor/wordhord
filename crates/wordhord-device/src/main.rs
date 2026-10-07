@@ -17,6 +17,9 @@ mod book;
 mod desktop;
 #[cfg(target_arch = "arm")]
 mod kobo;
+// Read by the library screen, which comes next.
+#[allow(dead_code)]
+mod library;
 mod platform;
 mod reader;
 // Raw input events are the Kobo's; the desktop only needs gestures.

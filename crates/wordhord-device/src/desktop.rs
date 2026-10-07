@@ -22,6 +22,59 @@ use crate::touch::Gesture;
 
 pub fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // `--scan <root> <app folder>`: the library, as the reader would see it.
+    if let [flag, root, app] = args.as_slice() {
+        if flag == "--scan" {
+            let library = crate::library::Library::scan(
+                Path::new(root),
+                &Path::new(app).join("library.json"),
+            );
+            for (name, books) in library.by_series() {
+                println!(
+                    "series {name}: {}",
+                    books
+                        .iter()
+                        .map(|b| format!("{} {}", b.series_index.unwrap_or(0.0), b.title))
+                        .collect::<Vec<_>>()
+                        .join(" · ")
+                );
+            }
+            let authors = library.by_author();
+            println!(
+                "{} authors; first: {:?}",
+                authors.len(),
+                authors
+                    .iter()
+                    .take(6)
+                    .map(|(a, b)| (a, b.len()))
+                    .collect::<Vec<_>>()
+            );
+            let tags = library.by_tag();
+            println!(
+                "{} tags; e.g. {:?}",
+                tags.len(),
+                tags.iter()
+                    .take(8)
+                    .map(|(t, b)| (t, b.len()))
+                    .collect::<Vec<_>>()
+            );
+            println!(
+                "titles: {:?}",
+                library
+                    .books
+                    .iter()
+                    .take(6)
+                    .map(|b| &b.title)
+                    .collect::<Vec<_>>()
+            );
+            println!(
+                "covers: {} of {}",
+                library.books.iter().filter(|b| b.cover.is_some()).count(),
+                library.books.len()
+            );
+            return ExitCode::SUCCESS;
+        }
+    }
     if args.len() < 2 {
         eprintln!("usage: wordhord-reader <library> <app folder> [--scale N] [--screen WxH] [--script GESTURES FRAMES]");
         return ExitCode::from(2);

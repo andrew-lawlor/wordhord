@@ -1138,10 +1138,12 @@ dependencies = [
  "cc",
  "libc",
  "minifb",
+ "serde",
  "serde_json",
  "sha2",
  "wordhord-epub",
  "wordhord-typeset",
+ "zip",
 ]
 
 [[package]]

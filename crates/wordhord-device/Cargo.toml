@@ -13,6 +13,7 @@ path = "src/main.rs"
 wordhord-typeset = { path = "../wordhord-typeset" }
 wordhord-epub = { path = "../wordhord-epub" }
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 libc = "0.2"
 
@@ -21,3 +22,6 @@ cc = "1"
 
 [target.'cfg(not(target_arch = "arm"))'.dependencies]
 minifb = { version = "0.28", default-features = false, features = ["x11"] }
+
+[dev-dependencies]
+zip = { version = "2", default-features = false, features = ["deflate"] }
