@@ -11,6 +11,7 @@
 //! opens the same way, from a mark beside the passage. Both are also
 //! gathered at the end of the chapter, to read straight through.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
@@ -116,6 +117,9 @@ pub struct Layout<'a> {
     pub measure: f32,
     /// Commentary waiting for its passage.
     anchors: RefCell<Anchors>,
+    /// The stanzas a parallel translation has, by reference: their numbers
+    /// open it.
+    translated: RefCell<HashSet<String>>,
 }
 
 /// Commentary by the reference or `#id` it's on, and which have a mark.
@@ -131,6 +135,8 @@ pub enum GlossKind {
     Note,
     /// A note on a passage, opened from a mark beside it.
     Commentary,
+    /// A stanza in a parallel translation, opened from its number.
+    Translation,
 }
 
 /// A footnote or a commentary: what opens in the panel.
@@ -144,7 +150,7 @@ pub struct Gloss<'b> {
     /// What a reader sees above a commentary: `Stanza 5`, or the passage's
     /// first words.
     pub title: String,
-    pub blocks: &'b [Block],
+    pub blocks: Cow<'b, [Block]>,
 }
 
 /// A chapter's footnotes and commentary, in reading order.
@@ -194,18 +200,84 @@ pub fn glosses(blocks: &[Block]) -> Vec<Gloss<'_>> {
                 kind: GlossKind::Note,
                 label: label.clone(),
                 title: label.clone(),
-                blocks,
+                blocks: Cow::Borrowed(blocks),
             }),
             BlockKind::Commentary { on, blocks } => Some(Gloss {
                 id: b.id.clone().unwrap_or_else(|| format!("commentary-{k}")),
                 kind: GlossKind::Commentary,
                 label: on.clone(),
                 title: title(on),
-                blocks,
+                blocks: Cow::Borrowed(blocks),
             }),
             _ => None,
         })
         .collect()
+}
+
+/// For each stanza in `blocks`, the same stanza in a parallel
+/// translation, matched by reference. Its note markers are left out: its
+/// notes belong to the other book.
+pub fn translations(blocks: &[Block], translation: &[&[Block]]) -> Vec<Gloss<'static>> {
+    let mut by_ref: HashMap<&str, Vec<Block>> = HashMap::new();
+    for chapter in translation {
+        let mut all = Vec::new();
+        walk(chapter, &mut all);
+        for b in all {
+            if let (BlockKind::Stanza(_), Some(r)) = (&b.kind, &b.reference) {
+                let mut b = b.clone();
+                strip_notes(&mut b);
+                by_ref.entry(r.as_str()).or_default().push(b);
+            }
+        }
+    }
+    let mut all = Vec::new();
+    walk(blocks, &mut all);
+    let mut seen = HashSet::new();
+    all.iter()
+        .filter_map(|b| match (&b.kind, &b.reference) {
+            (BlockKind::Stanza(_), Some(r)) if seen.insert(r.clone()) => {
+                let found = by_ref.remove(r.as_str())?;
+                let number = r.rsplit('.').next().unwrap_or(r);
+                Some(Gloss {
+                    id: format!("tr-{r}"),
+                    kind: GlossKind::Translation,
+                    label: r.clone(),
+                    title: format!("Stanza {number}"),
+                    blocks: Cow::Owned(found),
+                })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn strip_notes(b: &mut Block) {
+    fn inlines(list: &mut Vec<Inline>) {
+        list.retain(|i| !matches!(i, Inline::NoteRef(_)));
+        for i in list {
+            match i {
+                Inline::Emphasis(c) | Inline::Strong(c) => inlines(c),
+                Inline::Span { inlines: c, .. } | Inline::Link { inlines: c, .. } => inlines(c),
+                _ => {}
+            }
+        }
+    }
+    match &mut b.kind {
+        BlockKind::Paragraph(list) => inlines(list),
+        BlockKind::Verse(v) | BlockKind::Stanza(v) => {
+            for l in &mut v.lines {
+                inlines(&mut l.inlines);
+            }
+            v.stanzas.iter_mut().for_each(strip_notes);
+        }
+        BlockKind::Quote(c)
+        | BlockKind::Epigraph(c)
+        | BlockKind::Letter(c)
+        | BlockKind::Center(c)
+        | BlockKind::Figure(c)
+        | BlockKind::Speech { blocks: c, .. } => c.iter_mut().for_each(strip_notes),
+        _ => {}
+    }
 }
 
 /// The keys a commentary's `on` can match: itself, and the start of a
@@ -235,11 +307,21 @@ impl<'a> Layout<'a> {
             body: profile.pt(profile.body_size),
             measure,
             anchors: RefCell::default(),
+            translated: RefCell::default(),
         }
     }
 
     fn leading(&self, size: f32) -> f32 {
         size * self.profile.leading
+    }
+
+    /// The stanzas whose numbers open a translation.
+    pub fn translate(&self, glosses: &[Gloss]) {
+        *self.translated.borrow_mut() = glosses
+            .iter()
+            .filter(|g| g.kind == GlossKind::Translation)
+            .map(|g| g.label.clone())
+            .collect();
     }
 
     /// A chapter's blocks, then its commentary and its notes.
@@ -289,7 +371,7 @@ impl<'a> Layout<'a> {
     pub fn gloss(&self, g: &Gloss, measure: f32, back: bool) -> Vec<Unit> {
         let size = self.body * 0.85;
         let mut units = Vec::new();
-        let mut rest = g.blocks;
+        let mut rest: &[Block] = &g.blocks;
         let label_words;
         match (g.kind, g.blocks.first().map(|b| &b.kind)) {
             (GlossKind::Note, Some(BlockKind::Paragraph(inlines))) => {
@@ -312,6 +394,8 @@ impl<'a> Layout<'a> {
                 units.push(u);
                 label_words = 1;
             }
+            // The stanza shows its own number.
+            (GlossKind::Translation, _) => label_words = 0,
             (GlossKind::Commentary, _) => {
                 let text = g.title.clone();
                 label_words = text.split_whitespace().count();
@@ -322,7 +406,7 @@ impl<'a> Layout<'a> {
                 units.push(u);
             }
         }
-        if back {
+        if back && label_words > 0 {
             if let Some(line) = units.first_mut().and_then(|u| u.lines.first_mut()) {
                 line.back = Some((g.id.clone(), label_words));
             }
@@ -384,6 +468,28 @@ impl<'a> Layout<'a> {
                 }
             }
         }
+        // A translated stanza's number opens the translation.
+        let translated = matches!(b.kind, BlockKind::Stanza(_))
+            && b.reference
+                .as_ref()
+                .is_some_and(|r| self.translated.borrow().contains(r));
+        if let (true, Some(r)) = (translated, &b.reference) {
+            if let Some(line) = units[first..]
+                .iter_mut()
+                .flat_map(|u| u.lines.iter_mut())
+                .find(|l| !l.frags.is_empty())
+            {
+                let number = line
+                    .marks
+                    .iter()
+                    .filter(|f| f.x < line.x)
+                    .map(|f| (f.x, f.x + frag_width(f)))
+                    .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)));
+                if let Some((x0, x1)) = number {
+                    line.margin_links.push((format!("tr-{r}"), x0, x1));
+                }
+            }
+        }
         // Commentary on this block goes beside its first line; on a line of
         // counted verse, beside that line.
         let keys = b
@@ -427,7 +533,7 @@ impl<'a> Layout<'a> {
     }
 
     /// A small ring in the margin, left of any stanza number, for each
-    /// commentary. Tapping it, or the number, opens the commentary.
+    /// commentary. Tapping it opens the commentary.
     fn commentary_mark(&self, line: &mut Line, ids: &[String], size: f32) {
         let style = Style {
             face: Face::Regular,
@@ -447,8 +553,7 @@ impl<'a> Layout<'a> {
             for f in frags {
                 line.marks.push(Frag { x: x + f.x, ..f });
             }
-            let end = number.map_or(x + w, |(_, x1)| x1);
-            line.margin_links.push((id.clone(), x, end));
+            line.margin_links.push((id.clone(), x, x + w));
             right = x;
         }
     }

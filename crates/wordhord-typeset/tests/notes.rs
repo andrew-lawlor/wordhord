@@ -25,20 +25,8 @@ fn with_layout(test: impl Fn(&Layout, &[wordhord_book::model::Block])) {
     with_source(SOURCE, test)
 }
 
-fn with_source(source: &str, test: impl Fn(&Layout, &[wordhord_book::model::Block])) {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let profile = Profile::load(&root.join("profiles/elipsa-2e.toml")).unwrap();
-    let f = &profile.fonts;
-    let fonts = Fonts::load(
-        &profile.dir,
-        &f.regular,
-        &f.italic,
-        &f.bold,
-        &f.bold_italic,
-        f.fallback.as_deref(),
-    )
-    .unwrap();
-    let layout = Layout::new(&fonts, &profile, "eng");
+/// A one-chapter book from Djot source, checked for errors.
+fn load(source: &str) -> Book {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static N: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
@@ -61,6 +49,24 @@ fn with_source(source: &str, test: impl Fn(&Layout, &[wordhord_book::model::Bloc
         .filter(|d| d.severity == Severity::Error)
         .collect();
     assert!(errors.is_empty(), "{errors:#?}");
+    book
+}
+
+fn with_source(source: &str, test: impl Fn(&Layout, &[wordhord_book::model::Block])) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let profile = Profile::load(&root.join("profiles/elipsa-2e.toml")).unwrap();
+    let f = &profile.fonts;
+    let fonts = Fonts::load(
+        &profile.dir,
+        &f.regular,
+        &f.italic,
+        &f.bold,
+        &f.bold_italic,
+        f.fallback.as_deref(),
+    )
+    .unwrap();
+    let layout = Layout::new(&fonts, &profile, "eng");
+    let book = load(source);
     test(&layout, &book.chapters[0].blocks);
 }
 
@@ -211,5 +217,48 @@ Of my renown.[^21]
                 w.x1
             );
         }
+    });
+}
+
+const ENGLISH: &str = "\
+{#ch01-0001 ref=\"vsp.1\"}
+::: stanza
+A hearing I ask from all kindreds,[^2]
+greater and lesser, the sons of Heimdallr!
+:::
+
+[^2]: Pettit's note, which stays with the English.
+";
+
+#[test]
+fn a_stanzas_number_opens_its_translation() {
+    let english = load(ENGLISH);
+    with_source(NORSE, |layout, blocks| {
+        let chapters = [english.chapters[0].blocks.as_slice()];
+        let translated = layout::translations(blocks, &chapters);
+        assert_eq!(translated.len(), 1);
+        assert_eq!(translated[0].id, "tr-vsp.1");
+        layout.translate(&translated);
+        let pages = layout.paginate(&layout.chapter(blocks));
+        let link = pages[0]
+            .links
+            .iter()
+            .find(|l| {
+                l.to == Target::Note {
+                    id: "tr-vsp.1".into(),
+                }
+            })
+            .expect("the stanza number is a link");
+        // It's in the margin, left of the text.
+        let first = pages[0].words.iter().map(|w| w.x0).fold(f32::MAX, f32::min);
+        assert!(link.x0 < first);
+        // The translation leaves its notes behind.
+        let panel = layout.panel_pages(&translated[0]);
+        let words: Vec<_> = panel[0].words.iter().map(|w| w.text.as_str()).collect();
+        assert!(words.contains(&"kindreds,"), "{words:?}");
+        assert!(panel[0].links.iter().all(|l| l.to
+            != Target::Note {
+                id: "note-2".into()
+            }));
     });
 }

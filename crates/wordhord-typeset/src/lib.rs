@@ -15,12 +15,14 @@ use wordhord_book::Book;
 
 /// Typesets one chapter of a book (1-based) for a profile: its pages in
 /// `out/pages.json`, and with `previews`, a PNG of each page and note.
+/// With a `translation`, each stanza's number opens the same stanza in it.
 pub fn typeset_chapter(
     book: &Book,
     chapter: usize,
     profile: &profile::Profile,
     out: &Path,
     previews: bool,
+    translation: Option<&Book>,
 ) -> Result<page::Typeset, String> {
     let ch = book
         .chapters
@@ -36,6 +38,12 @@ pub fn typeset_chapter(
         f.fallback.as_deref(),
     )?;
     let layout = layout::Layout::new(&fonts, profile, &book.meta.lang);
+    let translated = translation.map_or_else(Vec::new, |t| {
+        let chapters: Vec<&[wordhord_book::model::Block]> =
+            t.chapters.iter().map(|c| c.blocks.as_slice()).collect();
+        layout::translations(&ch.blocks, &chapters)
+    });
+    layout.translate(&translated);
     let units = layout.chapter(&ch.blocks);
     // The reference of the line each marker is first on.
     let mut on: HashMap<&str, Option<String>> = HashMap::new();
@@ -55,11 +63,13 @@ pub fn typeset_chapter(
     }
     let notes: Vec<page::Note> = layout::glosses(&ch.blocks)
         .iter()
+        .chain(&translated)
         .map(|g| page::Note {
             id: g.id.clone(),
             kind: match g.kind {
                 layout::GlossKind::Note => "note",
                 layout::GlossKind::Commentary => "commentary",
+                layout::GlossKind::Translation => "translation",
             }
             .to_string(),
             label: g.label.clone(),

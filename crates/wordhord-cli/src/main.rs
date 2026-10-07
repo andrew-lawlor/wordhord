@@ -12,7 +12,7 @@ const USAGE: &str = "usage:
   wordhord check <book>...
   wordhord align <translation> [<original>]
   wordhord import <epub> <recipe.toml> <new folder>
-  wordhord typeset <book> <chapter> <profile.toml> <folder> [--no-preview]
+  wordhord typeset <book> <chapter> <profile.toml> <folder> [--no-preview] [--translation <book>]
 
 A book is a folder with book.toml and text/*.dj. The original defaults to
 the folder beside the translation named by its `original`.";
@@ -23,9 +23,34 @@ fn main() -> ExitCode {
         Some("check") if args.len() > 1 => check(&args[1..]),
         Some("align") if args.len() == 2 || args.len() == 3 => align_books(&args[1], args.get(2)),
         Some("import") if args.len() == 4 => import(&args[1], &args[2], &args[3]),
-        Some("typeset") if args.len() == 5 => typeset(&args[1], &args[2], &args[3], &args[4], true),
-        Some("typeset") if args.len() == 6 && args[5] == "--no-preview" => {
-            typeset(&args[1], &args[2], &args[3], &args[4], false)
+        Some("typeset") if args.len() >= 5 => {
+            let mut previews = true;
+            let mut translation = None;
+            let mut rest = args[5..].iter();
+            while let Some(flag) = rest.next() {
+                match flag.as_str() {
+                    "--no-preview" => previews = false,
+                    "--translation" => match rest.next() {
+                        Some(t) => translation = Some(t.as_str()),
+                        None => {
+                            eprintln!("{USAGE}");
+                            return ExitCode::from(2);
+                        }
+                    },
+                    _ => {
+                        eprintln!("{USAGE}");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+            typeset(
+                &args[1],
+                &args[2],
+                &args[3],
+                &args[4],
+                previews,
+                translation,
+            )
         }
         _ => {
             eprintln!("{USAGE}");
@@ -188,15 +213,31 @@ fn import(epub: &str, recipe: &str, out: &str) -> ExitCode {
     }
 }
 
-fn typeset(book: &str, chapter: &str, profile: &str, out: &str, previews: bool) -> ExitCode {
+fn typeset(
+    book: &str,
+    chapter: &str,
+    profile: &str,
+    out: &str,
+    previews: bool,
+    translation: Option<&str>,
+) -> ExitCode {
     let run = || -> Result<(), String> {
         let book = Book::load(Path::new(book)).map_err(|d| d.to_string())?;
         let chapter: usize = chapter
             .parse()
             .map_err(|_| format!("`{chapter}` isn't a chapter number"))?;
         let profile = wordhord_typeset::profile::Profile::load(Path::new(profile))?;
-        let t =
-            wordhord_typeset::typeset_chapter(&book, chapter, &profile, Path::new(out), previews)?;
+        let translation = translation
+            .map(|t| Book::load(Path::new(t)).map_err(|d| d.to_string()))
+            .transpose()?;
+        let t = wordhord_typeset::typeset_chapter(
+            &book,
+            chapter,
+            &profile,
+            Path::new(out),
+            previews,
+            translation.as_ref(),
+        )?;
         let words: usize = t.pages.iter().map(|p| p.words.len()).sum();
         println!(
             "{} pages, {words} words, {} notes, for {} ({}×{}); {} in {out}",
