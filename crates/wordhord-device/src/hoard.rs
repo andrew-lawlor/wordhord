@@ -124,25 +124,6 @@ impl Hoard {
         Ok(())
     }
 
-    /// The keeping of this word from this place in a book, if it's been
-    /// kept: its paragraph or stanza, in a chapter.
-    pub fn find(
-        &self,
-        head: &str,
-        lang: &str,
-        path: &str,
-        chapter: usize,
-        block: &str,
-    ) -> Option<&Kept> {
-        self.kept.iter().find(|k| {
-            k.head == head
-                && k.lang == lang
-                && k.path == path
-                && k.chapter == chapter
-                && k.block == block
-        })
-    }
-
     pub fn review(&mut self, head: &str, lang: &str, grade: u8) -> Result<(), String> {
         let r = Review {
             head: head.to_string(),
@@ -203,6 +184,22 @@ impl Hoard {
                 new.into_iter()
                     .take(NEW_A_DAY.saturating_sub(started_today)),
             )
+            .collect()
+    }
+
+    /// What was kept of the word printed so in this paragraph or stanza,
+    /// under whichever reading. The word may be there more than once:
+    /// `sentence` and `at` tell which.
+    pub fn kept_in(&self, word: &str, path: &str, chapter: usize, block: &str) -> Vec<&Kept> {
+        let key = wordhord_dict::key(word);
+        self.kept
+            .iter()
+            .filter(|k| {
+                k.path == path
+                    && k.chapter == chapter
+                    && k.block == block
+                    && wordhord_dict::key(&k.word) == key
+            })
             .collect()
     }
 
@@ -394,7 +391,7 @@ mod tests {
             ..k.clone()
         })
         .unwrap();
-        let first = h.find("mǫgr", "non", "v.epub", 0, "b1").unwrap().id.clone();
+        let first = h.kept_in("mǫgu", "v.epub", 0, "b1")[0].id.clone();
         h.let_go(&first).unwrap();
         let again = Hoard::load(&dir);
         assert_eq!(again.words().len(), 1);

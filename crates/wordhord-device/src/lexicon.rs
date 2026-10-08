@@ -135,9 +135,14 @@ const SAID: [&str; 5] = ["masculine", "feminine", "neuter", "form-of", "alternat
 
 /// A word's readings as blocks, set as a dictionary sets an entry. At most
 /// four readings, and three senses each: enough for a panel.
+/// How many readings an entry shows.
+pub const SHOWN: usize = 4;
+
+/// A word's entry, as blocks. Each reading's headline has the id
+/// `reading-k`, so the panel can find it to set its hoard mark.
 pub fn entry_blocks(word: &str, readings: &[Reading]) -> Vec<Block> {
     let mut blocks = Vec::new();
-    let shown: Vec<&Reading> = readings.iter().take(4).collect();
+    let shown: Vec<&Reading> = readings.iter().take(SHOWN).collect();
     for (k, r) in shown.iter().enumerate() {
         let e = &r.entry;
         // A word's parts of speech follow on; a different word is set apart.
@@ -165,7 +170,10 @@ pub fn entry_blocks(word: &str, readings: &[Reading]) -> Vec<Block> {
             head.push(text("  "));
             head.push(Inline::Emphasis(vec![text(rest)]));
         }
-        blocks.push(para(head));
+        blocks.push(Block {
+            id: Some(format!("reading-{k}")),
+            ..para(head)
+        });
         // *mǫgu*: accusative plural
         if let Some(g) = r.grammar() {
             blocks.push(para(vec![

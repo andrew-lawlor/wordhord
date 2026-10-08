@@ -106,7 +106,7 @@ Hold the button while writing: always ink, never a gesture. The eraser end: eras
 
 The vocab builder is *the hoard*. You *hoard* a word; reviewing is *unlocking* it, after *wordhord onleac*.
 
-**Hoarding a word** records the word as written, its dictionary form, the sense you were shown, the sentence, the book, the anchor and the time. From the *hoard* label at the top of the dictionary panel, or the pen's circle and tick. A second tap lets it go.
+**Hoarding a word** records the word as written, its dictionary form, the sense you were shown, the sentence, the book, the anchor and the time. From the *hoard* mark at the end of each reading's headline in the dictionary panel, or the pen's circle and tick. One reading is kept for each place a word is met: another reading's mark moves it there, and the kept reading's own mark, *in the hoard*, lets it go.
 
 **Unlocking, on the device.** *Unlock the hoard* on the library's home, with how many words are due. One card at a time. The front shows a sentence the word was kept from, the word in italic; another of its sentences each time, if it has several. A tap shows the entry: the word's own readings only. Then four grades: *again*, *hard*, *good*, *easy*, each saying when the word comes back. *Again* brings it round once more before the end. At most ten new words a day. Scheduled with FSRS 4.5 and its default weights, at nine in ten recalled. Reviews are appended to the log, never edited, so the schedule is always recomputed from history.
 

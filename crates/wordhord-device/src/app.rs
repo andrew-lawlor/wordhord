@@ -775,14 +775,18 @@ fn read(
                     let shown_as = wordhord_dict::key(&word);
                     let looked = Instant::now();
                     let lang = book.language();
-                    // Found: the pack it was found in, and the first
-                    // reading's headword and part of speech, for the hoard.
-                    let mut found = None;
+                    // The pack it was found in, and each reading shown, by
+                    // headword and part of speech: for the hoard.
+                    let mut pack = String::new();
+                    let mut found: Vec<(String, String)> = Vec::new();
                     let blocks = match tools.lexicon.look_up(&word, &lang) {
-                        Some((pack, readings)) => {
-                            found = readings.first().map(|r| {
-                                (pack.to_string(), r.entry.word.clone(), r.entry.pos.clone())
-                            });
+                        Some((p, readings)) => {
+                            pack = p.to_string();
+                            found = readings
+                                .iter()
+                                .take(lexicon::SHOWN)
+                                .map(|r| (r.entry.word.clone(), r.entry.pos.clone()))
+                                .collect();
                             lexicon::entry_blocks(&shown_as, &readings)
                         }
                         None => lexicon::not_found(&shown_as, &lang, !tools.lexicon.is_empty()),
@@ -837,31 +841,63 @@ fn read(
                         pages.len(),
                         looked.elapsed()
                     );
-                    let (w, h) = (area.width as u32, area.height as u32);
+                    let (w_px, h) = (area.width as u32, area.height as u32);
+                    let w = w_px;
                     let right = area.width - tools.profile.mm(tools.profile.margins.right);
+                    // The sentence the word is in here, and where in it.
+                    let sentence_here = || {
+                        hoard::sentence(&book.blocks(chapter), &block, nth, &printed)
+                            .unwrap_or_else(|| (printed.clone(), 0))
+                    };
+                    let mut here: Option<(String, usize)> = None;
                     let mut at = 0;
                     loop {
                         let mut pixels = render::panel(&mut chrome, &pages[at], w, h);
-                        // Hoard it, or say it's hoarded: at the top right.
-                        let kept = found.as_ref().and_then(|(pack, head, _)| {
+                        // Each reading's mark, flush right on its headline:
+                        // "hoard", or "in the hoard" for the one kept here.
+                        let kept = {
                             let hoard = tools.hoard.borrow();
-                            let k = hoard.find(head, pack, path, chapter, &block)?;
-                            Some(k.id.clone())
-                        });
-                        let label = found.as_ref().map(|_| {
-                            let text = if kept.is_some() {
-                                "in the hoard"
-                            } else {
-                                "hoard"
-                            };
-                            let (page, hit) =
-                                ui.label(text, kept.is_some(), right, tools.profile.mm(4.8));
-                            let over = chrome.page(&page, w, h);
-                            for (p, o) in pixels.iter_mut().zip(&over) {
-                                *p = (*p).min(*o);
+                            let kept = hoard.kept_in(&printed, path, chapter, &block);
+                            // Only if it might be kept here: the sentence
+                            // means reading the chapter's text.
+                            if !kept.is_empty() && here.is_none() {
+                                here = Some(sentence_here());
                             }
-                            hit
-                        });
+                            kept.into_iter()
+                                .find(|k| here.as_ref() == Some(&(k.sentence.clone(), k.at)))
+                                .map(|k| (k.id.clone(), k.head.clone(), k.pos.clone()))
+                        };
+                        let (ascent, descent) = fonts.ascent_descent(1.0);
+                        let mut marks: Vec<(Rect, usize)> = Vec::new();
+                        for (n, (head, pos)) in found.iter().enumerate() {
+                            let id = format!("reading-{n}");
+                            let line: Vec<_> =
+                                pages[at].words.iter().filter(|w| w.block == id).collect();
+                            let Some(first) = line.first() else { continue };
+                            let last = line.last().unwrap_or(first);
+                            let is_kept =
+                                kept.as_ref().is_some_and(|(_, h, p)| h == head && p == pos);
+                            let text = if is_kept { "in the hoard" } else { "hoard" };
+                            // The headline's first line, or its last if the
+                            // first runs too far right to leave room.
+                            for w in [first, last] {
+                                let baseline = w.y0 + (w.y1 - w.y0) * ascent / (ascent + descent);
+                                let (mark, hit) = ui.label(text, is_kept, right, baseline);
+                                let gap = tools.profile.mm(3.0);
+                                let room = line
+                                    .iter()
+                                    .filter(|o| (o.y0 - w.y0).abs() < 1.0)
+                                    .all(|o| o.x1 + gap < hit.x0 + tools.profile.mm(4.0));
+                                if room {
+                                    let over = chrome.page(&mark, w_px, h);
+                                    for (p, o) in pixels.iter_mut().zip(&over) {
+                                        *p = (*p).min(*o);
+                                    }
+                                    marks.push((hit, n));
+                                    break;
+                                }
+                            }
+                        }
                         if above {
                             // The rule goes on the panel's lower edge.
                             let rule = (w * 3) as usize;
@@ -877,42 +913,43 @@ fn read(
                             match screen.next() {
                                 Gesture::Tap(x, y) if inside(y) => {
                                     let (px, py) = (x as f32, y as f32 - area.y);
-                                    if label.is_some_and(|r| r.contains(px, py)) {
-                                        if let Some((pack, head, pos)) = &found {
-                                            let mut hoard = tools.hoard.borrow_mut();
-                                            let done = match &kept {
-                                                Some(id) => hoard.let_go(id),
-                                                None => {
-                                                    let (sentence, at) = hoard::sentence(
-                                                        &book.blocks(chapter),
-                                                        &block,
-                                                        nth,
-                                                        &printed,
-                                                    )
-                                                    .unwrap_or_else(|| (printed.clone(), 0));
-                                                    hoard.keep(Kept {
-                                                        id: String::new(),
-                                                        time: 0,
-                                                        word: printed.clone(),
-                                                        head: head.clone(),
-                                                        lang: pack.clone(),
-                                                        pos: pos.clone(),
-                                                        sentence,
-                                                        at,
-                                                        book: book.title(),
-                                                        path: path.to_string(),
-                                                        chapter,
-                                                        block: block.clone(),
-                                                    })
-                                                }
-                                            };
-                                            match done {
-                                                Ok(()) => eprintln!(
-                                                    "hoard: {head:?} {}",
-                                                    if kept.is_some() { "let go" } else { "kept" }
-                                                ),
-                                                Err(e) => eprintln!("hoard: {e}"),
-                                            }
+                                    if let Some(&(_, n)) =
+                                        marks.iter().find(|(r, _)| r.contains(px, py))
+                                    {
+                                        let (head, pos) = &found[n];
+                                        let mut hoard = tools.hoard.borrow_mut();
+                                        // One reading kept here: another's
+                                        // mark moves it, its own lets it go.
+                                        let mut done = Ok(());
+                                        let mut again = true;
+                                        if let Some((id, h, p)) = &kept {
+                                            done = hoard.let_go(id);
+                                            again = !(h == head && p == pos);
+                                        }
+                                        if again && done.is_ok() {
+                                            let (sentence, at) =
+                                                here.get_or_insert_with(sentence_here).clone();
+                                            done = hoard.keep(Kept {
+                                                id: String::new(),
+                                                time: 0,
+                                                word: printed.clone(),
+                                                head: head.clone(),
+                                                lang: pack.clone(),
+                                                pos: pos.clone(),
+                                                sentence,
+                                                at,
+                                                book: book.title(),
+                                                path: path.to_string(),
+                                                chapter,
+                                                block: block.clone(),
+                                            });
+                                        }
+                                        match done {
+                                            Ok(()) => eprintln!(
+                                                "hoard: {head:?} {pos} {}",
+                                                if again { "kept" } else { "let go" }
+                                            ),
+                                            Err(e) => eprintln!("hoard: {e}"),
                                         }
                                         break at;
                                     }
