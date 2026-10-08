@@ -50,6 +50,10 @@ pub enum Action {
     /// The hoard: its words, and one word's page by its place in them.
     Hoard,
     Word(usize),
+    /// Unlocking the hoard: begin, show the entry, grade it 1 to 4.
+    Unlock,
+    Reveal,
+    Grade(u8),
     /// On the type screen: the nth choice of a row.
     Choose(Choice, usize),
     /// Close Wordhord, back to the Kobo's own reader.
@@ -380,6 +384,99 @@ impl<'f> Ui<'f> {
         s
     }
 
+    /// Where the foot of a card begins: what's above it is the card's.
+    pub fn card_foot(&self) -> f32 {
+        self.h - self.mm(26.0)
+    }
+
+    /// A card of the hoard being unlocked: a page set elsewhere, under a
+    /// header with ‹ to stop and how many are left. Before the entry is
+    /// shown, a tap anywhere shows it; then the foot has the four grades,
+    /// each with when the word would come back.
+    pub fn card(&self, content: Page, left: usize, grades: Option<[String; 4]>) -> Screen {
+        let mut s = Screen {
+            page: content,
+            hits: Vec::new(),
+            pages: 1,
+        };
+        let top = self.header(&mut s, "unlocking", true, 0);
+        let m = self.margin();
+        let size = self.pt(13.0);
+        let baseline = self.mm(9.0) + size;
+        let t = Type::new(Face::Italic, self.pt(9.5));
+        let label = format!("{left} to go");
+        let lw = self.width(&label, t);
+        self.text(&mut s.page, &label, t, self.w - m - lw, baseline, m * 3.0);
+        let foot = self.card_foot();
+        let caps = Type::new(Face::Regular, self.pt(11.0)).caps(0.14);
+        match grades {
+            None => {
+                let y = foot + self.mm(13.0);
+                self.centred(&mut s.page, "show the entry", caps, y);
+                s.hits.push((
+                    Rect {
+                        x0: 0.0,
+                        y0: top,
+                        x1: self.w,
+                        y1: self.h,
+                    },
+                    Action::Reveal,
+                ));
+            }
+            Some(when) => {
+                self.hairline(&mut s.page, foot + self.mm(3.0), 0);
+                let col = (self.w - 2.0 * m) / 4.0;
+                let small = Type::new(Face::Italic, self.pt(9.5));
+                for (k, name) in crate::fsrs::GRADES.iter().enumerate() {
+                    let x = m + k as f32 * col;
+                    let y = foot + self.mm(12.0);
+                    let nw = self.width(name, caps);
+                    self.text(&mut s.page, name, caps, x + (col - nw) / 2.0, y, col);
+                    let ww = self.width(&when[k], small).min(col);
+                    self.text(
+                        &mut s.page,
+                        &when[k],
+                        small,
+                        x + (col - ww) / 2.0,
+                        y + self.mm(6.0),
+                        col,
+                    );
+                    s.hits.push((
+                        Rect {
+                            x0: x,
+                            y0: foot,
+                            x1: x + col,
+                            y1: self.h,
+                        },
+                        Action::Grade(k as u8 + 1),
+                    ));
+                }
+            }
+        }
+        s
+    }
+
+    /// A few lines in italic, centred on the page under a fleuron, with
+    /// a header: the end of unlocking.
+    pub fn centred_note(&self, title: &str, lines: &[String]) -> Screen {
+        let mut s = Screen {
+            page: Page::default(),
+            hits: Vec::new(),
+            pages: 1,
+        };
+        self.header(&mut s, title, true, 0);
+        let t = Type::new(Face::Italic, self.pt(14.0));
+        let step = t.size * 1.6;
+        let mut y = self.h * 0.42 - step * lines.len() as f32 / 2.0;
+        self.centred(&mut s.page, "❧", Type::new(Face::Regular, self.pt(14.0)), y);
+        y += self.mm(14.0);
+        for line in lines {
+            self.centred(&mut s.page, line, t, y);
+            y += step;
+        }
+        s
+    }
+
     /// The title along the top in spaced small caps, with ‹ to go back and
     /// the page count.
     fn header(&self, s: &mut Screen, title: &str, back: bool, page: usize) -> f32 {
@@ -429,7 +526,13 @@ impl<'f> Ui<'f> {
 
     /// Home: a masthead, the books read lately, then the shelves with
     /// their sizes.
-    pub fn home(&self, recent: &[Recent], shelves: [(Shelf, usize); 4], hoard: usize) -> Screen {
+    pub fn home(
+        &self,
+        recent: &[Recent],
+        shelves: [(Shelf, usize); 4],
+        hoard: usize,
+        due: usize,
+    ) -> Screen {
         let mut s = Screen {
             page: Page::default(),
             hits: Vec::new(),
@@ -497,7 +600,8 @@ impl<'f> Ui<'f> {
         let rows = shelves
             .iter()
             .map(|(shelf, count)| (shelf.name(), *count, Action::Shelf(*shelf)))
-            .chain((hoard > 0).then_some(("The hoard", hoard, Action::Hoard)));
+            .chain((hoard > 0).then_some(("The hoard", hoard, Action::Hoard)))
+            .chain((due > 0).then_some(("Unlock the hoard", due, Action::Unlock)));
         for (title, count, action) in rows {
             if count == 0 {
                 continue;

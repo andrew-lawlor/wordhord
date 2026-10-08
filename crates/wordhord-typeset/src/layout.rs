@@ -559,7 +559,8 @@ impl<'a> Layout<'a> {
 
     /// Blocks set as the dictionary panel sets them (flush, no first-line
     /// indents, a little air between them) on whole pages, inside the
-    /// profile's margins.
+    /// profile's margins. No folios: the screens these go on count their
+    /// own pages.
     pub fn reference_pages(&self, blocks: &[Block]) -> Vec<Page> {
         let p = self.profile;
         let area = Area {
@@ -567,9 +568,7 @@ impl<'a> Layout<'a> {
             bottom: p.height as f32 - p.mm(p.margins.bottom),
             left: p.mm(p.margins.left),
         };
-        let mut pages = self.reference(blocks, self.body, area);
-        self.number(&mut pages);
-        pages
+        self.reference(blocks, self.body, area)
     }
 
     fn reference(&self, blocks: &[Block], size: f32, area: Area) -> Vec<Page> {

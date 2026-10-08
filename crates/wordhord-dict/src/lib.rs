@@ -211,11 +211,14 @@ impl Dictionary {
     }
 
     /// Every reading of a word as it appears in a text, the likeliest
-    /// first: names after common words when the word isn't capitalised,
+    /// first: entries of the word itself before those that only list it
+    /// among their forms ("yank" under Yankee), names after common words
+    /// when the word isn't capitalised,
     /// readings only of the past ("obsolete", "archaic") after living ones,
     /// and symbols (ISO codes, chemical symbols) last of all.
     pub fn look_up(&self, word: &str) -> Vec<Reading> {
         let mut out = self.all_readings(word);
+        let looked = key(word);
         let lowercase = word
             .chars()
             .find(|c| c.is_alphabetic())
@@ -229,7 +232,10 @@ impl Dictionary {
                     })
                 });
             let symbol = r.entry.pos == "symbol";
-            symbol as u8 * 4 + (name && lowercase) as u8 * 2 + past as u8
+            // Listed bare, with no grammar: not an inflection but another
+            // word that names this one among its forms.
+            let other = r.grammar.is_empty() && key(&r.entry.word) != looked;
+            symbol as u8 * 8 + other as u8 * 4 + (name && lowercase) as u8 * 2 + past as u8
         });
         out
     }

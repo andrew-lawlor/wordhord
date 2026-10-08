@@ -10,6 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use wordhord_book::model::{self, Block};
 
+use crate::fsrs;
+
 /// A word kept, with where it was met.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Kept {
@@ -37,6 +39,16 @@ pub struct Kept {
 enum Record {
     Keep(Box<Kept>),
     Drop { id: String, time: u64 },
+    /// A word unlocked: graded 1 to 4, again to easy.
+    Review(Review),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Review {
+    pub head: String,
+    pub lang: String,
+    pub grade: u8,
+    pub time: u64,
 }
 
 /// A word in the hoard, and every time it was kept, newest first.
@@ -47,25 +59,38 @@ pub struct Word<'a> {
     pub kept: Vec<&'a Kept>,
 }
 
+/// Words to unlock today, at most this many new.
+pub const NEW_A_DAY: usize = 10;
+
 pub struct Hoard {
     path: PathBuf,
     /// Kept and not let go, oldest first.
     kept: Vec<Kept>,
+    /// Every review, oldest first.
+    reviews: Vec<Review>,
 }
 
 impl Hoard {
     pub fn load(app: &Path) -> Hoard {
         let path = app.join("hoard.jsonl");
         let mut kept: Vec<Kept> = Vec::new();
+        let mut reviews = Vec::new();
         for line in std::fs::read_to_string(&path).unwrap_or_default().lines() {
             // A line cut short by a crash is skipped, not fatal.
             match serde_json::from_str::<Record>(line) {
                 Ok(Record::Keep(k)) => kept.push(*k),
                 Ok(Record::Drop { id, .. }) => kept.retain(|k| k.id != id),
+                Ok(Record::Review(r)) => reviews.push(r),
                 Err(_) => {}
             }
         }
-        Hoard { path, kept }
+        // Two copies merged may interleave: replay in time order.
+        reviews.sort_by_key(|r: &Review| r.time);
+        Hoard {
+            path,
+            kept,
+            reviews,
+        }
     }
 
     fn append(&self, record: &Record) -> Result<(), String> {
@@ -115,6 +140,66 @@ impl Hoard {
         })
     }
 
+    pub fn review(&mut self, head: &str, lang: &str, grade: u8) -> Result<(), String> {
+        let r = Review {
+            head: head.to_string(),
+            lang: lang.to_string(),
+            grade,
+            time: now(),
+        };
+        self.append(&Record::Review(r.clone()))?;
+        self.reviews.push(r);
+        Ok(())
+    }
+
+    /// The word's reviews, oldest first.
+    fn reviews_of<'a>(&'a self, head: &'a str, lang: &'a str) -> impl Iterator<Item = &'a Review> {
+        self.reviews
+            .iter()
+            .filter(move |r| r.head == head && r.lang == lang)
+    }
+
+    /// How well the word is held, from its reviews; `None` if never
+    /// reviewed.
+    pub fn state(&self, head: &str, lang: &str) -> Option<fsrs::State> {
+        self.reviews_of(head, lang)
+            .fold(None, |s, r| Some(fsrs::next(s, r.grade, r.time)))
+    }
+
+    /// How many times the word has been reviewed.
+    pub fn reviewed(&self, head: &str, lang: &str) -> usize {
+        self.reviews_of(head, lang).count()
+    }
+
+    /// The words to unlock at `time`, as (head, lang): those due, the
+    /// longest overdue first; then new words, the first kept first, so
+    /// that no more than `NEW_A_DAY` are started in a day.
+    pub fn due(&self, time: u64) -> Vec<(String, String)> {
+        let today = time / fsrs::DAY;
+        let mut old = Vec::new();
+        let mut new = Vec::new();
+        let mut started_today = 0;
+        for w in self.words().iter().rev() {
+            match self.state(w.head, w.lang) {
+                Some(s) => {
+                    let first = self.reviews_of(w.head, w.lang).next().map_or(0, |r| r.time);
+                    if first / fsrs::DAY == today {
+                        started_today += 1;
+                    }
+                    if fsrs::due_day(&s) <= today {
+                        old.push((fsrs::due_day(&s), w.head.to_string(), w.lang.to_string()));
+                    }
+                }
+                None => new.push((w.head.to_string(), w.lang.to_string())),
+            }
+        }
+        old.sort_by_key(|o| o.0);
+        old.into_iter()
+            .map(|(_, h, l)| (h, l))
+            .chain(new.into_iter().take(NEW_A_DAY.saturating_sub(started_today)))
+            .collect()
+    }
+
     /// The words, each once, the latest kept first.
     pub fn words(&self) -> Vec<Word<'_>> {
         let mut words: Vec<Word> = Vec::new();
@@ -136,7 +221,7 @@ impl Hoard {
     }
 }
 
-fn now() -> u64 {
+pub fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
@@ -309,6 +394,40 @@ mod tests {
         assert_eq!(again.words().len(), 1);
         assert_eq!(again.words()[0].kept.len(), 1);
         assert_eq!(again.words()[0].kept[0].sentence, "Another.");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn new_words_are_due_and_reviewed_ones_wait() {
+        let dir = std::env::temp_dir().join(format!("wordhord-due-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = Hoard::load(&dir);
+        for head in ["ash", "elm"] {
+            h.keep(Kept {
+                id: String::new(),
+                time: 0,
+                word: head.into(),
+                head: head.into(),
+                lang: "eng".into(),
+                pos: "noun".into(),
+                sentence: head.into(),
+                at: 0,
+                book: "B".into(),
+                path: "b.epub".into(),
+                chapter: 0,
+                block: head.into(),
+            })
+            .unwrap();
+        }
+        let due = |h: &Hoard| h.due(now()).into_iter().map(|d| d.0).collect::<Vec<_>>();
+        assert_eq!(due(&h), ["ash", "elm"]);
+        h.review("ash", "eng", 3).unwrap();
+        assert_eq!(due(&h), ["elm"]);
+        let again = Hoard::load(&dir);
+        assert_eq!(again.reviewed("ash", "eng"), 1);
+        assert_eq!(due(&again), ["elm"]);
+        // Five days on, a word first graded good is due.
+        assert_eq!(again.due(now() + 5 * fsrs::DAY).len(), 2);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

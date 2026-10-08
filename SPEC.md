@@ -108,7 +108,7 @@ The vocab builder is *the hoard*. You *hoard* a word; reviewing is *unlocking* i
 
 **Hoarding a word** records the word as written, its dictionary form, the sense you were shown, the sentence, the book, the anchor and the time. From the *hoard* label at the top of the dictionary panel, or the pen's circle and tick. A second tap lets it go.
 
-**Review on the device.** Short sessions, one card at a time. The front shows the sentence with the word marked. The back shows the entry. Scheduled with FSRS, the open spaced-repetition algorithm Anki offers. Reviews are appended to the log, never edited, so the schedule can always be recomputed from history.
+**Unlocking, on the device.** *Unlock the hoard* on the library's home, with how many words are due. One card at a time. The front shows a sentence the word was kept from, the word in italic; another of its sentences each time, if it has several. A tap shows the entry: the word's own readings only. Then four grades: *again*, *hard*, *good*, *easy*, each saying when the word comes back. *Again* brings it round once more before the end. At most ten new words a day. Scheduled with FSRS 4.5 and its default weights, at nine in ten recalled. Reviews are appended to the log, never edited, so the schedule is always recomputed from history.
 
 **The hoard.** A screen with every word you've kept: by book, by language, by date, or by how well you know it. Tap one to see every sentence you met it in.
 

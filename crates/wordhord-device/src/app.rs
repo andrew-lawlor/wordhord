@@ -17,6 +17,7 @@ use wordhord_typeset::profile::{FontPaths, Profile};
 use wordhord_typeset::render::{self, Renderer};
 
 use crate::book::Book;
+use crate::fsrs;
 use crate::hoard::{self, Hoard, Kept};
 use crate::lexicon::{self, Lexicon};
 use crate::library::{self, Entry, Library};
@@ -193,6 +194,7 @@ impl Browser {
                         (Shelf::All, library.books.len()),
                     ],
                     tools.hoard.borrow().words().len(),
+                    tools.hoard.borrow().due(hoard::now()).len(),
                 )
             }
             View::Hoard => {
@@ -260,63 +262,190 @@ impl Browser {
     }
 }
 
+fn block(kind: wordhord_book::model::BlockKind) -> wordhord_book::model::Block {
+    wordhord_book::model::Block {
+        id: None,
+        kind,
+        lang: None,
+        reference: None,
+        line: 0,
+    }
+}
+
+/// A sentence a word was kept from, the word in italic where it was met,
+/// with the book's title under it.
+fn kept_quote(kept: &Kept) -> wordhord_book::model::Block {
+    use wordhord_book::model::{BlockKind, Inline};
+    let para = |inlines| block(BlockKind::Paragraph(inlines));
+    let chars: Vec<char> = kept.sentence.chars().collect();
+    let len = kept.word.chars().count();
+    let end = kept.at + len;
+    let found = end <= chars.len()
+        && wordhord_dict::key(&chars[kept.at..end].iter().collect::<String>())
+            == wordhord_dict::key(&kept.word);
+    let sentence = if found {
+        let text = |r: &[char]| Inline::Text(r.iter().collect());
+        vec![
+            text(&chars[..kept.at]),
+            Inline::Emphasis(vec![text(&chars[kept.at..end])]),
+            text(&chars[end..]),
+        ]
+    } else {
+        vec![Inline::Text(kept.sentence.clone())]
+    };
+    block(BlockKind::Quote(vec![
+        para(sentence),
+        para(vec![
+            Inline::Text("— ".into()),
+            Inline::Emphasis(vec![Inline::Text(kept.book.clone())]),
+        ]),
+    ]))
+}
+
+/// Blocks set as a book page is, between the header and `bottom`.
+fn set_pages(tools: &Tools, blocks: &[wordhord_book::model::Block], bottom: f32) -> Vec<Page> {
+    let mut profile = tools.profile.clone();
+    let mm = |px: f32| px * 25.4 / profile.ppi;
+    profile.margins.top = mm(tools.ui.header_bottom());
+    profile.margins.bottom = mm(profile.height as f32 - bottom);
+    wordhord_typeset::reference_pages(blocks, "en", &profile, tools.fonts)
+}
+
 /// A word of the hoard on a page of its own: each sentence it was kept
 /// from, the word in italic, with the book; then its dictionary entry.
 fn word_page(tools: &Tools, k: usize, page: usize) -> Screen {
-    use wordhord_book::model::{Block, BlockKind, Inline};
+    use wordhord_book::model::BlockKind;
     let ui = tools.ui;
     let hoard = tools.hoard.borrow();
     let words = hoard.words();
     let Some(w) = words.get(k) else {
         return ui.list("The hoard", &[], 0, true);
     };
-    let block = |kind| Block {
-        id: None,
-        kind,
-        lang: None,
-        reference: None,
-        line: 0,
-    };
-    let para = |inlines| block(BlockKind::Paragraph(inlines));
-    let mut blocks = Vec::new();
-    for kept in &w.kept {
-        // The sentence, with the word itself in italic where it was met.
-        let chars: Vec<char> = kept.sentence.chars().collect();
-        let len = kept.word.chars().count();
-        let end = kept.at + len;
-        let found = end <= chars.len()
-            && wordhord_dict::key(&chars[kept.at..end].iter().collect::<String>())
-                == wordhord_dict::key(&kept.word);
-        let sentence = if found {
-            let text = |r: &[char]| Inline::Text(r.iter().collect());
-            vec![
-                text(&chars[..kept.at]),
-                Inline::Emphasis(vec![text(&chars[kept.at..end])]),
-                text(&chars[end..]),
-            ]
-        } else {
-            vec![Inline::Text(kept.sentence.clone())]
-        };
-        blocks.push(block(BlockKind::Quote(vec![
-            para(sentence),
-            para(vec![
-                Inline::Text("— ".into()),
-                Inline::Emphasis(vec![Inline::Text(kept.book.clone())]),
-            ]),
-        ])));
-    }
-    if let Some((_, readings)) = tools.lexicon.look_up(w.head, w.lang) {
+    let mut blocks: Vec<_> = w.kept.iter().map(|k| kept_quote(k)).collect();
+    if let Some(entry) = entry_of(tools, w.head, w.lang) {
         blocks.push(block(BlockKind::SceneBreak));
-        blocks.extend(lexicon::entry_blocks(w.head, &readings));
+        blocks.extend(entry);
     }
-    // Set as a book page is, below the header.
-    let mut profile = tools.profile.clone();
-    profile.margins.top = ui.header_bottom() * 25.4 / profile.ppi;
-    let set = wordhord_typeset::reference_pages(&blocks, "en", &profile, tools.fonts);
+    let set = set_pages(tools, &blocks, tools.profile.height as f32);
     let pages = set.len().max(1);
     let page = page.min(pages - 1);
     let content = set.into_iter().nth(page).unwrap_or_default();
     ui.titled(w.head, content, page, pages)
+}
+
+/// A word of the hoard's dictionary entry: only its own readings, not
+/// those of other words that list it among their forms.
+fn entry_of(tools: &Tools, head: &str, lang: &str) -> Option<Vec<wordhord_book::model::Block>> {
+    let (_, mut readings) = tools.lexicon.look_up(head, lang)?;
+    if readings.iter().any(|r| r.entry.word == head) {
+        readings.retain(|r| r.entry.word == head);
+    }
+    Some(lexicon::entry_blocks(head, &readings))
+}
+
+/// When a word graded so would come back, in words.
+fn days(n: u64) -> String {
+    match n {
+        0 => "today".into(),
+        1 => "tomorrow".into(),
+        2..=13 => format!("{n} days"),
+        14..=59 => format!("{} weeks", n / 7),
+        60..=364 => format!("{} months", n / 30),
+        365..=729 => "a year".into(),
+        _ => format!("{} years", n / 365),
+    }
+}
+
+/// Unlocking the hoard: each word due, as a card. First the sentence it
+/// was kept from; a tap shows the entry, and a grade sends it on. A word
+/// graded again comes round once more before the end. False if Wordhord
+/// was closed.
+fn unlock(screen: &mut dyn Platform, renderer: &mut Renderer, tools: &Tools) -> bool {
+    use wordhord_book::model::BlockKind;
+    let ui = tools.ui;
+    let (width, height) = screen.size();
+    let mut queue: std::collections::VecDeque<(String, String)> =
+        tools.hoard.borrow().due(hoard::now()).into();
+    let mut done = 0;
+    while let Some((head, lang)) = queue.pop_front() {
+        let (front, back, state) = {
+            let hoard = tools.hoard.borrow();
+            let words = hoard.words();
+            let Some(w) = words.iter().find(|w| w.head == head && w.lang == lang) else {
+                continue;
+            };
+            // Another of its sentences each time, where there are several.
+            let kept = w.kept[hoard.reviewed(&head, &lang) % w.kept.len()];
+            let quote = kept_quote(kept);
+            let mut back = vec![quote.clone(), block(BlockKind::SceneBreak)];
+            back.extend(entry_of(tools, &head, &lang).unwrap_or_default());
+            (vec![quote], back, hoard.state(&head, &lang))
+        };
+        let now = hoard::now();
+        // Again comes round today; the rest, as FSRS has it.
+        let when = [1, 2, 3, 4].map(|g| {
+            if g == 1 {
+                days(0)
+            } else {
+                days(fsrs::interval(&fsrs::next(state, g, now)))
+            }
+        });
+        let mut shown = false;
+        loop {
+            let blocks = if shown { &back } else { &front };
+            let content = set_pages(tools, blocks, ui.card_foot())
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+            let s = ui.card(content, queue.len() + 1, shown.then(|| when.clone()));
+            let pixels = renderer.page(&s.page, width, height);
+            // A new card flashes the screen clean; the entry comes quietly.
+            screen.draw(&pixels, width, height, 0, 0, !shown);
+            let action = loop {
+                match screen.next() {
+                    Gesture::Power => return false,
+                    Gesture::Tap(x, y) => {
+                        if let Some(a) = s.hit(x as f32, y as f32) {
+                            break a.clone();
+                        }
+                    }
+                    _ => {}
+                }
+            };
+            match action {
+                Action::Back => return true,
+                Action::Reveal => shown = true,
+                Action::Grade(g) => {
+                    if let Err(e) = tools.hoard.borrow_mut().review(&head, &lang, g) {
+                        eprintln!("hoard: {e}");
+                    }
+                    eprintln!("unlock: {head:?} {}", fsrs::GRADES[g as usize - 1]);
+                    if g == 1 {
+                        queue.push_back((head.clone(), lang.clone()));
+                    } else {
+                        done += 1;
+                    }
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+    // The end: how many were unlocked, and how many wait for tomorrow.
+    let tomorrow = tools.hoard.borrow().due(hoard::now() + fsrs::DAY).len();
+    let words = |n: usize| if n == 1 { "word" } else { "words" };
+    let mut lines = vec![if done > 0 {
+        format!("{done} {} unlocked.", words(done))
+    } else {
+        "Nothing to unlock today.".to_string()
+    }];
+    if tomorrow > 0 {
+        lines.push(format!("{tomorrow} {} tomorrow.", words(tomorrow)));
+    }
+    let s = ui.centred_note("unlocking", &lines);
+    let pixels = renderer.page(&s.page, width, height);
+    screen.draw(&pixels, width, height, 0, 0, true);
+    !matches!(screen.next(), Gesture::Power)
 }
 
 /// The library, until a book is chosen (its path) or Wordhord is closed.
@@ -368,6 +497,13 @@ fn browse(
                 Gesture::Tap(x, y) => match s.hit(x as f32, y as f32) {
                     Some(Action::Open(path)) => return Some(path.clone()),
                     Some(Action::Close) => return None,
+                    Some(Action::Unlock) => {
+                        if !unlock(screen, &mut renderer, tools) {
+                            return None;
+                        }
+                        flash = true;
+                        break;
+                    }
                     Some(a) => {
                         let a = a.clone();
                         // Back from home has nowhere to go.
