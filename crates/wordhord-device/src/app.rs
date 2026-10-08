@@ -518,10 +518,7 @@ fn read(
                     match action {
                         Some(Action::Library) => break Step::Leave(Leave::Library),
                         Some(Action::Type) => {
-                            let here = &t.pages[reader.page];
-                            let block = here.words.first().map(|w| w.block.clone());
-                            match type_settings(screen, &book, app, ui, &mut chrome, chapter, block)
-                            {
+                            match type_settings(screen, &book, app, ui, &mut chrome, chapter) {
                                 Some(Ok(())) => {
                                     // The first word on this page, counted
                                     // through the chapter.
@@ -851,9 +848,45 @@ fn page_with(t: &Typeset, word: usize) -> usize {
     t.pages.len().saturating_sub(1)
 }
 
-/// The type screen. Each choice sets the specimen again: the paragraph
-/// being read, in the type chosen. Changed settings are saved, and `Ok`;
-/// unchanged, `None`.
+/// The specimen on the type screen: the same passage every time, with
+/// italics, figures, and the letters of Old English and Old Norse, so
+/// faces can be told apart. Italic between asterisks.
+const SPECIMEN: &str = "When Beowulf answers the coastguard on the Danish shore, the poet \
+says he *wordhord onleac*: he unlocked his word-hoard. That is line 259, written down \
+around the year 1000. The poem opens *Hwæt! wē Gār-Dena in ġēar-dagum*, listen, we have \
+heard of the Spear-Danes in days of old. The Norse had their own figure for it. Poetry \
+was Óðinn’s mead, stolen from a giant and carried home in his belly. The *Vǫluspá* \
+begins with a call for a hearing: *Hljóðs bið ek allar helgar kindir*, hear me, all \
+you holy kin. Snorri Sturluson told the story of the mead in his *Edda* in the 1220s, \
+for poets who no longer knew the old kennings.";
+
+/// The specimen as a paragraph.
+fn specimen() -> wordhord_book::model::Block {
+    use wordhord_book::model::{Block, BlockKind, Inline};
+    let inlines = SPECIMEN
+        .split('*')
+        .enumerate()
+        .filter(|(_, t)| !t.is_empty())
+        .map(|(k, t)| {
+            let text = Inline::Text(t.to_string());
+            if k % 2 == 1 {
+                Inline::Emphasis(vec![text])
+            } else {
+                text
+            }
+        })
+        .collect();
+    Block {
+        id: Some("specimen".into()),
+        kind: BlockKind::Paragraph(inlines),
+        lang: None,
+        reference: None,
+        line: 0,
+    }
+}
+
+/// The type screen. Each choice sets the specimen again, in the type
+/// chosen. Changed settings are saved, and `Ok`; unchanged, `None`.
 fn type_settings(
     screen: &mut dyn Platform,
     book: &Book,
@@ -861,32 +894,14 @@ fn type_settings(
     ui: &Ui,
     chrome: &mut Renderer,
     chapter: usize,
-    block: Option<String>,
 ) -> Option<Result<(), Leave>> {
-    use wordhord_book::model::{self, BlockKind};
+    use wordhord_book::model;
     let (width, height) = screen.size();
     let base = Profile::load(&app.join("profile.toml")).ok()?;
     let mut chosen = Settings::load(app);
     let before = chosen.clone();
-    // The specimen: the block the page starts in, or the chapter's first
-    // paragraph of some length.
+    let specimen = specimen();
     let blocks = book.blocks(chapter);
-    let specimen = blocks
-        .iter()
-        .find(|b| b.id.is_some() && b.id == block)
-        .or_else(|| {
-            blocks.iter().find(
-                |b| matches!(&b.kind, BlockKind::Paragraph(i) if model::plain_text(i).len() > 200),
-            )
-        })
-        .or(blocks.first())?
-        .clone();
-    // A specimen, not the whole poem: what fits under the glass.
-    let mut specimen = specimen;
-    if let BlockKind::Verse(v) | BlockKind::Stanza(v) = &mut specimen.kind {
-        v.lines.truncate(16);
-        v.stanzas.clear();
-    }
     // Every letter the chapter uses, to say which a face lacks.
     let mut all = Vec::new();
     model::walk(&blocks, &mut all);
@@ -940,7 +955,6 @@ fn type_settings(
             settings::SETTINGS.iter().map(|s| s.0).collect(),
         ),
     ];
-    let lang = book.language();
     let mut flash = true;
     loop {
         let started = Instant::now();
@@ -977,7 +991,8 @@ fn type_settings(
         // The specimen, from the top of a page set as chosen.
         let set = wordhord_typeset::lay_out(
             std::slice::from_ref(&specimen),
-            &lang,
+            // The specimen is in English, whatever the book.
+            "en",
             &profile,
             &fonts,
             &[],

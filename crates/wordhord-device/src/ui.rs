@@ -633,7 +633,7 @@ impl<'f> Ui<'f> {
         s
     }
 
-    /// The type screen: a specimen of the book, set as chosen; then the
+    /// The type screen: a specimen passage, set as chosen; then the
     /// faces, each marked with the old languages it can set; then size,
     /// measure, leading and setting, each a row of names to tap, the one
     /// chosen in italic. `chosen` is each row's choice, in `Choice` order.
