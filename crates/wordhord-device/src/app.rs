@@ -847,12 +847,17 @@ struct Tools<'a> {
 enum Step {
     Next,
     Previous,
-    Jump(usize),
+    /// To a chapter, at a word of it if given.
+    Jump(usize, Arrival),
     /// The type has changed: lay the book out again, at the page holding
     /// this word of the chapter.
     Retype(usize),
     Leave(Leave),
 }
+
+/// A word to arrive at in a chapter, and the words found there, to mark
+/// grey: none for a passage, which has its underline.
+type Arrival = Option<(Anchor, Vec<String>)>;
 
 /// A place in a book to open it at: a chapter, and a word of it.
 type Place = Option<(usize, Anchor)>;
@@ -877,11 +882,14 @@ fn read(
     );
     let (mut chapter, mut page) = book.position();
     // Opened at a passage: its chapter now, its page once laid out.
-    let mut find_anchor = None;
+    // With it, how many of its words to mark grey on arrival: the words
+    // searched for.
+    let mut find_anchor: Arrival = None;
     if let Some((c, anchor)) = at.filter(|a| a.0 < book.chapters()) {
         chapter = c;
-        find_anchor = Some(anchor);
+        find_anchor = Some((anchor, Vec::new()));
     }
+    let mut arrive_mark: Option<(usize, usize)> = None;
     let mut flash = true;
     // Chapters laid out ahead, on another thread.
     let mut ahead = Ahead::start(&book);
@@ -907,14 +915,40 @@ fn read(
         if let Some(word) = find.take() {
             page = page_with(&t, word);
         }
-        if let Some(anchor) = find_anchor.take() {
+        if let Some((anchor, marked)) = find_anchor.take() {
+            // The word itself; or, if the pages count its paragraph's words
+            // a little differently, the nearest before it there.
             let words = Words::of(&t);
-            page = words
-                .anchors
-                .iter()
-                .position(|a| *a == anchor)
+            let n = words.anchors.iter().position(|a| *a == anchor).or_else(|| {
+                words
+                    .anchors
+                    .iter()
+                    .rposition(|a| a.block == anchor.block && a.word <= anchor.word)
+            });
+            // Words searched for: the search and the pages may count a
+            // paragraph's words a little differently, so the nearest word
+            // that reads as the first found.
+            let n = match (n, marked.first()) {
+                (Some(n), Some(first)) => {
+                    let want = crate::search::loose(first);
+                    let text_of = |m: usize| {
+                        words.on_page.iter().zip(&t.pages).find_map(|(nums, p)| {
+                            nums.iter()
+                                .position(|&x| x == m)
+                                .map(|i| p.words[i].text.clone())
+                        })
+                    };
+                    (n.saturating_sub(6)..n + 7)
+                        .filter(|&m| text_of(m).is_some_and(|w| crate::search::loose(&w) == want))
+                        .min_by_key(|&m| m.abs_diff(n))
+                        .or(Some(n))
+                }
+                (n, _) => n,
+            };
+            page = n
                 .and_then(|n| words.on_page.iter().position(|p| p.contains(&n)))
                 .unwrap_or(0);
+            arrive_mark = n.filter(|_| !marked.is_empty()).map(|n| (n, marked.len()));
         }
         let mut reader = Reader::new(&t, page);
         let progress =
@@ -942,6 +976,32 @@ fn read(
             flash,
             &rules(reader.page),
         );
+        // Arrived at words searched for: grey, as a word looked up is,
+        // until the page is next drawn.
+        if let Some((n, count)) = arrive_mark.take() {
+            let numbers = &numbered.on_page[reader.page];
+            let page_now = &t.pages[reader.page];
+            let boxes: Vec<Rect> = runs(page_now, |k| (n..n + count).contains(&numbers[k]))
+                .into_iter()
+                .map(|r| run_box(page_now, r))
+                .collect();
+            let marked = highlight(&shown, width, height, &boxes);
+            let top = boxes
+                .iter()
+                .map(|b| b.y0.max(0.0) as u32)
+                .min()
+                .unwrap_or(0);
+            let bottom = boxes
+                .iter()
+                .map(|b| b.y1 as u32)
+                .max()
+                .unwrap_or(0)
+                .min(height);
+            if bottom > top {
+                let rows = &marked[(top * width) as usize..(bottom * width) as usize];
+                screen.draw(rows, width, bottom - top, 0, top, false);
+            }
+        }
         // A passage being chosen to underline: its first and last words,
         // by their place on the page; and the rows last drawn marked.
         let mut chosen: Option<(usize, usize)> = None;
@@ -1514,7 +1574,7 @@ fn read(
                         }
                         Some(Action::Contents) => {
                             match contents(screen, &book, ui, &mut chrome, chapter) {
-                                Some(Ok(k)) => break Step::Jump(k),
+                                Some(Ok((k, at))) => break Step::Jump(k, at),
                                 Some(Err(leave)) => break Step::Leave(leave),
                                 None => {
                                     shown = draw(
@@ -1561,9 +1621,10 @@ fn read(
                 find = Some(word);
                 flash = true;
             }
-            Step::Jump(k) => {
+            Step::Jump(k, at) => {
                 chapter = k;
                 page = 0;
+                find_anchor = at;
                 flash = true;
             }
         }
@@ -1578,7 +1639,7 @@ fn contents(
     ui: &Ui,
     chrome: &mut Renderer,
     current: usize,
-) -> Option<Result<usize, Leave>> {
+) -> Option<Result<(usize, Arrival), Leave>> {
     let (width, height) = screen.size();
     let entries = book.contents();
     // The entry for the chapter being read: the last one at or before it.
@@ -1586,19 +1647,33 @@ fn contents(
         .iter()
         .rposition(|(_, _, c)| *c <= current)
         .unwrap_or(0);
-    let rows: Vec<Row> = entries
-        .iter()
-        .enumerate()
-        .map(|(k, (label, depth, chapter))| Row {
-            title: label.clone(),
-            detail: Vec::new(),
-            cover: None,
-            progress: None,
-            count: None,
-            mark: k == at,
-            action: Action::Chapter(*chapter),
-            depth: *depth,
-        })
+    // First, a way to search the book; then its contents.
+    let search_row = Row {
+        title: "Search this book".into(),
+        detail: Vec::new(),
+        cover: None,
+        progress: None,
+        count: None,
+        mark: false,
+        action: Action::Search,
+        depth: 0,
+    };
+    let rows: Vec<Row> = std::iter::once(search_row)
+        .chain(
+            entries
+                .iter()
+                .enumerate()
+                .map(|(k, (label, depth, chapter))| Row {
+                    title: label.clone(),
+                    detail: Vec::new(),
+                    cover: None,
+                    progress: None,
+                    count: None,
+                    mark: k == at,
+                    action: Action::Chapter(*chapter),
+                    depth: *depth,
+                }),
+        )
         .collect();
     let per_page = ui
         .list("Contents", &rows, 0, true)
@@ -1606,7 +1681,9 @@ fn contents(
         .len()
         .saturating_sub(1)
         .max(1);
-    let mut page = at / per_page;
+    let mut page = (at + 1) / per_page;
+    // What was last searched for, to start from again.
+    let mut query = String::new();
     loop {
         let s = ui.list("Contents", &rows, page, true);
         let pixels = chrome.page(&s.page, width, height);
@@ -1623,11 +1700,167 @@ fn contents(
                     break;
                 }
                 Gesture::Tap(x, y) => match s.hit(x as f32, y as f32) {
-                    Some(Action::Chapter(k)) => return Some(Ok(*k)),
+                    Some(Action::Chapter(k)) => return Some(Ok((*k, None))),
                     Some(Action::Back) => return None,
+                    Some(Action::Search) => {
+                        match search_book(screen, book, ui, chrome, &mut query) {
+                            Some(found) => return Some(found),
+                            None => break,
+                        }
+                    }
                     _ => {}
                 },
                 _ => {}
+            }
+        }
+    }
+}
+
+/// What typing came to.
+enum Typed {
+    Done,
+    Back,
+    Close,
+}
+
+/// Typing into `text` on the keyboard, under a header `title`, until search
+/// is tapped, or ‹.
+fn type_in(
+    screen: &mut dyn Platform,
+    ui: &Ui,
+    chrome: &mut Renderer,
+    title: &str,
+    text: &mut String,
+) -> Typed {
+    let (width, height) = screen.size();
+    let mut shift = false;
+    // The whole screen at first and when the keys change; else only the
+    // line of text.
+    let mut whole = true;
+    loop {
+        let s = ui.typing(title, text, shift);
+        let pixels = chrome.page(&s.page, width, height);
+        if whole {
+            screen.draw(&pixels, width, height, 0, 0, true);
+        } else {
+            let (top, bottom) = ui.typing_band();
+            let (top, bottom) = (top as u32, (bottom as u32).min(height));
+            let rows = &pixels[(top * width) as usize..(bottom * width) as usize];
+            screen.draw(rows, width, bottom - top, 0, top, false);
+        }
+        whole = false;
+        loop {
+            let action = match screen.next() {
+                Gesture::Power => return Typed::Close,
+                Gesture::Tap(x, y) => s.hit(x as f32, y as f32).cloned(),
+                _ => None,
+            };
+            match action {
+                Some(Action::Key(c)) => {
+                    text.push(c);
+                    if shift {
+                        shift = false;
+                        whole = true;
+                    }
+                }
+                Some(Action::Delete) => {
+                    text.pop();
+                }
+                Some(Action::Shift) => {
+                    shift = !shift;
+                    whole = true;
+                }
+                Some(Action::Done) if !text.trim().is_empty() => return Typed::Done,
+                Some(Action::Back) => return Typed::Back,
+                _ => continue,
+            }
+            break;
+        }
+    }
+}
+
+/// Searching the book: type, then the places found, each with its chapter
+/// and the words around it, the words asked for in italic. A place chosen,
+/// `Some(Ok)`; Wordhord closed, `Some(Err)`; back, `None`.
+fn search_book(
+    screen: &mut dyn Platform,
+    book: &Book,
+    ui: &Ui,
+    chrome: &mut Renderer,
+    query: &mut String,
+) -> Option<Result<(usize, Arrival), Leave>> {
+    let (width, height) = screen.size();
+    let entries = book.contents();
+    loop {
+        match type_in(screen, ui, chrome, "Search", query) {
+            Typed::Done => {}
+            Typed::Back => return None,
+            Typed::Close => return Some(Err(Leave::Close)),
+        }
+        let s = ui.centred_note("Search", &["Searching…".to_string()]);
+        let pixels = chrome.page(&s.page, width, height);
+        screen.draw(&pixels, width, height, 0, 0, false);
+        let started = Instant::now();
+        let found = crate::search::search(book, query, 200);
+        eprintln!(
+            "search {query:?}: {} found in {:?}",
+            found.len(),
+            started.elapsed()
+        );
+        let rows: Vec<Row> = found
+            .iter()
+            .enumerate()
+            .map(|(k, f)| Row {
+                title: entries
+                    .iter()
+                    .rfind(|c| c.2 <= f.chapter)
+                    .map_or_else(|| format!("Chapter {}", f.chapter + 1), |c| c.0.clone()),
+                detail: vec![
+                    Part::Plain(format!("{} ", f.before)),
+                    Part::Italic(f.words.clone()),
+                    Part::Plain(format!(" {}", f.after)),
+                ],
+                cover: None,
+                progress: None,
+                count: None,
+                mark: false,
+                action: Action::Found(k),
+                depth: 0,
+            })
+            .collect();
+        let title = if found.is_empty() {
+            format!("Nothing for “{query}”")
+        } else {
+            format!("“{query}”")
+        };
+        let mut page = 0;
+        'results: loop {
+            let s = ui.list(&title, &rows, page, true);
+            let pixels = chrome.page(&s.page, width, height);
+            screen.draw(&pixels, width, height, 0, 0, true);
+            loop {
+                match screen.next() {
+                    Gesture::Power => return Some(Err(Leave::Close)),
+                    Gesture::SwipeLeft if page + 1 < s.pages => {
+                        page += 1;
+                        break;
+                    }
+                    Gesture::SwipeRight if page > 0 => {
+                        page -= 1;
+                        break;
+                    }
+                    Gesture::Tap(x, y) => match s.hit(x as f32, y as f32) {
+                        Some(Action::Found(k)) => {
+                            let f = &found[*k];
+                            let words = f.words.split_whitespace().map(str::to_string).collect();
+                            return Some(Ok((f.chapter, Some((f.anchor.clone(), words)))));
+                        }
+                        // Back to the keyboard, the words still there.
+                        Some(Action::Back) => break 'results,
+                        _ => {}
+                    },
+                    _ => {}
+                }
             }
         }
     }

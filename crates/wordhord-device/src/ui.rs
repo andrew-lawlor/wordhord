@@ -64,6 +64,15 @@ pub enum Action {
     Choose(Choice, usize),
     /// Close Wordhord, back to the Kobo's own reader.
     Close,
+    /// The keyboard: a letter, shift, delete, and done.
+    Key(char),
+    Shift,
+    Delete,
+    Done,
+    /// In the contents: search the book; and a place found, by its place
+    /// in the results.
+    Search,
+    Found(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -428,6 +437,175 @@ impl<'f> Ui<'f> {
                 y1,
             },
         )
+    }
+
+    /// Where the typing screen's line of text is, top to bottom: what
+    /// changes as a key is tapped.
+    pub fn typing_band(&self) -> (f32, f32) {
+        let top = self.header_bottom();
+        (top, top + self.mm(24.0))
+    }
+
+    /// Typing: the text so far on a ruled line under the header, with a
+    /// cursor; and the keyboard at the foot. Over the alphabet, a row of
+    /// the old letters: þ ð æ ǫ ȝ ƿ œ ø. `shift`: the next letter is a
+    /// capital.
+    pub fn typing(&self, title: &str, text: &str, shift: bool) -> Screen {
+        let mut s = Screen {
+            page: Page::default(),
+            hits: Vec::new(),
+            pages: 1,
+            marks: Vec::new(),
+        };
+        self.header(&mut s, title, true, 0);
+        let m = self.margin();
+        let (_, band_bottom) = self.typing_band();
+        let field = Type::new(Face::Regular, self.pt(18.0));
+        let baseline = band_bottom - self.mm(8.0);
+        let tw = self.text(
+            &mut s.page,
+            text,
+            field,
+            m,
+            baseline,
+            self.w - 2.0 * m - self.mm(4.0),
+        );
+        let tw = if text.is_empty() { 0.0 } else { tw };
+        self.rule(
+            &mut s.page,
+            (m + tw + self.mm(0.8)).round(),
+            (baseline - field.size * 0.78).round(),
+            2.0,
+            (field.size * 0.98).round(),
+            0,
+        );
+        self.hairline(&mut s.page, baseline + self.mm(3.0), 170);
+        // The keys: four rows of letters and a row for space and search.
+        let kh = self.mm(14.0);
+        let side = self.mm(3.0);
+        let kw = (self.w - 2.0 * side) / 10.0;
+        let top = self.h - self.mm(5.0) - 5.0 * kh;
+        let letter = Type::new(Face::Regular, self.pt(16.0));
+        let label = Type::new(Face::Regular, self.pt(10.0)).caps(0.14);
+        let up = |c: char| -> char {
+            if shift {
+                c.to_uppercase().next().unwrap_or(c)
+            } else {
+                c
+            }
+        };
+        let rows = ["þðæǫȝƿœø", "qwertyuiop", "asdfghjkl", "zxcvbnm"];
+        for (r, row) in rows.iter().enumerate() {
+            let y = top + r as f32 * kh;
+            self.rule(&mut s.page, side, y.round(), self.w - 2.0 * side, 1.0, 204);
+            let n = row.chars().count() as f32;
+            let left = (self.w - n * kw) / 2.0;
+            let baseline = y + (kh + letter.size * 0.62) / 2.0;
+            for (k, c) in row.chars().enumerate() {
+                let c = up(c);
+                let x = left + k as f32 * kw;
+                let glyph = c.to_string();
+                let gw = self.width(&glyph, letter);
+                self.text(
+                    &mut s.page,
+                    &glyph,
+                    letter,
+                    x + (kw - gw) / 2.0,
+                    baseline,
+                    kw,
+                );
+                s.hits.push((
+                    Rect {
+                        x0: x,
+                        y0: y,
+                        x1: x + kw,
+                        y1: y + kh,
+                    },
+                    Action::Key(c),
+                ));
+            }
+            // Shift and delete flank the last row of letters.
+            if r == 3 {
+                let wide = left - side;
+                let word_at = |s: &mut Screen, word: &str, x: f32, action: Action, on: bool| {
+                    let ww = self.width(word, label);
+                    let lx = x + (wide - ww) / 2.0;
+                    let lb = y + (kh + label.size * 0.55) / 2.0;
+                    self.text(&mut s.page, word, label, lx, lb, wide);
+                    if on {
+                        self.rule(&mut s.page, lx, (lb + self.mm(1.2)).round(), ww, 2.0, 0);
+                    }
+                    s.hits.push((
+                        Rect {
+                            x0: x,
+                            y0: y,
+                            x1: x + wide,
+                            y1: y + kh,
+                        },
+                        action,
+                    ));
+                };
+                word_at(&mut s, "shift", side, Action::Shift, shift);
+                word_at(
+                    &mut s,
+                    "delete",
+                    self.w - side - wide,
+                    Action::Delete,
+                    false,
+                );
+            }
+        }
+        // Space, and search, framed: what the typing is for.
+        let y = top + 4.0 * kh;
+        self.rule(&mut s.page, side, y.round(), self.w - 2.0 * side, 1.0, 204);
+        let lb = y + (kh + label.size * 0.55) / 2.0;
+        let (sx0, sx1) = (side + 1.5 * kw, side + 7.0 * kw);
+        let sw = self.width("space", label);
+        self.text(
+            &mut s.page,
+            "space",
+            label,
+            (sx0 + sx1 - sw) / 2.0,
+            lb,
+            sx1 - sx0,
+        );
+        s.hits.push((
+            Rect {
+                x0: sx0,
+                y0: y,
+                x1: sx1,
+                y1: y + kh,
+            },
+            Action::Key(' '),
+        ));
+        let (dx0, dx1) = (side + 7.5 * kw, self.w - side - 0.5 * kw);
+        let dw = self.width("search", label);
+        self.frame(
+            &mut s.page,
+            dx0.round(),
+            (y + kh * 0.18).round(),
+            (dx1 - dx0).round(),
+            (kh * 0.64).round(),
+            0,
+        );
+        self.text(
+            &mut s.page,
+            "search",
+            label,
+            (dx0 + dx1 - dw) / 2.0,
+            lb,
+            dx1 - dx0,
+        );
+        s.hits.push((
+            Rect {
+                x0: dx0,
+                y0: y,
+                x1: self.w,
+                y1: y + kh,
+            },
+            Action::Done,
+        ));
+        s
     }
 
     /// A few choices in a framed strip, as small caps between middle dots:
@@ -802,7 +980,9 @@ impl<'f> Ui<'f> {
     /// set parts in spaced small caps and mark the chapter being read.
     pub fn list(&self, title: &str, rows: &[Row], page: usize, back: bool) -> Screen {
         let books = rows.iter().any(|r| r.cover.is_some());
-        let contents = rows.iter().all(|r| r.count.is_none() && r.cover.is_none());
+        let contents = rows
+            .iter()
+            .all(|r| r.count.is_none() && r.cover.is_none() && r.detail.is_empty());
         let row_h = if books {
             self.mm(22.0)
         } else if contents {
