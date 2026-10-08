@@ -1,0 +1,314 @@
+//! The hoard: words kept from the dictionary panel, each with the sentence
+//! it was met in. A log, `hoard.jsonl` in the app folder, one record a
+//! line: a word kept, or a keeping let go. Never edited, only added to, so
+//! two copies merge and nothing is lost.
+
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde::{Deserialize, Serialize};
+use wordhord_book::model::{self, Block};
+
+/// A word kept, with where it was met.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Kept {
+    pub id: String,
+    /// Seconds since 1970.
+    pub time: u64,
+    /// As printed: "forc'd".
+    pub word: String,
+    /// The dictionary's form: "force".
+    pub head: String,
+    /// The dictionary pack it was found in: "eng", "non".
+    pub lang: String,
+    pub pos: String,
+    pub sentence: String,
+    /// Where the word is in the sentence, in characters.
+    pub at: usize,
+    pub book: String,
+    pub path: String,
+    pub chapter: usize,
+    pub block: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum Record {
+    Keep(Box<Kept>),
+    Drop { id: String, time: u64 },
+}
+
+/// A word in the hoard, and every time it was kept, newest first.
+pub struct Word<'a> {
+    pub head: &'a str,
+    pub lang: &'a str,
+    pub pos: &'a str,
+    pub kept: Vec<&'a Kept>,
+}
+
+pub struct Hoard {
+    path: PathBuf,
+    /// Kept and not let go, oldest first.
+    kept: Vec<Kept>,
+}
+
+impl Hoard {
+    pub fn load(app: &Path) -> Hoard {
+        let path = app.join("hoard.jsonl");
+        let mut kept: Vec<Kept> = Vec::new();
+        for line in std::fs::read_to_string(&path).unwrap_or_default().lines() {
+            // A line cut short by a crash is skipped, not fatal.
+            match serde_json::from_str::<Record>(line) {
+                Ok(Record::Keep(k)) => kept.push(*k),
+                Ok(Record::Drop { id, .. }) => kept.retain(|k| k.id != id),
+                Err(_) => {}
+            }
+        }
+        Hoard { path, kept }
+    }
+
+    fn append(&self, record: &Record) -> Result<(), String> {
+        let line = serde_json::to_string(record).map_err(|e| e.to_string())?;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+            .map_err(|e| format!("{}: {e}", self.path.display()))?;
+        writeln!(file, "{line}").map_err(|e| format!("{}: {e}", self.path.display()))
+    }
+
+    pub fn keep(&mut self, mut k: Kept) -> Result<(), String> {
+        let time = now();
+        k.time = time;
+        k.id = format!("{time:x}-{:x}", nanos());
+        self.append(&Record::Keep(Box::new(k.clone())))?;
+        self.kept.push(k);
+        Ok(())
+    }
+
+    pub fn let_go(&mut self, id: &str) -> Result<(), String> {
+        self.append(&Record::Drop {
+            id: id.to_string(),
+            time: now(),
+        })?;
+        self.kept.retain(|k| k.id != id);
+        Ok(())
+    }
+
+    /// The keeping of this word from this place in a book, if it's been
+    /// kept: its paragraph or stanza, in a chapter.
+    pub fn find(
+        &self,
+        head: &str,
+        lang: &str,
+        path: &str,
+        chapter: usize,
+        block: &str,
+    ) -> Option<&Kept> {
+        self.kept.iter().find(|k| {
+            k.head == head
+                && k.lang == lang
+                && k.path == path
+                && k.chapter == chapter
+                && k.block == block
+        })
+    }
+
+    /// The words, each once, the latest kept first.
+    pub fn words(&self) -> Vec<Word<'_>> {
+        let mut words: Vec<Word> = Vec::new();
+        for k in self.kept.iter().rev() {
+            match words
+                .iter_mut()
+                .find(|w| w.head == k.head && w.lang == k.lang)
+            {
+                Some(w) => w.kept.push(k),
+                None => words.push(Word {
+                    head: &k.head,
+                    lang: &k.lang,
+                    pos: &k.pos,
+                    kept: vec![k],
+                }),
+            }
+        }
+        words
+    }
+}
+
+fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+fn nanos() -> u32 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos())
+}
+
+/// The sentence around the `nth` word of the block `id` (counting as the
+/// pages do, by spaces), and where that word is in it. If the count lands
+/// on another word (a note marker counted differently), the nearest
+/// `word` is taken instead. Lines of verse are joined with " / ".
+pub fn sentence(blocks: &[Block], id: &str, nth: usize, word: &str) -> Option<(String, usize)> {
+    let mut all = Vec::new();
+    model::walk(blocks, &mut all);
+    let block = all.into_iter().find(|b| b.id.as_deref() == Some(id))?;
+    // Each word, and whether a line of verse ends after it.
+    let mut tokens: Vec<(String, bool)> = Vec::new();
+    for line in model::block_inlines(block) {
+        let text = model::plain_text(line);
+        let before = tokens.len();
+        tokens.extend(text.split_whitespace().map(|t| (t.to_string(), false)));
+        if tokens.len() > before {
+            if let Some(last) = tokens.last_mut() {
+                last.1 = true;
+            }
+        }
+    }
+    if tokens.is_empty() {
+        return None;
+    }
+    let key = wordhord_dict::key(word);
+    let same = |t: &str| wordhord_dict::key(t) == key;
+    let at = if tokens.get(nth).is_some_and(|t| same(&t.0)) {
+        nth
+    } else {
+        (0..tokens.len())
+            .filter(|&k| same(&tokens[k].0))
+            .min_by_key(|&k| k.abs_diff(nth))
+            .unwrap_or(nth.min(tokens.len() - 1))
+    };
+    let ends = |t: &str| {
+        t.trim_end_matches(['"', '\'', '’', '”', ')', ']', '»'])
+            .ends_with(['.', '!', '?'])
+    };
+    // Back to the end of the sentence before, forward to this one's end;
+    // forty words at most each way.
+    let mut start = at;
+    while start > 0 && at - start < 40 && !ends(&tokens[start - 1].0) {
+        start -= 1;
+    }
+    let mut end = at;
+    while end + 1 < tokens.len() && end - at < 40 && !ends(&tokens[end].0) {
+        end += 1;
+    }
+    let mut text = String::new();
+    let mut offset = 0;
+    if start > 0 && !ends(&tokens[start - 1].0) {
+        text.push_str("… ");
+    }
+    for (k, (t, line_end)) in tokens.iter().enumerate().take(end + 1).skip(start) {
+        if k == at {
+            offset = text.chars().count();
+        }
+        text.push_str(t);
+        if k < end {
+            // A verse line ends: mark it, as a quotation of verse does.
+            let verse = *line_end && block_inlines_are_lines(block);
+            text.push_str(if verse { " / " } else { " " });
+        }
+    }
+    if end + 1 < tokens.len() && !ends(&tokens[end].0) {
+        text.push_str(" …");
+    }
+    Some((text, offset))
+}
+
+fn block_inlines_are_lines(b: &Block) -> bool {
+    use wordhord_book::model::BlockKind;
+    matches!(b.kind, BlockKind::Verse(_) | BlockKind::Stanza(_))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wordhord_book::model::{BlockKind, Inline, Verse, VerseLine};
+
+    fn para(id: &str, text: &str) -> Block {
+        Block {
+            id: Some(id.into()),
+            kind: BlockKind::Paragraph(vec![Inline::Text(text.into())]),
+            lang: None,
+            reference: None,
+            line: 0,
+        }
+    }
+
+    #[test]
+    fn the_sentence_around_a_word() {
+        let blocks = [para(
+            "b1",
+            "It rained. The man I sing, forc'd by fate, came home! Then he slept.",
+        )];
+        let (s, at) = sentence(&blocks, "b1", 6, "forc'd").unwrap();
+        assert_eq!(s, "The man I sing, forc'd by fate, came home!");
+        assert_eq!(&s.chars().skip(at).collect::<String>()[..6], "forc'd");
+    }
+
+    #[test]
+    fn verse_lines_are_joined_with_a_slash() {
+        let line = |t: &str| VerseLine {
+            indent: 0,
+            group: 0,
+            inlines: vec![Inline::Text(t.into())],
+            reference: None,
+            line: 0,
+        };
+        let blocks = [Block {
+            id: Some("v".into()),
+            kind: BlockKind::Verse(Verse {
+                lines: vec![
+                    line("Arms, and the man I sing, who, forc'd by fate,"),
+                    line("And haughty Juno's unrelenting hate,"),
+                    line("Expell'd and exil'd, left the Trojan shore."),
+                ],
+                ..Default::default()
+            }),
+            lang: None,
+            reference: None,
+            line: 0,
+        }];
+        // The count is off by one: the nearest "haughty" is found.
+        let (s, _) = sentence(&blocks, "v", 12, "haughty").unwrap();
+        assert!(s.starts_with("Arms, and the man I sing, who, forc'd by fate, / And haughty"));
+        assert!(s.ends_with("left the Trojan shore."));
+    }
+
+    #[test]
+    fn kept_and_let_go_survive_a_reload() {
+        let dir = std::env::temp_dir().join(format!("wordhord-hoard-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = Hoard::load(&dir);
+        let k = Kept {
+            id: String::new(),
+            time: 0,
+            word: "mǫgu".into(),
+            head: "mǫgr".into(),
+            lang: "non".into(),
+            pos: "noun".into(),
+            sentence: "Hljóðs bið ek allar helgar kindir, meiri ok minni mǫgu Heimdallar.".into(),
+            at: 47,
+            book: "Völuspá".into(),
+            path: "v.epub".into(),
+            chapter: 0,
+            block: "b1".into(),
+        };
+        h.keep(k.clone()).unwrap();
+        h.keep(Kept {
+            sentence: "Another.".into(),
+            block: "b2".into(),
+            ..k.clone()
+        })
+        .unwrap();
+        let first = h.find("mǫgr", "non", "v.epub", 0, "b1").unwrap().id.clone();
+        h.let_go(&first).unwrap();
+        let again = Hoard::load(&dir);
+        assert_eq!(again.words().len(), 1);
+        assert_eq!(again.words()[0].kept.len(), 1);
+        assert_eq!(again.words()[0].kept[0].sentence, "Another.");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}

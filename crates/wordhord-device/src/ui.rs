@@ -47,6 +47,9 @@ pub enum Action {
     Library,
     Type,
     Contents,
+    /// The hoard: its words, and one word's page by its place in them.
+    Hoard,
+    Word(usize),
     /// On the type screen: the nth choice of a row.
     Choose(Choice, usize),
     /// Close Wordhord, back to the Kobo's own reader.
@@ -62,7 +65,7 @@ pub struct Rect {
 }
 
 impl Rect {
-    fn contains(&self, x: f32, y: f32) -> bool {
+    pub fn contains(&self, x: f32, y: f32) -> bool {
         (self.x0..=self.x1).contains(&x) && (self.y0..=self.y1).contains(&y)
     }
 }
@@ -359,6 +362,24 @@ impl<'f> Ui<'f> {
         self.rule(page, x, y - t / 2.0 + 0.5, w * share.clamp(0.0, 1.0), t, 0);
     }
 
+    /// Where what's under the header starts.
+    pub fn header_bottom(&self) -> f32 {
+        let size = self.pt(13.0);
+        self.mm(9.0) + size + size * 0.9 + self.mm(3.0)
+    }
+
+    /// A page set elsewhere (a word's page in the hoard), under a header
+    /// with ‹ to go back.
+    pub fn titled(&self, title: &str, content: Page, page: usize, pages: usize) -> Screen {
+        let mut s = Screen {
+            page: content,
+            hits: Vec::new(),
+            pages,
+        };
+        self.header(&mut s, title, true, page);
+        s
+    }
+
     /// The title along the top in spaced small caps, with ‹ to go back and
     /// the page count.
     fn header(&self, s: &mut Screen, title: &str, back: bool, page: usize) -> f32 {
@@ -408,7 +429,7 @@ impl<'f> Ui<'f> {
 
     /// Home: a masthead, the books read lately, then the shelves with
     /// their sizes.
-    pub fn home(&self, recent: &[Recent], shelves: [(Shelf, usize); 4]) -> Screen {
+    pub fn home(&self, recent: &[Recent], shelves: [(Shelf, usize); 4], hoard: usize) -> Screen {
         let mut s = Screen {
             page: Page::default(),
             hits: Vec::new(),
@@ -472,12 +493,17 @@ impl<'f> Ui<'f> {
         let name = Type::new(Face::Regular, self.pt(14.0));
         let figure = Type::new(Face::Regular, self.pt(12.0));
         let row = self.mm(14.0);
-        for (shelf, count) in shelves {
+        // The shelves, and the hoard of words kept, once there is one.
+        let rows = shelves
+            .iter()
+            .map(|(shelf, count)| (shelf.name(), *count, Action::Shelf(*shelf)))
+            .chain((hoard > 0).then_some(("The hoard", hoard, Action::Hoard)));
+        for (title, count, action) in rows {
             if count == 0 {
                 continue;
             }
             let baseline = y + (row + name.size * 0.6) / 2.0;
-            let nw = self.text(&mut s.page, shelf.name(), name, m, baseline, self.w);
+            let nw = self.text(&mut s.page, title, name, m, baseline, self.w);
             let n = count.to_string();
             let fw = self.width(&n, figure);
             self.text(&mut s.page, &n, figure, self.w - m - fw, baseline, self.w);
@@ -495,7 +521,7 @@ impl<'f> Ui<'f> {
                     x1: self.w,
                     y1: y + row,
                 },
-                Action::Shelf(shelf),
+                action,
             ));
             y += row;
         }
@@ -740,6 +766,28 @@ impl<'f> Ui<'f> {
             specimen,
             names,
         }
+    }
+
+    /// A label in spaced small caps, or italic, ending at `right` on a
+    /// baseline, as a page to draw over another, and the place to tap it.
+    pub fn label(&self, text: &str, italic: bool, right: f32, baseline: f32) -> (Page, Rect) {
+        let mut page = Page::default();
+        let size = self.pt(8.5);
+        let t = if italic {
+            Type::new(Face::Italic, self.pt(9.5))
+        } else {
+            Type::new(Face::Regular, size).caps(0.14)
+        };
+        let w = self.width(text, t);
+        self.text(&mut page, text, t, right - w, baseline, w + 1.0);
+        let pad = self.mm(4.0);
+        let hit = Rect {
+            x0: right - w - pad,
+            y0: baseline - size - pad,
+            x1: right + pad,
+            y1: baseline + pad,
+        };
+        (page, hit)
     }
 
     /// The bar over the top of a page while reading: back to the library,

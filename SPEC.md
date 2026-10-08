@@ -37,7 +37,7 @@ A normal e-reader for stylus Kobos. Smaller and faster than KOReader. Built arou
 
 **Dictionary.** Tap a word. Its Wiktionary entry opens in the panel: dictionary form, the grammar of the form you tapped, senses, etymology. Works on inflected forms (§7).
 
-**Vocab.** One tap keeps a word, with its sentence, book and place. Review on the device. Export anywhere (§8).
+**The hoard.** One tap hoards a word, with its sentence, book and place. Unlock it on the device: review. Export anywhere (§8).
 
 **Commonplace book.** Every highlight, note and kept word, across all books, in one place on the device and in one Markdown file on export.
 
@@ -78,7 +78,7 @@ The Kobo Stylus 2 has a tip, a button and an eraser end. Wordhord reads the pen'
 |---|---|
 | A line under words | Highlight them |
 | A circle round one word | Look it up |
-| A circle, then a tick | Keep it as vocab |
+| A circle, then a tick | Hoard it |
 | A scribble over ink | Erase that ink |
 | Anything else | Ink, as drawn |
 
@@ -102,13 +102,15 @@ Hold the button while writing: always ink, never a gesture. The eraser end: eras
 
 **Corrections.** A small file per pack, `corrections.toml`, fixes or adds entries. Yours, versioned, merged when the pack is built.
 
-## 8. Vocab
+## 8. The hoard
 
-**Keeping a word** records the word as written, its dictionary form, the sense you were shown, the sentence, the book, the anchor and the time. From a tap in the dictionary panel, or the pen's circle and tick.
+The vocab builder is *the hoard*. You *hoard* a word; reviewing is *unlocking* it, after *wordhord onleac*.
+
+**Hoarding a word** records the word as written, its dictionary form, the sense you were shown, the sentence, the book, the anchor and the time. From the *hoard* label at the top of the dictionary panel, or the pen's circle and tick. A second tap lets it go.
 
 **Review on the device.** Short sessions, one card at a time. The front shows the sentence with the word marked. The back shows the entry. Scheduled with FSRS, the open spaced-repetition algorithm Anki offers. Reviews are appended to the log, never edited, so the schedule can always be recomputed from history.
 
-**Your hoard.** A screen with every word you've kept: by book, by language, by date, or by how well you know it. Tap one to see every sentence you met it in.
+**The hoard.** A screen with every word you've kept: by book, by language, by date, or by how well you know it. Tap one to see every sentence you met it in.
 
 **Export.** Anki, CSV and Markdown. Kollate already builds Anki decks from Kobo vocab, with the sentence as the cue. It reads Wordhord's the same way.
 
@@ -123,7 +125,7 @@ Everything lives in one folder, `/mnt/onboard/.wordhord/`. It shows over USB lik
   books/<book hash>/
     notes.jsonl          highlights, notes, ink, bookmarks: the log
     pages/<settings>/    cached layout: safe to delete, rebuilt on demand
-  vocab.jsonl            kept words and reviews: the log
+  hoard.jsonl            hoarded words and reviews: the log
   dictionaries/<lang>.sqlite
   log/                   what went wrong, kept small
 ```
@@ -218,5 +220,5 @@ Each ends in a go or no-go.
 2. **Library and position.** Scan, list, open, resume. Go: launch to last page in under a second.
 3. **Dictionary.** English and Old Norse packs; tap a word, see the entry, inflected forms included. Go: four taps in five find the right entry.
 4. **Pen.** Ink, gestures, anchors, the log. Go: under 5 ms per point, and ink follows its paragraph through a font change.
-5. **Vocab.** Keep, review, export to Anki. Go: you use it for a week.
+5. **The hoard.** Hoard, unlock, export to Anki. Go: you use it for a week.
 6. **Kollate reads it all.** Notes, ink and words on the desktop. Go: a round trip with nothing lost.

@@ -139,6 +139,17 @@ pub fn panel_pages(
     (layout.panel(), layout.panel_blocks(blocks))
 }
 
+/// Blocks set as reference (flush, as the dictionary panel sets them) on
+/// whole pages: a word's page in the hoard.
+pub fn reference_pages(
+    blocks: &[wordhord_book::model::Block],
+    lang: &str,
+    profile: &profile::Profile,
+    fonts: &fonts::Fonts,
+) -> Vec<page::Page> {
+    layout::Layout::new(fonts, profile, lang).reference_pages(blocks)
+}
+
 /// Typesets a chapter's blocks as `lay_out` does, into `out/pages.json`,
 /// with the images used copied to `out/images/` and, with `previews`, a PNG
 /// of each page and note.

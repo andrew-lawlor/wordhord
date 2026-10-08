@@ -548,7 +548,31 @@ impl<'a> Layout<'a> {
     pub fn panel_blocks(&self, blocks: &[Block]) -> Vec<Page> {
         let p = self.profile;
         let panel = self.panel();
-        let size = self.body * 0.85;
+        // Room above for a label at the top right: the hoard's.
+        let area = Area {
+            top: p.mm(7.5),
+            bottom: panel.height - p.mm(p.margins.bottom),
+            left: p.mm(p.margins.left),
+        };
+        self.reference(blocks, self.body * 0.85, area)
+    }
+
+    /// Blocks set as the dictionary panel sets them (flush, no first-line
+    /// indents, a little air between them) on whole pages, inside the
+    /// profile's margins.
+    pub fn reference_pages(&self, blocks: &[Block]) -> Vec<Page> {
+        let p = self.profile;
+        let area = Area {
+            top: p.mm(p.margins.top),
+            bottom: p.height as f32 - p.mm(p.margins.bottom),
+            left: p.mm(p.margins.left),
+        };
+        let mut pages = self.reference(blocks, self.body, area);
+        self.number(&mut pages);
+        pages
+    }
+
+    fn reference(&self, blocks: &[Block], size: f32, area: Area) -> Vec<Page> {
         let mut units = Vec::new();
         for (k, b) in blocks.iter().enumerate() {
             let first = units.len();
@@ -560,11 +584,6 @@ impl<'a> Layout<'a> {
                 }
             }
         }
-        let area = Area {
-            top: p.mm(5.0),
-            bottom: panel.height - p.mm(p.margins.bottom),
-            left: p.mm(p.margins.left),
-        };
         self.flow(&units, area)
     }
 

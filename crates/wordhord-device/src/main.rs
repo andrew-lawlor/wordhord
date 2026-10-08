@@ -15,6 +15,7 @@ mod app;
 mod book;
 #[cfg(not(target_arch = "arm"))]
 mod desktop;
+mod hoard;
 #[cfg(target_arch = "arm")]
 mod kobo;
 mod lexicon;

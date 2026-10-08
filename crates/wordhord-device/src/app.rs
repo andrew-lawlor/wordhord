@@ -5,6 +5,7 @@
 //! to the contents. Holding a finger on a word looks it up. Wordhord
 //! closes from the foot of the library's home.
 
+use std::cell::RefCell;
 use std::path::Path;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Condvar, Mutex};
@@ -16,6 +17,7 @@ use wordhord_typeset::profile::{FontPaths, Profile};
 use wordhord_typeset::render::{self, Renderer};
 
 use crate::book::Book;
+use crate::hoard::{self, Hoard, Kept};
 use crate::lexicon::{self, Lexicon};
 use crate::library::{self, Entry, Library};
 use crate::platform::Platform;
@@ -56,20 +58,22 @@ pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), Str
     }
     let library = Library::scan(root, &index);
     let lexicon = Lexicon::open(&app.join("dictionaries"));
+    let hoard = RefCell::new(Hoard::load(app));
     eprintln!("ready in {:?}", started.elapsed());
     let mut open = library::recent(app)
         .into_iter()
         .map(|o| o.path)
         .find(|p| library.books.iter().any(|b| &b.path == p));
     let mut browser = Browser::default();
+    let tools = Tools {
+        ui: &ui,
+        fonts: &fonts,
+        profile: &profile,
+        lexicon: &lexicon,
+        hoard: &hoard,
+    };
     loop {
         if let Some(path) = open.take() {
-            let tools = Tools {
-                ui: &ui,
-                fonts: &fonts,
-                profile: &profile,
-                lexicon: &lexicon,
-            };
             match read(screen, root, &path, app, &tools) {
                 Ok(Leave::Library) => {}
                 Ok(Leave::Close) => return Ok(()),
@@ -84,7 +88,7 @@ pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), Str
                 }
             }
         }
-        match browse(screen, &mut browser, &library, root, app, &ui, &fonts) {
+        match browse(screen, &mut browser, &library, root, app, &tools) {
             Some(path) => open = Some(path),
             None => return Ok(()),
         }
@@ -98,6 +102,9 @@ enum View {
     Home,
     Shelf(Shelf),
     Group(Shelf, usize),
+    Hoard,
+    /// A word of the hoard, by its place in the list.
+    Word(usize),
 }
 
 /// Where in the library the reader is: the views gone through, each with
@@ -116,6 +123,8 @@ impl Browser {
         match action {
             Action::Shelf(s) => self.stack.push((View::Shelf(*s), 0)),
             Action::Group(s, k) => self.stack.push((View::Group(*s, *k), 0)),
+            Action::Hoard => self.stack.push((View::Hoard, 0)),
+            Action::Word(k) => self.stack.push((View::Word(*k), 0)),
             Action::Back => {
                 self.stack.pop();
             }
@@ -132,7 +141,8 @@ impl Browser {
         }
     }
 
-    fn screen(&self, ui: &Ui, library: &Library, recent: &[library::Opened]) -> Screen {
+    fn screen(&self, tools: &Tools, library: &Library, recent: &[library::Opened]) -> Screen {
+        let ui = tools.ui;
         let progress = |path: &str| recent.iter().find(|o| o.path == path).map(|o| o.progress);
         let row = |e: &Entry| Row {
             title: e.title.clone(),
@@ -182,8 +192,33 @@ impl Browser {
                         (Shelf::Tags, library.by_tag().len()),
                         (Shelf::All, library.books.len()),
                     ],
+                    tools.hoard.borrow().words().len(),
                 )
             }
+            View::Hoard => {
+                let hoard = tools.hoard.borrow();
+                let rows: Vec<Row> = hoard
+                    .words()
+                    .iter()
+                    .enumerate()
+                    .map(|(k, w)| Row {
+                        title: w.head.to_string(),
+                        detail: vec![
+                            Part::Caps(lexicon::language_name(w.lang).to_lowercase()),
+                            Part::Plain("  ·  ".into()),
+                            Part::Italic(w.pos.to_string()),
+                        ],
+                        cover: None,
+                        progress: None,
+                        count: Some(w.kept.len()),
+                        mark: false,
+                        action: Action::Word(k),
+                        depth: 0,
+                    })
+                    .collect();
+                ui.list("The hoard", &rows, page, true)
+            }
+            View::Word(k) => word_page(tools, k, page),
             View::Shelf(Shelf::All) => {
                 let rows: Vec<Row> = library.books.iter().map(row).collect();
                 ui.list(Shelf::All.name(), &rows, page, true)
@@ -225,6 +260,65 @@ impl Browser {
     }
 }
 
+/// A word of the hoard on a page of its own: each sentence it was kept
+/// from, the word in italic, with the book; then its dictionary entry.
+fn word_page(tools: &Tools, k: usize, page: usize) -> Screen {
+    use wordhord_book::model::{Block, BlockKind, Inline};
+    let ui = tools.ui;
+    let hoard = tools.hoard.borrow();
+    let words = hoard.words();
+    let Some(w) = words.get(k) else {
+        return ui.list("The hoard", &[], 0, true);
+    };
+    let block = |kind| Block {
+        id: None,
+        kind,
+        lang: None,
+        reference: None,
+        line: 0,
+    };
+    let para = |inlines| block(BlockKind::Paragraph(inlines));
+    let mut blocks = Vec::new();
+    for kept in &w.kept {
+        // The sentence, with the word itself in italic where it was met.
+        let chars: Vec<char> = kept.sentence.chars().collect();
+        let len = kept.word.chars().count();
+        let end = kept.at + len;
+        let found = end <= chars.len()
+            && wordhord_dict::key(&chars[kept.at..end].iter().collect::<String>())
+                == wordhord_dict::key(&kept.word);
+        let sentence = if found {
+            let text = |r: &[char]| Inline::Text(r.iter().collect());
+            vec![
+                text(&chars[..kept.at]),
+                Inline::Emphasis(vec![text(&chars[kept.at..end])]),
+                text(&chars[end..]),
+            ]
+        } else {
+            vec![Inline::Text(kept.sentence.clone())]
+        };
+        blocks.push(block(BlockKind::Quote(vec![
+            para(sentence),
+            para(vec![
+                Inline::Text("— ".into()),
+                Inline::Emphasis(vec![Inline::Text(kept.book.clone())]),
+            ]),
+        ])));
+    }
+    if let Some((_, readings)) = tools.lexicon.look_up(w.head, w.lang) {
+        blocks.push(block(BlockKind::SceneBreak));
+        blocks.extend(lexicon::entry_blocks(w.head, &readings));
+    }
+    // Set as a book page is, below the header.
+    let mut profile = tools.profile.clone();
+    profile.margins.top = ui.header_bottom() * 25.4 / profile.ppi;
+    let set = wordhord_typeset::reference_pages(&blocks, "en", &profile, tools.fonts);
+    let pages = set.len().max(1);
+    let page = page.min(pages - 1);
+    let content = set.into_iter().nth(page).unwrap_or_default();
+    ui.titled(w.head, content, page, pages)
+}
+
 /// The library, until a book is chosen (its path) or Wordhord is closed.
 fn browse(
     screen: &mut dyn Platform,
@@ -232,9 +326,9 @@ fn browse(
     library: &Library,
     root: &Path,
     app: &Path,
-    ui: &Ui,
-    fonts: &Fonts,
+    tools: &Tools,
 ) -> Option<String> {
+    let fonts = tools.fonts;
     let (width, height) = screen.size();
     let read = |src: &str| {
         let path = src.strip_prefix(COVER)?;
@@ -250,7 +344,7 @@ fn browse(
     let mut flash = true;
     loop {
         let recent = library::recent(app);
-        let s = browser.screen(ui, library, &recent);
+        let s = browser.screen(tools, library, &recent);
         let started = Instant::now();
         let pixels = renderer.page(&s.page, width, height);
         screen.draw(&pixels, width, height, 0, 0, flash);
@@ -299,6 +393,7 @@ struct Tools<'a> {
     fonts: &'a Fonts,
     profile: &'a Profile,
     lexicon: &'a Lexicon,
+    hoard: &'a RefCell<Hoard>,
 }
 
 /// Where reading goes from a chapter.
@@ -434,16 +529,49 @@ fn read(
                     let shown_as = wordhord_dict::key(&word);
                     let looked = Instant::now();
                     let lang = book.language();
+                    // Found: the pack it was found in, and the first
+                    // reading's headword and part of speech, for the hoard.
+                    let mut found = None;
                     let blocks = match tools.lexicon.look_up(&word, &lang) {
-                        Some((_, readings)) => lexicon::entry_blocks(&shown_as, &readings),
+                        Some((pack, readings)) => {
+                            found = readings.first().map(|r| {
+                                (pack.to_string(), r.entry.word.clone(), r.entry.pos.clone())
+                            });
+                            lexicon::entry_blocks(&shown_as, &readings)
+                        }
                         None => lexicon::not_found(&shown_as, &lang, !tools.lexicon.is_empty()),
                     };
+                    let printed = word
+                        .trim_matches(|c: char| !c.is_alphanumeric())
+                        .to_string();
                     let word = shown_as;
+                    // Which word of its paragraph or stanza this is, counted
+                    // through the chapter as the pages split it.
+                    let block = words[parts[0]].block.clone();
+                    let nth = t.pages[..reader.page]
+                        .iter()
+                        .flat_map(|p| &p.words)
+                        .chain(&words[..parts[0]])
+                        .filter(|w| w.block == block && !w.continues)
+                        .count();
                     let (mut area, pages) =
                         wordhord_typeset::panel_pages(&blocks, &lang, tools.profile, fonts);
                     // Under the panel, the word would be hidden: the panel
                     // comes down from the top instead.
                     let above = boxes.iter().any(|b| b.y1 > area.y);
+                    if !above {
+                        // Up to the top of any line it would cut through,
+                        // so long as the word stays clear above it.
+                        let cut = words
+                            .iter()
+                            .filter(|w| w.y0 < area.y && w.y1 > area.y)
+                            .map(|w| w.y0)
+                            .fold(area.y, f32::min);
+                        if cut >= boxes.iter().map(|b| b.y1).fold(0.0, f32::max) {
+                            area.height += area.y - cut.floor();
+                            area.y = cut.floor();
+                        }
+                    }
                     if above {
                         area.y = 0.0;
                         // Down to the end of any line it would cut through,
@@ -464,9 +592,30 @@ fn read(
                         looked.elapsed()
                     );
                     let (w, h) = (area.width as u32, area.height as u32);
+                    let right = area.width - tools.profile.mm(tools.profile.margins.right);
                     let mut at = 0;
                     loop {
                         let mut pixels = render::panel(&mut chrome, &pages[at], w, h);
+                        // Hoard it, or say it's hoarded: at the top right.
+                        let kept = found.as_ref().and_then(|(pack, head, _)| {
+                            let hoard = tools.hoard.borrow();
+                            let k = hoard.find(head, pack, path, chapter, &block)?;
+                            Some(k.id.clone())
+                        });
+                        let label = found.as_ref().map(|_| {
+                            let text = if kept.is_some() {
+                                "in the hoard"
+                            } else {
+                                "hoard"
+                            };
+                            let (page, hit) =
+                                ui.label(text, kept.is_some(), right, tools.profile.mm(4.8));
+                            let over = chrome.page(&page, w, h);
+                            for (p, o) in pixels.iter_mut().zip(&over) {
+                                *p = (*p).min(*o);
+                            }
+                            hit
+                        });
                         if above {
                             // The rule goes on the panel's lower edge.
                             let rule = (w * 3) as usize;
@@ -481,6 +630,46 @@ fn read(
                         let next = loop {
                             match screen.next() {
                                 Gesture::Tap(x, y) if inside(y) => {
+                                    let (px, py) = (x as f32, y as f32 - area.y);
+                                    if label.is_some_and(|r| r.contains(px, py)) {
+                                        if let Some((pack, head, pos)) = &found {
+                                            let mut hoard = tools.hoard.borrow_mut();
+                                            let done = match &kept {
+                                                Some(id) => hoard.let_go(id),
+                                                None => {
+                                                    let (sentence, at) = hoard::sentence(
+                                                        &book.blocks(chapter),
+                                                        &block,
+                                                        nth,
+                                                        &printed,
+                                                    )
+                                                    .unwrap_or_else(|| (printed.clone(), 0));
+                                                    hoard.keep(Kept {
+                                                        id: String::new(),
+                                                        time: 0,
+                                                        word: printed.clone(),
+                                                        head: head.clone(),
+                                                        lang: pack.clone(),
+                                                        pos: pos.clone(),
+                                                        sentence,
+                                                        at,
+                                                        book: book.title(),
+                                                        path: path.to_string(),
+                                                        chapter,
+                                                        block: block.clone(),
+                                                    })
+                                                }
+                                            };
+                                            match done {
+                                                Ok(()) => eprintln!(
+                                                    "hoard: {head:?} {}",
+                                                    if kept.is_some() { "let go" } else { "kept" }
+                                                ),
+                                                Err(e) => eprintln!("hoard: {e}"),
+                                            }
+                                        }
+                                        break at;
+                                    }
                                     if x as f32 >= area.width / 2.0 && at + 1 < pages.len() {
                                         break at + 1;
                                     }

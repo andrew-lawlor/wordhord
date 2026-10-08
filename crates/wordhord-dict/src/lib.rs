@@ -211,8 +211,9 @@ impl Dictionary {
     }
 
     /// Every reading of a word as it appears in a text, the likeliest
-    /// first: names after common words when the word isn't capitalised, and
-    /// readings only of the past ("obsolete", "archaic") after living ones.
+    /// first: names after common words when the word isn't capitalised,
+    /// readings only of the past ("obsolete", "archaic") after living ones,
+    /// and symbols (ISO codes, chemical symbols) last of all.
     pub fn look_up(&self, word: &str) -> Vec<Reading> {
         let mut out = self.all_readings(word);
         let lowercase = word
@@ -227,7 +228,8 @@ impl Dictionary {
                         matches!(t.as_str(), "obsolete" | "archaic" | "dated" | "historical")
                     })
                 });
-            (name && lowercase) as u8 * 2 + past as u8
+            let symbol = r.entry.pos == "symbol";
+            symbol as u8 * 4 + (name && lowercase) as u8 * 2 + past as u8
         });
         out
     }
