@@ -505,13 +505,14 @@ fn runs(page: &Page, chosen: impl Fn(usize) -> bool) -> Vec<(usize, usize)> {
     out
 }
 
-/// A run of words as one box, from the first's letters to the last's.
+/// A run of words as one box, punctuation and all: a passage is kept with
+/// its stops, so it's drawn with them.
 fn run_box(page: &Page, (a, b): (usize, usize)) -> Rect {
     let (first, last) = (&page.words[a], &page.words[b]);
     Rect {
-        x0: first.letters.map_or(first.x0, |l| l.0),
+        x0: first.x0,
         y0: first.y0,
-        x1: last.letters.map_or(last.x1, |l| l.1),
+        x1: last.x1,
         y1: first.y1,
     }
 }
