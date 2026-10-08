@@ -531,12 +531,13 @@ fn entry_of(
     Some(lexicon::entry_blocks(head, &readings))
 }
 
-/// The sign that the pen is near and fingers are ignored: "pen" in small
-/// caps at the top right, in the margin. The pixels for where it goes,
-/// with it (`on`) or as the page is without it, and where.
+/// The sign that the pen is in hand and fingers are ignored: a manicule,
+/// the hand readers drew in their margins, pointing in at the page from
+/// the top right. The pixels for where it goes, with it (`on`) or as the
+/// page is without it, and where.
 fn pen_sign(ui: &Ui, chrome: &mut Renderer, shown: &[u8], width: u32, on: bool) -> (Vec<u8>, Rect) {
-    let right = width as f32 - ui.margin_px();
-    let (mark, hit) = ui.label("pen", false, right, ui.margin_px() * 0.75);
+    let right = width as f32 - ui.margin_px() * 0.6;
+    let (mark, hit) = ui.sign("☚", 22.0, right, ui.margin_px() * 1.15);
     let r = Rect {
         x0: hit.x0.max(0.0).round(),
         y0: hit.y0.max(0.0).round(),

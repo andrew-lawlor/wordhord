@@ -234,6 +234,23 @@ impl<'f> Ui<'f> {
         self.mm(9.0)
     }
 
+    /// A sign set large in Junicode, ending at `right` on `baseline`: what
+    /// it is, and where.
+    pub fn sign(&self, text: &str, pt: f32, right: f32, baseline: f32) -> (Page, Rect) {
+        let mut page = Page::default();
+        let t = Type::new(Face::Regular, self.pt(pt));
+        let w = self.width(text, t);
+        self.text(&mut page, text, t, right - w, baseline, w + 1.0);
+        let pad = self.mm(1.5);
+        let hit = Rect {
+            x0: right - w - pad,
+            y0: baseline - t.size - pad,
+            x1: right + pad,
+            y1: baseline + t.size * 0.3 + pad,
+        };
+        (page, hit)
+    }
+
     /// The margin the library's screens keep, in pixels.
     pub fn margin_px(&self) -> f32 {
         self.margin()

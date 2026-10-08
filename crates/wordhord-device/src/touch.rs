@@ -221,10 +221,14 @@ impl Gestures {
             return self.pen(e, panel);
         }
         // The pen near, or only just gone: this is the hand that holds it.
-        if self
-            .pen_near
-            .is_some_and(|t| t.elapsed().as_secs_f64() < PALM_SECONDS)
-        {
+        // On a page, for exactly as long as the sign says so.
+        let near = if self.told_near {
+            true
+        } else {
+            self.pen_near
+                .is_some_and(|t| t.elapsed().as_secs_f64() < PALM_SECONDS)
+        };
+        if near {
             self.down = None;
             self.start = None;
             self.landed = None;
@@ -367,6 +371,16 @@ impl Gestures {
         Some(held.saturating_sub(self.landed?.elapsed()))
     }
 
+    /// The pen gone, if it's been quiet long enough since it was told as
+    /// near: and from then, fingers count.
+    pub fn away(&mut self) -> Option<Gesture> {
+        if self.away_due().is_some_and(|d| d.is_zero()) {
+            self.told_near = false;
+            return Some(Gesture::PenAway);
+        }
+        None
+    }
+
     /// How long until the pen, gone quiet, counts as gone, if it's been
     /// told as near.
     pub fn away_due(&self) -> Option<std::time::Duration> {
@@ -381,9 +395,8 @@ impl Gestures {
     /// gone, if it's been quiet long enough; else a finger pressed, if it's
     /// been held still long enough.
     pub fn tick(&mut self) -> Option<Gesture> {
-        if self.away_due().is_some_and(|d| d.is_zero()) {
-            self.told_near = false;
-            return Some(Gesture::PenAway);
+        if let Some(g) = self.away() {
+            return Some(g);
         }
         if self.press_due()? > std::time::Duration::ZERO {
             return None;

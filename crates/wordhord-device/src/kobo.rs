@@ -277,6 +277,11 @@ fn next_gesture(
         })
         .collect();
     loop {
+        // The pen's time up before any finger is read: the sign comes down
+        // as fingers start to count.
+        if let Some(g) = gestures.away() {
+            return g;
+        }
         while let Some((k, e)) = pending.pop_front() {
             let gesture = if Some(k) == fingers {
                 gestures.touch(e, panel)
