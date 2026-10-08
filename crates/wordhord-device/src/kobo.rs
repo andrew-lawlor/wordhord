@@ -195,6 +195,22 @@ fn charging() -> bool {
             .is_ok_and(|v| v.trim() == "Charging")
 }
 
+/// A wireless interface, if Nickel left one up: Wi-Fi switched on before
+/// Wordhord opened stays so while Nickel is paused, and KOReader found that
+/// suspending with its driver loaded can crash the kernel. The loopback
+/// and the kernel's virtual interfaces don't count.
+fn radio() -> Option<String> {
+    std::fs::read_dir("/sys/class/net")
+        .ok()?
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .find(|name| {
+            !matches!(name.as_str(), "lo" | "sit0" | "tunl0")
+                && !name.starts_with("ifb")
+                && !name.starts_with("ip6")
+        })
+}
+
 /// The Kobo to sleep, as KOReader does it: subsystems flagged, a pause,
 /// the disks synced, the wakeup count matched, then suspend to memory. Back
 /// when it wakes; false if it wouldn't sleep.
@@ -257,11 +273,18 @@ fn wakeup_sources() {
     if let Ok(dir) = std::fs::read_dir("/sys/class/net") {
         for e in dir.flatten() {
             let state = std::fs::read_to_string(e.path().join("operstate")).unwrap_or_default();
-            eprintln!("sleep: net {} {}", e.file_name().to_string_lossy(), state.trim());
+            eprintln!(
+                "sleep: net {} {}",
+                e.file_name().to_string_lossy(),
+                state.trim()
+            );
         }
     }
     if let Ok(mods) = std::fs::read_to_string("/proc/modules") {
-        let names: Vec<&str> = mods.lines().filter_map(|l| l.split_whitespace().next()).collect();
+        let names: Vec<&str> = mods
+            .lines()
+            .filter_map(|l| l.split_whitespace().next())
+            .collect();
         eprintln!("sleep: modules {}", names.join(" "));
     }
     let Ok(dir) = std::fs::read_dir("/sys/class/wakeup") else {
@@ -335,16 +358,14 @@ impl Kobo {
             std::thread::sleep(std::time::Duration::from_millis(POWER_MS as u64));
         }
         let plugged = charging();
-        eprintln!(
-            "sleep: in {:?}{}",
-            started.elapsed(),
-            if plugged {
-                ", on the charger: not suspending"
-            } else {
-                ""
-            }
-        );
-        if plugged || !suspend(|| down(power)) {
+        let radio = radio();
+        let why = match (plugged, &radio) {
+            (true, _) => ", on the charger: not suspending".to_string(),
+            (_, Some(r)) => format!(", {r} is up: not suspending"),
+            _ => String::new(),
+        };
+        eprintln!("sleep: in {:?}{why}", started.elapsed());
+        if plugged || radio.is_some() || !suspend(|| down(power)) {
             // Awake on the sleep screen, until the button is pressed.
             while !down(power) {
                 std::thread::sleep(std::time::Duration::from_millis(POWER_MS as u64));
