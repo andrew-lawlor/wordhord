@@ -185,7 +185,7 @@ Everything that touches hardware sits behind one thin layer, so the rest of Word
 
 Three backends:
 
-**Kobo** (first). FBInk draws and refreshes. Input devices are read raw. NickelMenu starts a script that pauses Nickel with SIGSTOP and saves its screen; both come back on exit or crash. Wordhord closes itself after 30 minutes untouched, so Nickel's sleep and power handling return. Nickel holds the power button and the sleep cover, so Wordhord can't grab them; a power press while Wordhord runs reaches Nickel when it resumes. Wordhord needs its own way out and, later, its own sleep.
+**Kobo** (first). FBInk draws and refreshes. Input devices are read raw. NickelMenu starts a script that pauses Nickel with SIGSTOP and saves its screen; both come back on exit or crash. Wordhord closes itself after 30 minutes untouched, so Nickel's sleep and power handling return. Nickel holds the power button and the sleep cover, so Wordhord can't grab them; a power press while Wordhord runs reaches Nickel when it resumes. Wordhord closes from the foot of the library's home; it needs, later, its own sleep.
 
 **PineNote** (later). The same 10.3" 1404×1872 panel as the Elipsa 2E, so layouts and cached pages carry over unchanged. It runs ordinary Linux, so Wordhord is a normal program there: no host app to pause. The pen is a Wacom digitiser, a standard input device. The work is the display: the `rockchip_ebc` e-ink driver, which is still changing. Check its state before starting.
 

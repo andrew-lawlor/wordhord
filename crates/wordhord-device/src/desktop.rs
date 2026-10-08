@@ -284,7 +284,7 @@ impl Script {
                 ),
                 ["swipe", "left"] => Gesture::SwipeLeft,
                 ["swipe", "right"] => Gesture::SwipeRight,
-                // Held where there's no word: closing.
+                // Held in the corner, where there's no word.
                 ["hold"] => Gesture::Hold(0, 0),
                 ["hold", x, y] => Gesture::Hold(
                     x.parse().map_err(|_| format!("`{step}`"))?,

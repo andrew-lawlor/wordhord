@@ -83,9 +83,9 @@ impl<'t> Reader<'t> {
     pub fn act(&mut self, g: Gesture) -> Effect {
         match g {
             // Held on a word, anywhere (by the edges too, where a tap
-            // turns the page): look it up. Held anywhere else: close.
+            // turns the page): look it up.
             Gesture::Hold(x, y) => word_at(&self.t.pages[self.page], x as f32, y as f32)
-                .map_or(Effect::Close, Effect::Look),
+                .map_or(Effect::Nothing, Effect::Look),
             Gesture::Power => Effect::Close,
             Gesture::SwipeLeft => self.turn(1),
             Gesture::SwipeRight => self.turn(-1),
@@ -406,10 +406,11 @@ mod tests {
     }
 
     #[test]
-    fn hold_and_power_close() {
+    fn power_closes_and_a_hold_off_a_word_does_nothing() {
         let t = book();
         let mut r = Reader::new(&t, 0);
-        assert_eq!(r.act(Gesture::Hold(650, 1300)), Effect::Close);
+        // Held off a word, nothing: closing is from the library.
+        assert_eq!(r.act(Gesture::Hold(650, 1300)), Effect::Nothing);
         assert_eq!(r.act(Gesture::Power), Effect::Close);
     }
 }

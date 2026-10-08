@@ -2,8 +2,8 @@
 //!
 //! It opens the book read last, if it's still there, else the library.
 //! From a book, a tap at the top brings up a bar: back to the library, or
-//! to the contents. Holding a finger on a word looks it up; anywhere else,
-//! it closes Wordhord.
+//! to the contents. Holding a finger on a word looks it up. Wordhord
+//! closes from the foot of the library's home.
 
 use std::path::Path;
 use std::thread::JoinHandle;
@@ -40,11 +40,7 @@ pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), Str
             say(
                 screen,
                 &fonts_dir,
-                &[
-                    "Wordhord can't start.",
-                    &e,
-                    "Hold a finger down to go back.",
-                ],
+                &["Wordhord can't start.", &e, "Tap to go back."],
             );
             wait_to_close(screen);
             return Err(e);
@@ -264,7 +260,7 @@ fn browse(
         flash = false;
         loop {
             match screen.next() {
-                Gesture::Hold(..) | Gesture::Power => return None,
+                Gesture::Power => return None,
                 Gesture::SwipeLeft if browser.current().1 + 1 < s.pages => {
                     browser.turn(1, s.pages);
                     break;
@@ -492,9 +488,7 @@ fn read(
                                         break at - 1;
                                     }
                                 }
-                                Gesture::Hold(..) | Gesture::Power => {
-                                    break 'reading Step::Leave(Leave::Close)
-                                }
+                                Gesture::Power => break 'reading Step::Leave(Leave::Close),
                                 _ => break usize::MAX,
                             }
                         };
@@ -518,7 +512,7 @@ fn read(
                     screen.draw(&pixels, width, bar_h, 0, 0, false);
                     let action = match screen.next() {
                         Gesture::Tap(x, y) => bar.hit(x as f32, y as f32).cloned(),
-                        Gesture::Hold(..) | Gesture::Power => break Step::Leave(Leave::Close),
+                        Gesture::Power => break Step::Leave(Leave::Close),
                         _ => None,
                     };
                     match action {
@@ -612,7 +606,7 @@ fn contents(
         screen.draw(&pixels, width, height, 0, 0, true);
         loop {
             match screen.next() {
-                Gesture::Hold(..) | Gesture::Power => return Some(Err(Leave::Close)),
+                Gesture::Power => return Some(Err(Leave::Close)),
                 Gesture::SwipeLeft if page + 1 < s.pages => {
                     page += 1;
                     break;
@@ -679,7 +673,7 @@ fn draw(screen: &mut dyn Platform, renderer: &mut Renderer, page: &Page, flash: 
 }
 
 pub fn wait_to_close(screen: &mut dyn Platform) {
-    while !matches!(screen.next(), Gesture::Hold(..) | Gesture::Power) {}
+    while !matches!(screen.next(), Gesture::Tap(..) | Gesture::Power) {}
 }
 
 /// A few lines of text, centred on a white screen: for when there's no book
