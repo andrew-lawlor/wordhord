@@ -125,6 +125,8 @@ enum View {
     /// A word of the hoard, by its place in the list.
     Word(usize),
     Commonplace,
+    /// One book's passages, by its place in the commonplace book's index.
+    Passages(usize),
 }
 
 /// Where in the library the reader is: the views gone through, each with
@@ -146,6 +148,7 @@ impl Browser {
             Action::Hoard => self.stack.push((View::Hoard, 0)),
             Action::Word(k) => self.stack.push((View::Word(*k), 0)),
             Action::Commonplace => self.stack.push((View::Commonplace, 0)),
+            Action::Passages(k) => self.stack.push((View::Passages(*k), 0)),
             Action::Back => {
                 self.stack.pop();
             }
@@ -242,7 +245,36 @@ impl Browser {
                 ui.list("The hoard", &rows, page, true)
             }
             View::Word(k) => word_page(tools, k, page),
-            View::Commonplace => commonplace(tools, page),
+            View::Commonplace => {
+                let books = tools.marks.borrow().books();
+                // With one book, the index would only be in the way.
+                if books.len() == 1 {
+                    return passages(tools, 0, page, false);
+                }
+                let rows: Vec<Row> = books
+                    .iter()
+                    .enumerate()
+                    .map(|(k, (path, title, n))| Row {
+                        title: title.clone(),
+                        // As the shelves give a book: its author in small
+                        // caps under its title.
+                        detail: library
+                            .books
+                            .iter()
+                            .find(|b| &b.path == path)
+                            .map(|e| vec![Part::Caps(e.byline().0)])
+                            .unwrap_or_default(),
+                        cover: None,
+                        progress: None,
+                        count: Some(*n),
+                        mark: false,
+                        action: Action::Passages(k),
+                        depth: 0,
+                    })
+                    .collect();
+                ui.list("Commonplace book", &rows, page, true)
+            }
+            View::Passages(k) => passages(tools, k, page, true),
             View::Shelf(Shelf::All) => {
                 let rows: Vec<Row> = library.books.iter().map(row).collect();
                 ui.list(Shelf::All.name(), &rows, page, true)
@@ -528,33 +560,39 @@ fn nearest_word(page: &Page, x: f32, y: f32) -> Option<usize> {
         .map(|(k, _)| k)
 }
 
-/// The commonplace book: every passage underlined, set as quotations
-/// under their books' titles. A tap on one opens the book there.
-fn commonplace(tools: &Tools, page: usize) -> Screen {
+/// One book's passages in the commonplace book, by its place in the
+/// index: set as quotations, each with the part of the book it's in and the
+/// day it was underlined. A tap on one opens the book there. `indexed`:
+/// reached from the index, rather than straight from home.
+fn passages(tools: &Tools, k: usize, page: usize, indexed: bool) -> Screen {
     use wordhord_book::model::{Block, BlockKind, Inline};
     let ui = tools.ui;
     let marks = tools.marks.borrow();
+    let books = marks.books();
+    let Some((path, title, _)) = books.get(k) else {
+        return ui.list("Commonplace book", &[], 0, true);
+    };
     let all = marks.by_book();
     let mut blocks = Vec::new();
-    let mut last_book = "";
-    for (k, u) in all.iter().enumerate() {
-        if u.path != last_book {
-            last_book = &u.path;
-            if k > 0 {
-                blocks.push(block(BlockKind::SceneBreak));
-            }
-            blocks.push(block(BlockKind::Paragraph(vec![Inline::Emphasis(vec![
-                Inline::Text(u.book.clone()),
-            ])])));
-        }
-        let id = format!("passage-{k}");
+    for (n, u) in all.iter().enumerate().filter(|(_, u)| &u.path == path) {
+        let id = format!("passage-{n}");
         let with_id = |b: Block| Block {
             id: Some(id.clone()),
             ..b
         };
-        blocks.push(with_id(block(BlockKind::Quote(vec![with_id(block(
-            BlockKind::Paragraph(vec![Inline::Text(u.text.clone())]),
-        ))]))));
+        let day = crate::marks::day(u.time);
+        let whence = match &u.section {
+            Some(s) => format!("{s} · {day}"),
+            None => day,
+        };
+        blocks.push(with_id(block(BlockKind::Quote(vec![
+            with_id(block(BlockKind::Paragraph(vec![Inline::Text(
+                u.text.clone(),
+            )]))),
+            with_id(block(BlockKind::Paragraph(vec![Inline::Emphasis(vec![
+                Inline::Text(whence),
+            ])]))),
+        ]))));
     }
     let set = set_pages(tools, &blocks, tools.profile.height as f32);
     let pages = set.len().max(1);
@@ -563,14 +601,14 @@ fn commonplace(tools: &Tools, page: usize) -> Screen {
     // Each passage, wherever its words are on the page, is a place to tap.
     let mut hits: Vec<(Rect, Action)> = Vec::new();
     for w in &content.words {
-        let Some(k) = w
+        let Some(n) = w
             .block
             .strip_prefix("passage-")
             .and_then(|n| n.parse::<usize>().ok())
         else {
             continue;
         };
-        match hits.iter_mut().find(|(_, a)| *a == Action::Passage(k)) {
+        match hits.iter_mut().find(|(_, a)| *a == Action::Passage(n)) {
             Some((r, _)) => {
                 r.y0 = r.y0.min(w.y0);
                 r.y1 = r.y1.max(w.y1);
@@ -582,11 +620,16 @@ fn commonplace(tools: &Tools, page: usize) -> Screen {
                     x1: tools.profile.width as f32,
                     y1: w.y1,
                 },
-                Action::Passage(k),
+                Action::Passage(n),
             )),
         }
     }
-    let mut s = ui.titled("Commonplace book", content, page, pages);
+    let heading = if indexed {
+        title.as_str()
+    } else {
+        "Commonplace book"
+    };
+    let mut s = ui.titled(heading, content, page, pages);
     s.hits.extend(hits);
     s
 }
@@ -1091,6 +1134,13 @@ fn read(
                         line = w.y0;
                         text.push_str(&w.text);
                     }
+                    // The part of the book it's in: the last entry of the
+                    // contents at or before this chapter.
+                    let section = book
+                        .contents()
+                        .into_iter()
+                        .rfind(|c| c.2 <= chapter)
+                        .map(|c| c.0);
                     let done = tools.marks.borrow_mut().underline(Underline {
                         id: String::new(),
                         time: 0,
@@ -1100,6 +1150,7 @@ fn read(
                         start: numbered.anchors[s].clone(),
                         end: numbered.anchors[e].clone(),
                         text,
+                        section,
                     });
                     match done {
                         Ok(()) => eprintln!("underlined words {s} to {e}"),

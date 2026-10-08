@@ -32,6 +32,9 @@ pub struct Underline {
     pub start: Anchor,
     pub end: Anchor,
     pub text: String,
+    /// The part of the book it's in, as its contents name it: "Book I".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,6 +118,19 @@ impl Marks {
         out
     }
 
+    /// The books underlined in, each once, as `by_book` orders them: path,
+    /// title, and how many passages.
+    pub fn books(&self) -> Vec<(String, String, usize)> {
+        let mut out: Vec<(String, String, usize)> = Vec::new();
+        for u in self.by_book() {
+            match out.iter_mut().find(|b| b.0 == u.path) {
+                Some(b) => b.2 += 1,
+                None => out.push((u.path.clone(), u.book.clone(), 1)),
+            }
+        }
+        out
+    }
+
     pub fn count(&self) -> usize {
         self.underlines.len()
     }
@@ -128,6 +144,45 @@ impl Marks {
         self.underlines
             .iter()
             .filter(move |u| u.path == path && u.chapter == chapter)
+    }
+}
+
+/// A day, as a reader says it: "8 October", with the year if it isn't
+/// this one's.
+pub fn day(time: u64) -> String {
+    const MONTHS: [&str; 12] = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
+    // Days since 1970 to a civil date (Howard Hinnant's algorithm).
+    let civil = |t: u64| {
+        let z = (t / 86_400) as i64 + 719_468;
+        let era = z.div_euclid(146_097);
+        let doe = z - era * 146_097;
+        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        let y = yoe + era * 400 + i64::from(m <= 2);
+        (y, m as usize, d)
+    };
+    let (y, m, d) = civil(time);
+    let (this_year, _, _) = civil(now());
+    if y == this_year {
+        format!("{d} {}", MONTHS[m - 1])
+    } else {
+        format!("{d} {} {y}", MONTHS[m - 1])
     }
 }
 
@@ -197,6 +252,7 @@ mod tests {
                 word: 1,
             },
             text: "wordhord onleac".into(),
+            section: None,
         };
         m.underline(u.clone()).unwrap();
         m.underline(Underline {
@@ -210,5 +266,12 @@ mod tests {
         assert_eq!(again.in_chapter("b.epub", 2).count(), 0);
         assert_eq!(again.in_chapter("b.epub", 3).count(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn days_read_as_a_reader_says_them() {
+        // 8 October 2026, and 29 February 2024.
+        assert!(day(1_791_480_000).starts_with("8 October"));
+        assert_eq!(day(1_709_208_000), "29 February 2024");
     }
 }

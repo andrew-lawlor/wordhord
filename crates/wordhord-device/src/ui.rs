@@ -53,6 +53,8 @@ pub enum Action {
     /// The commonplace book: every underline; and one passage of it, by
     /// its place there, to open the book at.
     Commonplace,
+    /// A book in the commonplace book, by its place in the index.
+    Passages(usize),
     Passage(usize),
     /// Unlocking the hoard: begin, show the entry, grade it 1 to 4.
     Unlock,
