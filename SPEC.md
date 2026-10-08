@@ -33,7 +33,7 @@ A normal e-reader for stylus Kobos. Smaller and faster than KOReader. Built arou
 
 **Pen.** Write anywhere on the page. Ink is drawn as you write, with the fast waveform. Gestures in §6.
 
-**Highlights and notes.** Underline with the pen, or press and drag with a finger. Add a typed or a written note.
+**Highlights and notes.** A highlight is an underline: a fine rule under the words, as a pencil leaves in a printed book. Hold a word a second, it turns grey, drag over the passage and lift. A hold that doesn't move still looks the word up. Tap an underlined word and its panel offers *remove underline*. Underlines are anchored by paragraph and word, not page, so they keep to their words through any change of type, and keep their text in the log. Underline with the pen too, later. Add a written note with the pen, or a typed one.
 
 **Dictionary.** Tap a word. Its Wiktionary entry opens in the panel: dictionary form, the grammar of the form you tapped, senses, etymology. Works on inflected forms (§7).
 

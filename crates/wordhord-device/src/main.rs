@@ -22,6 +22,7 @@ mod kobo;
 mod lexicon;
 mod library;
 mod light;
+mod marks;
 mod platform;
 mod reader;
 mod settings;

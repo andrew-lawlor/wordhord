@@ -1,8 +1,10 @@
 //! Touches and keys, from raw input events to gestures.
 //!
 //! A finger that lifts close to where it landed is a tap. One that moved
-//! far sideways is a swipe; far up or down, a slide. One held down for over a second is a hold.
-//! The power button is a key.
+//! far sideways is a swipe; far up or down, a slide. One held still for a
+//! second is pressed: then, while it's down, its moves are drags, and it
+//! lifts as a release, or as a hold if it never moved. The power button
+//! is a key.
 
 /// One `struct input_event` as a 32-bit Kobo reads it: seconds and
 /// microseconds as 32-bit words, then type, code and value.
@@ -56,6 +58,12 @@ pub enum Gesture {
     /// A finger slid up or down: where across it was, and how far down it
     /// went (negative: up).
     Slide(i32, i32),
+    /// A finger held still a second, and still down, where it landed.
+    Press(i32, i32),
+    /// A pressed finger, moved to here.
+    Drag(i32, i32),
+    /// A pressed finger that moved, lifted here.
+    Release(i32, i32),
     Power,
 }
 
@@ -87,6 +95,10 @@ impl Panel {
     }
 }
 
+/// A pressed finger's moves are passed on once it has gone this far, in
+/// pixels, since the last.
+const DRAG_STEP: i32 = 10;
+
 /// Follows one finger from touch to lift.
 #[derive(Debug, Default)]
 pub struct Gestures {
@@ -94,6 +106,13 @@ pub struct Gestures {
     raw: (i32, i32),
     /// Where the finger landed, on screen, once its first position is in.
     start: Option<(i32, i32)>,
+    /// When it landed, by the clock here, to tell a press while it's down.
+    landed: Option<std::time::Instant>,
+    /// It has moved too far from where it landed to be pressed.
+    wandered: bool,
+    /// Pressed: and where its last drag was, if it has moved since.
+    pressed: Option<(i32, i32)>,
+    dragged: bool,
 }
 
 impl Gestures {
@@ -109,8 +128,24 @@ impl Gestures {
                 self.raw.1 = e.value;
                 self.down.get_or_insert(e.time);
             }
-            (EV_SYN, _) if self.down.is_some() && self.start.is_none() => {
-                self.start = Some(panel.place(self.raw.0, self.raw.1));
+            (EV_SYN, _) if self.down.is_some() => {
+                let at = panel.place(self.raw.0, self.raw.1);
+                let Some(start) = self.start else {
+                    self.start = Some(at);
+                    self.landed = Some(std::time::Instant::now());
+                    return None;
+                };
+                let far = panel.width as i32 / 40;
+                if (at.0 - start.0).abs().max((at.1 - start.1).abs()) > far {
+                    self.wandered = true;
+                }
+                if let Some(last) = self.pressed {
+                    if (at.0 - last.0).abs().max((at.1 - last.1).abs()) >= DRAG_STEP {
+                        self.pressed = Some(at);
+                        self.dragged = true;
+                        return Some(Gesture::Drag(at.0, at.1));
+                    }
+                }
             }
             (EV_ABS, ABS_MT_TRACKING_ID) if e.value >= 0 => {
                 self.down.get_or_insert(e.time);
@@ -122,6 +157,16 @@ impl Gestures {
                 let landed = self.down.take()?;
                 let end = panel.place(self.raw.0, self.raw.1);
                 let start = self.start.take().unwrap_or(end);
+                self.landed = None;
+                self.wandered = false;
+                let dragged = std::mem::take(&mut self.dragged);
+                if self.pressed.take().is_some() {
+                    return Some(if dragged {
+                        Gesture::Release(end.0, end.1)
+                    } else {
+                        Gesture::Hold(start.0, start.1)
+                    });
+                }
                 let (dx, dy) = (end.0 - start.0, end.1 - start.1);
                 // A swipe crosses an eighth of the screen, mostly sideways.
                 if dx.abs() >= panel.width as i32 / 8 && dx.abs() > 2 * dy.abs() {
@@ -142,6 +187,29 @@ impl Gestures {
             _ => {}
         }
         None
+    }
+}
+
+impl Gestures {
+    /// How long to wait for a finger that's down to become pressed, if it
+    /// still might.
+    pub fn press_due(&self) -> Option<std::time::Duration> {
+        if self.pressed.is_some() || self.wandered || self.start.is_none() {
+            return None;
+        }
+        let held = std::time::Duration::from_secs_f64(HOLD_SECONDS);
+        Some(held.saturating_sub(self.landed?.elapsed()))
+    }
+
+    /// Called when a finger has been down a while: pressed, if it's been
+    /// held still long enough.
+    pub fn tick(&mut self) -> Option<Gesture> {
+        if self.press_due()? > std::time::Duration::ZERO {
+            return None;
+        }
+        let start = self.start?;
+        self.pressed = Some(start);
+        Some(Gesture::Press(start.0, start.1))
     }
 }
 
@@ -233,6 +301,35 @@ mod tests {
         assert_eq!(
             touch(&mut g, (900, 700), (900, 700), 1.5),
             Some(Gesture::Hold(700, 971))
+        );
+    }
+
+    #[test]
+    fn a_pressed_finger_drags_and_releases() {
+        let mut g = Gestures::default();
+        let feed = |e: Event, g: &mut Gestures| g.touch(e, &ELIPSA);
+        feed(ev(0.0, EV_ABS, ABS_MT_TRACKING_ID, 1), &mut g);
+        feed(ev(0.0, EV_ABS, ABS_MT_POSITION_X, 900), &mut g);
+        feed(ev(0.0, EV_ABS, ABS_MT_POSITION_Y, 700), &mut g);
+        feed(ev(0.0, EV_SYN, 0, 0), &mut g);
+        assert!(g.press_due().is_some());
+        // As if a second had gone by.
+        g.landed = Some(std::time::Instant::now() - std::time::Duration::from_secs(2));
+        assert_eq!(g.tick(), Some(Gesture::Press(700, 971)));
+        assert_eq!(g.press_due(), None);
+        feed(ev(1.2, EV_ABS, ABS_MT_POSITION_Y, 900), &mut g);
+        assert_eq!(
+            feed(ev(1.2, EV_SYN, 0, 0), &mut g),
+            Some(Gesture::Drag(900, 971))
+        );
+        assert_eq!(
+            feed(ev(1.4, EV_ABS, ABS_MT_TRACKING_ID, -1), &mut g),
+            Some(Gesture::Release(900, 971))
+        );
+        // The next touch starts afresh.
+        assert_eq!(
+            touch(&mut g, (900, 100), (905, 102), 0.1),
+            Some(Gesture::Tap(100, 971))
         );
     }
 

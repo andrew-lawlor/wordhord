@@ -119,6 +119,7 @@ fn run(library: &Path, app: &Path, screen: &str) -> ExitCode {
         panel,
         inputs,
         gestures: Gestures::default(),
+        pending: std::collections::VecDeque::new(),
     };
     let result = app::run(&mut kobo, library, app);
     let Kobo { fd, inputs, .. } = kobo;
@@ -149,6 +150,9 @@ struct Kobo {
     panel: Panel,
     inputs: Vec<Input>,
     gestures: Gestures,
+    /// Events read but not yet followed, by input: a read can bring more
+    /// than one gesture's worth.
+    pending: std::collections::VecDeque<(usize, Event)>,
 }
 
 impl Platform for Kobo {
@@ -164,13 +168,24 @@ impl Platform for Kobo {
     }
 
     fn next(&mut self) -> Gesture {
-        next_gesture(&self.panel, &self.inputs, &mut self.gestures)
+        next_gesture(
+            &self.panel,
+            &self.inputs,
+            &mut self.gestures,
+            &mut self.pending,
+        )
     }
 }
 
-/// Blocks until a finger lifts or the power button is pressed. After too
-/// long untouched, it's as if the power button were.
-fn next_gesture(panel: &Panel, inputs: &[Input], gestures: &mut Gestures) -> Gesture {
+/// Blocks until a gesture: a finger lifts, is pressed or drags, or the
+/// power button is pressed. After too long untouched, it's as if the power
+/// button were.
+fn next_gesture(
+    panel: &Panel,
+    inputs: &[Input],
+    gestures: &mut Gestures,
+    pending: &mut std::collections::VecDeque<(usize, Event)>,
+) -> Gesture {
     // Fingers come from the touch screen; a pen's own device is ignored
     // for now. If the touch screen also takes a pen, it's still the one.
     let fingers = inputs
@@ -186,12 +201,38 @@ fn next_gesture(panel: &Panel, inputs: &[Input], gestures: &mut Gestures) -> Ges
         })
         .collect();
     loop {
+        while let Some((k, e)) = pending.pop_front() {
+            let gesture = if Some(k) == fingers {
+                gestures.touch(e, panel)
+            } else if inputs[k].types & (INPUT_TOUCHSCREEN | INPUT_TABLET) == 0 {
+                touch::key(e)
+            } else {
+                None
+            };
+            if let Some(g) = gesture {
+                return g;
+            }
+        }
+        // Every event followed, and a finger still down and still: pressed
+        // by now?
+        if let Some(g) = gestures.tick() {
+            return g;
+        }
         if polls.is_empty() {
             // Nothing to read from: nothing can close the reader.
             return Gesture::Power;
         }
-        let n = unsafe { libc::poll(polls.as_mut_ptr(), polls.len() as _, IDLE_MS) };
+        // A finger down and still: wake when it would be pressed.
+        let press = gestures.press_due();
+        let wait = press.map_or(IDLE_MS, |d| d.as_millis() as c_int + 1);
+        let n = unsafe { libc::poll(polls.as_mut_ptr(), polls.len() as _, wait) };
         if n == 0 {
+            if press.is_some() {
+                if let Some(g) = gestures.tick() {
+                    return g;
+                }
+                continue;
+            }
             eprintln!("untouched for {} minutes: closing", IDLE_MS / 60_000);
             return Gesture::Power;
         }
@@ -210,17 +251,7 @@ fn next_gesture(panel: &Panel, inputs: &[Input], gestures: &mut Gestures) -> Ges
                     break;
                 }
                 for chunk in buf[..got as usize].chunks_exact(EVENT_SIZE) {
-                    let e = Event::parse(chunk.try_into().expect("16 bytes"));
-                    let gesture = if Some(k) == fingers {
-                        gestures.touch(e, panel)
-                    } else if inputs[k].types & (INPUT_TOUCHSCREEN | INPUT_TABLET) == 0 {
-                        touch::key(e)
-                    } else {
-                        None
-                    };
-                    if let Some(g) = gesture {
-                        return g;
-                    }
+                    pending.push_back((k, Event::parse(chunk.try_into().expect("16 bytes"))));
                 }
             }
         }

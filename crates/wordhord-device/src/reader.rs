@@ -99,6 +99,8 @@ impl<'t> Reader<'t> {
                 warm: x as u32 > self.t.width / 2,
                 by: -dy * 1000 / self.t.height as i32,
             },
+            // Underlining is the app's: it draws as the finger moves.
+            Gesture::Press(..) | Gesture::Drag(..) | Gesture::Release(..) => Effect::Nothing,
             Gesture::SwipeLeft => self.turn(1),
             Gesture::SwipeRight => self.turn(-1),
             Gesture::Tap(x, y) => self.tap(x as f32, y as f32),
@@ -182,7 +184,7 @@ impl<'t> Reader<'t> {
 
 /// The word under a point, or the nearest on its line if the tap fell
 /// between two.
-fn word_at(page: &wordhord_typeset::page::Page, x: f32, y: f32) -> Option<usize> {
+pub fn word_at(page: &wordhord_typeset::page::Page, x: f32, y: f32) -> Option<usize> {
     let on_line = |w: &&wordhord_typeset::page::Word| (w.y0..=w.y1).contains(&y);
     page.words
         .iter()

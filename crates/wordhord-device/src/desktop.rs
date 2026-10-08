@@ -135,6 +135,10 @@ struct Desktop {
     screen: Vec<u8>,
     /// Where the button went down, on the device's screen, and when.
     down: Option<(Instant, (i32, i32))>,
+    /// Held still a second: pressed, and where it last dragged to; and
+    /// whether it has.
+    pressed: Option<(i32, i32)>,
+    dragged: bool,
 }
 
 impl Desktop {
@@ -152,6 +156,8 @@ impl Desktop {
             scale,
             screen: vec![255; (size.0 * size.1) as usize],
             down: None,
+            pressed: None,
+            dragged: false,
         })
     }
 
@@ -225,8 +231,32 @@ impl Platform for Desktop {
             let pressed = self.window.get_mouse_down(MouseButton::Left);
             match (pressed, self.down, at) {
                 (true, None, Some(at)) => self.down = Some((Instant::now(), at)),
+                (true, Some((when, from)), Some(at)) => match self.pressed {
+                    None => {
+                        let still = (at.0 - from.0).abs().max((at.1 - from.1).abs())
+                            <= self.size.0 as i32 / 40;
+                        if still && when.elapsed() >= Duration::from_secs(1) {
+                            self.pressed = Some(from);
+                            return Gesture::Press(from.0, from.1);
+                        }
+                    }
+                    Some(last) if (at.0 - last.0).abs().max((at.1 - last.1).abs()) >= 10 => {
+                        self.pressed = Some(at);
+                        self.dragged = true;
+                        return Gesture::Drag(at.0, at.1);
+                    }
+                    _ => {}
+                },
                 (false, Some((when, from)), Some(to)) => {
                     self.down = None;
+                    let dragged = std::mem::take(&mut self.dragged);
+                    if self.pressed.take().is_some() {
+                        return if dragged {
+                            Gesture::Release(to.0, to.1)
+                        } else {
+                            Gesture::Hold(from.0, from.1)
+                        };
+                    }
                     return gesture(from, to, when.elapsed(), self.size);
                 }
                 _ => {}
@@ -285,7 +315,7 @@ impl Script {
         let mut gestures = Vec::new();
         for step in script.split(',').map(str::trim).filter(|s| !s.is_empty()) {
             let words: Vec<&str> = step.split_whitespace().collect();
-            gestures.push(match words.as_slice() {
+            let g = match words.as_slice() {
                 ["tap", x, y] => Gesture::Tap(
                     x.parse().map_err(|_| format!("`{step}`"))?,
                     y.parse().map_err(|_| format!("`{step}`"))?,
@@ -299,16 +329,25 @@ impl Script {
                     y.parse().map_err(|_| format!("`{step}`"))?,
                 ),
                 ["power"] => Gesture::Power,
+                // Pressed at one place, dragged to another and let go.
+                ["drag", x0, y0, x1, y1] => {
+                    let n = |v: &str| v.parse::<i32>().map_err(|_| format!("`{step}`"));
+                    let (to_x, to_y) = (n(x1)?, n(y1)?);
+                    gestures.push(Gesture::Press(n(x0)?, n(y0)?));
+                    gestures.push(Gesture::Drag(to_x, to_y));
+                    Gesture::Release(to_x, to_y)
+                }
                 ["slide", x, dy] => Gesture::Slide(
                     x.parse().map_err(|_| format!("`{step}`"))?,
                     dy.parse().map_err(|_| format!("`{step}`"))?,
                 ),
                 _ => {
                     return Err(format!(
-                    "`{step}` isn't a gesture: tap X Y, swipe left, swipe right, hold [X Y], slide X DY, power"
+                    "`{step}` isn't a gesture: tap X Y, swipe left, swipe right, hold [X Y], slide X DY, drag X0 Y0 X1 Y1, power"
                 ))
                 }
-            });
+            };
+            gestures.push(g);
         }
         std::fs::create_dir_all(frames).map_err(|e| format!("{}: {e}", frames.display()))?;
         Ok(Script {

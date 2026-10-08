@@ -22,6 +22,7 @@ use crate::hoard::{self, Hoard, Kept};
 use crate::lexicon::{self, Lexicon};
 use crate::library::{self, Entry, Library};
 use crate::light::Light;
+use crate::marks::{Marks, Underline, Words};
 use crate::platform::Platform;
 use crate::reader::{Effect, Reader};
 use crate::settings::{self, Settings};
@@ -61,6 +62,7 @@ pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), Str
     let library = Library::scan(root, &index);
     let lexicon = Lexicon::open(&app.join("dictionaries"));
     let hoard = RefCell::new(Hoard::load(app));
+    let marks = RefCell::new(Marks::load(app));
     // On the desktop, a stand-in for /sys in the app folder, if made.
     let light = RefCell::new(if cfg!(target_arch = "arm") {
         Light::find(
@@ -86,6 +88,7 @@ pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), Str
         lexicon: &lexicon,
         hoard: &hoard,
         light: &light,
+        marks: &marks,
     };
     loop {
         if let Some(path) = open.take() {
@@ -422,6 +425,92 @@ fn entry_of(
     Some(lexicon::entry_blocks(head, &readings))
 }
 
+/// Underlines, drawn in: dark rules in the paper.
+fn rule(pixels: &mut [u8], width: u32, height: u32, rules: &[Rect]) {
+    for r in rules {
+        let (x0, x1) = (r.x0.max(0.0) as u32, (r.x1 as u32).min(width));
+        for y in r.y0.max(0.0) as u32..(r.y1 as u32).min(height) {
+            let row = (y * width) as usize;
+            for p in &mut pixels[row + x0 as usize..row + x1 as usize] {
+                *p = (*p).min(60);
+            }
+        }
+    }
+}
+
+/// Runs of words on a page that `chosen` picks, each within one line: the
+/// first and last of each, by their place on the page.
+fn runs(page: &Page, chosen: impl Fn(usize) -> bool) -> Vec<(usize, usize)> {
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    for (k, w) in page.words.iter().enumerate() {
+        if !chosen(k) {
+            continue;
+        }
+        match out.last_mut() {
+            Some((_, last)) if *last + 1 == k && (page.words[*last].y0 - w.y0).abs() < 1.0 => {
+                *last = k
+            }
+            _ => out.push((k, k)),
+        }
+    }
+    out
+}
+
+/// A run of words as one box, from the first's letters to the last's.
+fn run_box(page: &Page, (a, b): (usize, usize)) -> Rect {
+    let (first, last) = (&page.words[a], &page.words[b]);
+    Rect {
+        x0: first.letters.map_or(first.x0, |l| l.0),
+        y0: first.y0,
+        x1: last.letters.map_or(last.x1, |l| l.1),
+        y1: first.y1,
+    }
+}
+
+/// The underlines on a page, as rules under their words.
+fn underlines(
+    page: &Page,
+    numbers: &[usize],
+    spans: &[(usize, usize)],
+    fonts: &Fonts,
+) -> Vec<Rect> {
+    let (ascent, descent) = fonts.ascent_descent(1.0);
+    runs(page, |k| {
+        let n = numbers[k];
+        spans.iter().any(|&(s, e)| (s..=e).contains(&n))
+    })
+    .into_iter()
+    .map(|run| {
+        let b = run_box(page, run);
+        let baseline = b.y0 + (b.y1 - b.y0) * ascent / (ascent + descent);
+        // Under the letters, clear of most descenders' tails.
+        let y = (baseline + (b.y1 - baseline) * 0.45).round();
+        let thick = ((b.y1 - b.y0) * 0.035).round().max(2.0);
+        Rect {
+            y0: y,
+            y1: y + thick,
+            ..b
+        }
+    })
+    .collect()
+}
+
+/// The word nearest a point on a page: on the line nearest it, the word
+/// nearest along it. For a finger dragged between lines or past the end.
+fn nearest_word(page: &Page, x: f32, y: f32) -> Option<usize> {
+    let line = |w: &wordhord_typeset::page::Word| (w.y0 - y).max(y - w.y1).max(0.0);
+    let along = |w: &wordhord_typeset::page::Word| (w.x0 - x).max(x - w.x1).max(0.0);
+    page.words
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| {
+            line(a)
+                .total_cmp(&line(b))
+                .then(along(a).total_cmp(&along(b)))
+        })
+        .map(|(k, _)| k)
+}
+
 /// When a word graded so would come back, in words.
 fn days(n: u64) -> String {
     match n {
@@ -621,6 +710,7 @@ struct Tools<'a> {
     lexicon: &'a Lexicon,
     hoard: &'a RefCell<Hoard>,
     light: &'a RefCell<Option<Light>>,
+    marks: &'a RefCell<Marks>,
 }
 
 /// Where reading goes from a chapter.
@@ -683,13 +773,123 @@ fn read(
         book.remember(chapter, reader.page);
         library::opened(app, path, progress(reader.page));
         // The page as drawn, to put back where the panel or bar was.
-        let mut shown = draw(screen, &mut renderer, &t.pages[reader.page], flash);
+        // Each word of the chapter numbered, and the underlines' spans in
+        // those numbers.
+        let numbered = Words::of(&t);
+        let spans = || -> Vec<(usize, usize)> {
+            tools
+                .marks
+                .borrow()
+                .in_chapter(path, chapter)
+                .filter_map(|u| numbered.span(u))
+                .collect()
+        };
+        let rules =
+            |page: usize| underlines(&t.pages[page], &numbered.on_page[page], &spans(), fonts);
+        let mut shown = draw(
+            screen,
+            &mut renderer,
+            &t.pages[reader.page],
+            flash,
+            &rules(reader.page),
+        );
+        // A passage being chosen to underline: its first and last words,
+        // by their place on the page; and the rows last drawn marked.
+        let mut chosen: Option<(usize, usize)> = None;
+        let mut marked_rows: Option<(u32, u32)> = None;
         flash = false;
         ahead.reading(&book, chapter);
         // Where a light gauge is showing, to clear at the next touch.
         let mut gauge: Option<Rect> = None;
         let step = 'reading: loop {
             let gesture = screen.next();
+            let page_now = &t.pages[reader.page];
+            // Choosing a passage: pressed on a word, dragged, let go.
+            let mark = |chosen: (usize, usize)| -> Vec<Rect> {
+                let (a, b) = (chosen.0.min(chosen.1), chosen.0.max(chosen.1));
+                runs(page_now, |k| (a..=b).contains(&k))
+                    .into_iter()
+                    .map(|r| run_box(page_now, r))
+                    .collect()
+            };
+            match gesture {
+                Gesture::Press(x, y) => {
+                    chosen = crate::reader::word_at(page_now, x as f32, y as f32).map(|k| (k, k));
+                }
+                Gesture::Drag(x, y) => {
+                    if let (Some(c), Some(k)) = (chosen, nearest_word(page_now, x as f32, y as f32))
+                    {
+                        chosen = Some((c.0, k));
+                    }
+                }
+                _ => {}
+            }
+            if let (Gesture::Press(..) | Gesture::Drag(..), Some(c)) = (gesture, chosen) {
+                // The grey as a word looked up has, over the passage so far;
+                // drawn over the rows it covers now and covered before.
+                let boxes = mark(c);
+                let marked = highlight(&shown, width, height, &boxes);
+                let top = boxes
+                    .iter()
+                    .map(|b| b.y0.max(0.0) as u32)
+                    .min()
+                    .unwrap_or(0);
+                let bottom = boxes
+                    .iter()
+                    .map(|b| b.y1 as u32)
+                    .max()
+                    .unwrap_or(0)
+                    .min(height);
+                let (top, bottom) = match marked_rows {
+                    Some((t0, b0)) => (top.min(t0), bottom.max(b0)),
+                    None => (top, bottom),
+                };
+                marked_rows = Some((top, bottom));
+                if bottom > top {
+                    let rows = &marked[(top * width) as usize..(bottom * width) as usize];
+                    screen.draw(rows, width, bottom - top, 0, top, false);
+                }
+                continue;
+            }
+            if let Gesture::Release(..) = gesture {
+                marked_rows = None;
+                if let Some((a, b)) = chosen.take() {
+                    let numbers = &numbered.on_page[reader.page];
+                    let (s, e) = (numbers[a.min(b)], numbers[a.max(b)]);
+                    let mut text = String::new();
+                    for w in page_now.words.iter().skip(a.min(b)).take(a.abs_diff(b) + 1) {
+                        if !text.is_empty() && !w.continues {
+                            text.push(' ');
+                        }
+                        text.push_str(&w.text);
+                    }
+                    let done = tools.marks.borrow_mut().underline(Underline {
+                        id: String::new(),
+                        time: 0,
+                        book: book.title(),
+                        path: path.to_string(),
+                        chapter,
+                        start: numbered.anchors[s].clone(),
+                        end: numbered.anchors[e].clone(),
+                        text,
+                    });
+                    match done {
+                        Ok(()) => eprintln!("underlined words {s} to {e}"),
+                        Err(e) => eprintln!("underline: {e}"),
+                    }
+                }
+                shown = draw(
+                    screen,
+                    &mut renderer,
+                    &t.pages[reader.page],
+                    false,
+                    &rules(reader.page),
+                );
+                continue;
+            }
+            // Pressed but never moved: a hold, which looks the word up.
+            chosen = None;
+            marked_rows = None;
             let effect = reader.act(gesture);
             eprintln!("{gesture:?}: {effect:?}");
             if let Some(r) = gauge.take() {
@@ -734,7 +934,13 @@ fn read(
                 }
                 Effect::Chapter(_) => {}
                 Effect::Page { flash } => {
-                    shown = draw(screen, &mut renderer, &t.pages[reader.page], flash);
+                    shown = draw(
+                        screen,
+                        &mut renderer,
+                        &t.pages[reader.page],
+                        flash,
+                        &rules(reader.page),
+                    );
                     book.remember(chapter, reader.page);
                 }
                 Effect::Panel => {
@@ -863,6 +1069,18 @@ fn read(
                             .unwrap_or_else(|| (printed.clone(), 0))
                     };
                     let mut here: Option<(String, usize)> = None;
+                    // An underline the word is in, which the panel can take
+                    // away.
+                    let underlined: Option<String> = {
+                        let n = numbered.on_page[reader.page][k];
+                        tools
+                            .marks
+                            .borrow()
+                            .in_chapter(path, chapter)
+                            .find(|u| numbered.span(u).is_some_and(|(s, e)| (s..=e).contains(&n)))
+                            .map(|u| u.id.clone())
+                    };
+                    let mut removed = false;
                     let mut at = 0;
                     loop {
                         let mut pixels = render::panel(&mut chrome, &pages[at], w, h);
@@ -911,6 +1129,15 @@ fn read(
                                 }
                             }
                         }
+                        let remove = underlined.as_ref().map(|_| {
+                            let (mark, hit) =
+                                ui.label("remove underline", false, right, tools.profile.mm(4.8));
+                            let over = chrome.page(&mark, w_px, h);
+                            for (p, o) in pixels.iter_mut().zip(&over) {
+                                *p = (*p).min(*o);
+                            }
+                            hit
+                        });
                         if above {
                             // The rule goes on the panel's lower edge.
                             let rule = (w * 3) as usize;
@@ -926,6 +1153,18 @@ fn read(
                             match screen.next() {
                                 Gesture::Tap(x, y) if inside(y) => {
                                     let (px, py) = (x as f32, y as f32 - area.y);
+                                    if remove.is_some_and(|r| r.contains(px, py)) {
+                                        if let Some(id) = &underlined {
+                                            match tools.marks.borrow_mut().remove(id) {
+                                                Ok(()) => {
+                                                    removed = true;
+                                                    eprintln!("underline removed");
+                                                }
+                                                Err(e) => eprintln!("underline: {e}"),
+                                            }
+                                        }
+                                        break usize::MAX;
+                                    }
                                     if let Some(&(_, n)) =
                                         marks.iter().find(|(r, _)| r.contains(px, py))
                                     {
@@ -982,6 +1221,16 @@ fn read(
                         }
                         at = next;
                     }
+                    if removed {
+                        shown = draw(
+                            screen,
+                            &mut renderer,
+                            &t.pages[reader.page],
+                            false,
+                            &rules(reader.page),
+                        );
+                        continue;
+                    }
                     // The page as it was: no panel, no mark.
                     let top = (area.y as u32)
                         .min(boxes.iter().map(|b| b.y0 as u32).min().unwrap_or(height));
@@ -1013,7 +1262,13 @@ fn read(
                                 }
                                 Some(Err(leave)) => break Step::Leave(leave),
                                 None => {
-                                    shown = draw(screen, &mut renderer, &t.pages[reader.page], true)
+                                    shown = draw(
+                                        screen,
+                                        &mut renderer,
+                                        &t.pages[reader.page],
+                                        true,
+                                        &rules(reader.page),
+                                    )
                                 }
                             }
                         }
@@ -1022,7 +1277,13 @@ fn read(
                                 Some(Ok(k)) => break Step::Jump(k),
                                 Some(Err(leave)) => break Step::Leave(leave),
                                 None => {
-                                    shown = draw(screen, &mut renderer, &t.pages[reader.page], true)
+                                    shown = draw(
+                                        screen,
+                                        &mut renderer,
+                                        &t.pages[reader.page],
+                                        true,
+                                        &rules(reader.page),
+                                    )
                                 }
                             }
                         }
@@ -1241,10 +1502,17 @@ impl Drop for Ahead {
 }
 
 /// Draws a whole page; returns its pixels.
-fn draw(screen: &mut dyn Platform, renderer: &mut Renderer, page: &Page, flash: bool) -> Vec<u8> {
+fn draw(
+    screen: &mut dyn Platform,
+    renderer: &mut Renderer,
+    page: &Page,
+    flash: bool,
+    rules: &[Rect],
+) -> Vec<u8> {
     let (width, height) = screen.size();
     let started = Instant::now();
-    let pixels = renderer.page(page, width, height);
+    let mut pixels = renderer.page(page, width, height);
+    rule(&mut pixels, width, height, rules);
     let rendered = started.elapsed();
     screen.draw(&pixels, width, height, 0, 0, flash);
     eprintln!(
@@ -1286,7 +1554,7 @@ pub fn say(screen: &mut dyn Platform, fonts: &Path, lines: &[&str]) {
         y += size * 2.0;
     }
     let mut renderer = Renderer::new(&fonts);
-    draw(screen, &mut renderer, &page, true);
+    draw(screen, &mut renderer, &page, true, &[]);
 }
 
 fn message_font(dir: &Path) -> Option<Fonts> {
