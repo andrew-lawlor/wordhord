@@ -27,7 +27,7 @@ A normal e-reader for stylus Kobos. Smaller and faster than KOReader. Built arou
 
 ## 3. What it does
 
-**The library** is searched from *Search the library*, the first of the shelves on its home: titles, authors, series, tags and language by name, each word typed the start of one of theirs. Every search's line of text has *clear* at its end.
+**The library** is searched from *search*, at the right of the shelves' heading on its home: titles, authors, series, tags and language by name, each word typed the start of one of theirs. Every search's line of text has *clear* at its end.
 
 **Reading.** EPUB 2 and 3, reflowable, DRM-free. Type set on one screen, against a specimen passage with italics, figures and Old English and Norse letters: five faces, each marked with the old languages it can set; sizes by the printers' names (long primer to great primer); the measure in characters to a line; leading; justified or ragged. Kept in `wordhord.toml`. Footnotes open in a panel at the foot of the page. A table of contents. Search within the book, from the contents: typed on Wordhord's own keyboard, set like the rest, with a row of the old letters (þ ð æ ǫ ȝ ƿ œ ø) over the alphabet. Words match loosely (no case, no accents, ǫ as o) and the last may be the start of one. Results by chapter, the words in their context in italic; a tap opens the page with them marked grey. Page turns by swipe or edge tap. The light by a slide up or down: the left half for how bright, the right for how warm, with a hairline gauge at that edge until the next touch.
 

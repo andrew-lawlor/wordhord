@@ -935,25 +935,33 @@ impl<'f> Ui<'f> {
             y += ch + self.mm(2.0) + small.size * 2.0 + self.mm(12.0);
         }
         self.centred(&mut s.page, "the shelves", label, y);
+        // Search, at the right of the shelves' heading: what it searches.
+        let sw = self.width("search", label);
+        self.text(&mut s.page, "search", label, self.w - m - sw, y, sw + 1.0);
+        s.hits.push((
+            Rect {
+                x0: self.w - m - sw - self.mm(10.0),
+                y0: y - self.mm(8.0),
+                x1: self.w,
+                y1: y + self.mm(3.0),
+            },
+            Action::SearchLibrary,
+        ));
         y += self.mm(4.0);
         let name = Type::new(Face::Regular, self.pt(14.0));
         let figure = Type::new(Face::Regular, self.pt(12.0));
         // The shelves, and the hoard of words kept, once there is one.
-        // First, a way to search them, as a book's contents have.
-        let rows: Vec<_> = std::iter::once(("Search the library", None, Action::SearchLibrary))
-            .chain(
-                shelves
-                    .iter()
-                    .map(|(shelf, count)| (shelf.name(), Some(*count), Action::Shelf(*shelf)))
-                    .chain((hoard > 0).then_some(("The hoard", Some(hoard), Action::Hoard)))
-                    .chain((due > 0).then_some(("Unlock the hoard", Some(due), Action::Unlock)))
-                    .chain((underlines > 0).then_some((
-                        "Commonplace book",
-                        Some(underlines),
-                        Action::Commonplace,
-                    )))
-                    .filter(|r| r.1 > Some(0)),
-            )
+        let rows: Vec<_> = shelves
+            .iter()
+            .map(|(shelf, count)| (shelf.name(), Some(*count), Action::Shelf(*shelf)))
+            .chain((hoard > 0).then_some(("The hoard", Some(hoard), Action::Hoard)))
+            .chain((due > 0).then_some(("Unlock the hoard", Some(due), Action::Unlock)))
+            .chain((underlines > 0).then_some((
+                "Commonplace book",
+                Some(underlines),
+                Action::Commonplace,
+            )))
+            .filter(|r| r.1 > Some(0))
             .collect();
         // Close, at the foot, keeps its own ground: the rows close up to
         // stay clear of it.
