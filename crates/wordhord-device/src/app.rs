@@ -904,6 +904,11 @@ fn read(
         let mut marked_rows: Option<(u32, u32)> = None;
         // Pressed on an underline already there: its id, and the word.
         let mut editing: Option<(String, usize)> = None;
+        // The loupe: where it is, the point it was placed from, and the
+        // word the passage ended on when last drawn.
+        let mut loupe_at: Option<Rect> = None;
+        let mut loupe_from = (0.0, 0.0);
+        let mut drawn_end: Option<usize> = None;
         flash = false;
         ahead.reading(&book, chapter);
         // Where a light gauge is showing, to clear at the next touch.
@@ -948,6 +953,8 @@ fn read(
                     let k = crate::reader::word_at(page_now, x as f32, y as f32);
                     chosen = k.map(|k| (k, k));
                     editing = None;
+                    loupe_at = None;
+                    drawn_end = None;
                     // Pressed on an underline: the whole of it, to take
                     // away, rather than a new one.
                     if let Some(k) = k {
@@ -978,18 +985,45 @@ fn read(
                 _ => {}
             }
             if let (Gesture::Press(x, y) | Gesture::Drag(x, y), Some(c)) = (gesture, chosen) {
-                // The passage grey so far, and over it a loupe with the
-                // word under the finger, which the finger hides.
+                let (fx, fy) = (x as f32, y as f32);
+                let pressing = matches!(gesture, Gesture::Press(..));
+                let started = Instant::now();
+                // The loupe stays put unless the finger comes to it.
+                let reach = tools.profile.mm(4.0);
+                let near = loupe_at.is_some_and(|r: Rect| {
+                    fx > r.x0 - reach && fx < r.x1 + reach && fy > r.y0 - reach && fy < r.y1 + reach
+                });
+                // Nothing to draw until the passage ends on another word:
+                // e-ink can't keep up with every move.
+                if !pressing && drawn_end == Some(c.1) && !near {
+                    continue;
+                }
+                drawn_end = Some(c.1);
                 let mut boxes = mark(c);
                 let mut marked = highlight(&shown, width, height, &boxes);
-                let under = editing.as_ref().map_or(c.1, |e| e.1);
-                let word = &page_now.words[under].text;
-                let (lp, lr) = ui.loupe(word, x as f32, y as f32);
+                // An underline held is grey to its ends, past the finger:
+                // no loupe needed.
+                if editing.is_some() {
+                    marked_rows = Some(redraw_rows(screen, &marked, &boxes));
+                    continue;
+                }
+                if pressing || near {
+                    loupe_from = (fx, fy);
+                }
+                let (lp, lr) = ui.loupe(&page_now.words[c.1].text, loupe_from.0, loupe_from.1);
                 let (lw, lh) = ((lr.x1 - lr.x0) as u32, (lr.y1 - lr.y0) as u32);
                 let lens = chrome.page(&lp, lw, lh);
                 paste(&mut marked, width, height, &lens, &lr);
-                boxes.push(lr);
-                marked_rows = Some(redraw_rows(screen, &marked, &boxes));
+                // Where it was before, if it moved or narrowed, goes back.
+                if let Some(old) = loupe_at.filter(|o| *o != lr) {
+                    boxes.push(old);
+                }
+                let rows = redraw_rows(screen, &marked, &boxes);
+                // The loupe is black on white: the fast refresh will do.
+                screen.draw_fast(&lens, lw, lh, lr.x0 as u32, lr.y0 as u32);
+                marked_rows = Some((rows.0.min(lr.y0 as u32), rows.1.max(lr.y1 as u32)));
+                loupe_at = Some(lr);
+                eprintln!("{gesture:?}: loupe drawn in {:?}", started.elapsed());
                 continue;
             }
             let mut forced = None;

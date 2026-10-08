@@ -52,8 +52,10 @@ int wh_draw(int fd, const uint8_t* grey, uint32_t w, uint32_t h, uint32_t x, uin
 {
 	FBInkConfig c  = cfg;
 	c.ignore_alpha = true;
-	c.is_flashing  = flash != 0;
-	c.wfm_mode     = flash ? WFM_GC16 : WFM_AUTO;
+	// 1: a flash, clearing ghosts. 2: fast, in black and white only, for
+	// what follows a finger. 0: as the driver sees fit.
+	c.is_flashing  = flash == 1;
+	c.wfm_mode     = flash == 1 ? WFM_GC16 : flash == 2 ? WFM_DU : WFM_AUTO;
 	return fbink_print_raw_data(fd, grey, (int) w, (int) h, (size_t) w * h, (short int) x, (short int) y, &c);
 }
 

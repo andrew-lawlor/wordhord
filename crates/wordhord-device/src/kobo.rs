@@ -120,6 +120,7 @@ fn run(library: &Path, app: &Path, screen: &str) -> ExitCode {
         inputs,
         gestures: Gestures::default(),
         pending: std::collections::VecDeque::new(),
+        held: None,
     };
     let result = app::run(&mut kobo, library, app);
     let Kobo { fd, inputs, .. } = kobo;
@@ -153,6 +154,8 @@ struct Kobo {
     /// Events read but not yet followed, by input: a read can bring more
     /// than one gesture's worth.
     pending: std::collections::VecDeque<(usize, Event)>,
+    /// A gesture found while catching up with drags, to give next.
+    held: Option<Gesture>,
 }
 
 impl Platform for Kobo {
@@ -167,13 +170,73 @@ impl Platform for Kobo {
         }
     }
 
+    fn draw_fast(&mut self, grey: &[u8], w: u32, h: u32, x: u32, y: u32) {
+        let rc = unsafe { wh_draw(self.fd, grey.as_ptr(), w, h, x, y, 2) };
+        if rc < 0 {
+            eprintln!("drawing failed: {rc}");
+        }
+    }
+
     fn next(&mut self) -> Gesture {
-        next_gesture(
+        if let Some(g) = self.held.take() {
+            return g;
+        }
+        let mut g = next_gesture(
             &self.panel,
             &self.inputs,
             &mut self.gestures,
             &mut self.pending,
-        )
+        );
+        // A finger dragged on while the last drag was drawn: only where it
+        // is now matters. Anything else that comes is kept for next time.
+        while let Gesture::Drag(..) = g {
+            read_ready(&self.inputs, &mut self.pending);
+            let Some((k, e)) = self.pending.pop_front() else {
+                break;
+            };
+            let next = if Some(k) == fingers(&self.inputs) {
+                self.gestures.touch(e, &self.panel)
+            } else if self.inputs[k].types & (INPUT_TOUCHSCREEN | INPUT_TABLET) == 0 {
+                touch::key(e)
+            } else {
+                None
+            };
+            match next {
+                Some(d @ Gesture::Drag(..)) => g = d,
+                Some(other) => {
+                    self.held = Some(other);
+                    break;
+                }
+                None => {}
+            }
+        }
+        g
+    }
+}
+
+/// The input fingers come from: the touch screen. A pen's own device is
+/// ignored for now; if the touch screen also takes a pen, it's still the
+/// one.
+fn fingers(inputs: &[Input]) -> Option<usize> {
+    inputs
+        .iter()
+        .position(|i| i.types & INPUT_TOUCHSCREEN != 0 && i.types & INPUT_TABLET == 0)
+        .or_else(|| inputs.iter().position(|i| i.types & INPUT_TOUCHSCREEN != 0))
+}
+
+/// Whatever the inputs have ready now, without waiting, onto `pending`.
+fn read_ready(inputs: &[Input], pending: &mut std::collections::VecDeque<(usize, Event)>) {
+    for (k, i) in inputs.iter().enumerate() {
+        let mut buf = [0u8; EVENT_SIZE * 64];
+        loop {
+            let got = unsafe { libc::read(i.fd, buf.as_mut_ptr().cast(), buf.len()) };
+            if got <= 0 {
+                break;
+            }
+            for chunk in buf[..got as usize].chunks_exact(EVENT_SIZE) {
+                pending.push_back((k, Event::parse(chunk.try_into().expect("16 bytes"))));
+            }
+        }
     }
 }
 
@@ -186,12 +249,7 @@ fn next_gesture(
     gestures: &mut Gestures,
     pending: &mut std::collections::VecDeque<(usize, Event)>,
 ) -> Gesture {
-    // Fingers come from the touch screen; a pen's own device is ignored
-    // for now. If the touch screen also takes a pen, it's still the one.
-    let fingers = inputs
-        .iter()
-        .position(|i| i.types & INPUT_TOUCHSCREEN != 0 && i.types & INPUT_TABLET == 0)
-        .or_else(|| inputs.iter().position(|i| i.types & INPUT_TOUCHSCREEN != 0));
+    let fingers = fingers(inputs);
     let mut polls: Vec<libc::pollfd> = inputs
         .iter()
         .map(|i| libc::pollfd {

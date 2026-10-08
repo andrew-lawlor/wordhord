@@ -12,6 +12,12 @@ pub trait Platform {
     /// A flash clears the ghosts of earlier pages; it's slower.
     fn draw(&mut self, grey: &[u8], w: u32, h: u32, x: u32, y: u32, flash: bool);
 
+    /// As `draw`, as fast as the screen can, in black and white only: for
+    /// what follows a finger.
+    fn draw_fast(&mut self, grey: &[u8], w: u32, h: u32, x: u32, y: u32) {
+        self.draw(grey, w, h, x, y, false);
+    }
+
     /// Waits for the next gesture.
     fn next(&mut self) -> Gesture;
 }
