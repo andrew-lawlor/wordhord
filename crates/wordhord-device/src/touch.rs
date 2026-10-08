@@ -170,6 +170,9 @@ pub enum Tool {
 
 /// Fingers are ignored for this long after the pen was near the screen.
 const PALM_SECONDS: f64 = 1.0;
+/// The sign that the pen is near stays this much longer: e-ink is slow to
+/// show it gone, and a finger shouldn't find itself ignored once it has.
+const SIGN_STAYS: f64 = 0.25;
 
 impl Gestures {
     /// Feeds an event from the touch screen; returns a gesture when a
@@ -221,14 +224,10 @@ impl Gestures {
             return self.pen(e, panel);
         }
         // The pen near, or only just gone: this is the hand that holds it.
-        // On a page, for exactly as long as the sign says so.
-        let near = if self.told_near {
-            true
-        } else {
-            self.pen_near
-                .is_some_and(|t| t.elapsed().as_secs_f64() < PALM_SECONDS)
-        };
-        if near {
+        if self
+            .pen_near
+            .is_some_and(|t| t.elapsed().as_secs_f64() < PALM_SECONDS)
+        {
             self.down = None;
             self.start = None;
             self.landed = None;
@@ -387,8 +386,8 @@ impl Gestures {
         if !self.told_near {
             return None;
         }
-        let palm = std::time::Duration::from_secs_f64(PALM_SECONDS);
-        Some(palm.saturating_sub(self.pen_near?.elapsed()))
+        let sign = std::time::Duration::from_secs_f64(PALM_SECONDS + SIGN_STAYS);
+        Some(sign.saturating_sub(self.pen_near?.elapsed()))
     }
 
     /// Called when time has passed with nothing from the screen: the pen
