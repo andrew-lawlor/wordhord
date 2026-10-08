@@ -6,7 +6,8 @@
 //! closes from the foot of the library's home.
 
 use std::path::Path;
-use std::thread::JoinHandle;
+use std::sync::mpsc::{channel, Sender};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
 use wordhord_typeset::fonts::{Face, FontFile, Fonts};
@@ -326,22 +327,14 @@ fn read(
     );
     let (mut chapter, mut page) = book.position();
     let mut flash = true;
-    // The chapter being laid out ahead, on another thread.
-    let mut ahead: Option<(usize, JoinHandle<()>)> = None;
+    // Chapters laid out ahead, on another thread.
+    let ahead = Ahead::start(&book);
     // A renderer for the bar and the contents, in the app's own fonts.
     let mut chrome = Renderer::new(fonts);
     loop {
-        // If this chapter is still being laid out, wait for it rather than
+        // If this chapter is being laid out ahead, wait for it rather than
         // do the work twice.
-        if let Some((k, handle)) = ahead.take() {
-            if k == chapter && !handle.is_finished() {
-                let waited = Instant::now();
-                let _ = handle.join();
-                eprintln!("waited {:?} for chapter {k}", waited.elapsed());
-            } else if !handle.is_finished() {
-                ahead = Some((k, handle));
-            }
-        }
+        ahead.wait_for(chapter);
         let t = book.chapter(chapter)?;
         if (t.width, t.height) != (width, height) {
             return Err(format!(
@@ -362,9 +355,7 @@ fn read(
         // The page as drawn, to put back where the panel or bar was.
         let mut shown = draw(screen, &mut renderer, &t.pages[reader.page], flash);
         flash = false;
-        if ahead.is_none() {
-            ahead = Some((chapter + 1, lay_out_ahead(&book, chapter)));
-        }
+        ahead.reading(&book, chapter);
         let step = 'reading: loop {
             let gesture = screen.next();
             let effect = reader.act(gesture);
@@ -626,36 +617,112 @@ fn contents(
     }
 }
 
-/// On another thread, readies the images on the rest of chapter `now`,
-/// then lays out the next chapter and readies its images too, so they're
-/// waiting in the cache when the reader gets there. The thread opens its
-/// own copy of the book and runs at a lower priority than the reader.
-fn lay_out_ahead(book: &Book, now: usize) -> JoinHandle<()> {
-    let (path, app) = (book.path.clone(), book.app.clone());
-    let next = now + 1;
-    let wanted = next < book.chapters() && !book.is_cached(next);
-    std::thread::spawn(move || {
-        // On Linux, nice applies to the calling thread alone.
-        unsafe {
-            libc::nice(10);
-        }
-        let started = Instant::now();
-        let Ok(b) = Book::open(&path, &app) else {
-            return;
-        };
-        if let Ok(t) = b.chapter(now) {
-            b.prepare_pictures(&t);
-        }
-        if wanted {
-            match b.chapter(next) {
-                Ok(t) => {
-                    b.prepare_pictures(&t);
-                    eprintln!("ahead: chapter {next} ready in {:?}", started.elapsed());
-                }
-                Err(e) => eprintln!("ahead: chapter {next}: {e}"),
+/// Lays out chapters ahead of the reader, on a thread of its own at a
+/// lower priority, with its own copy of the book, opened once. Told the
+/// chapter being read, it lays out the next chapter, then readies the
+/// images of both, so they're waiting in the cache when the reader gets
+/// there.
+struct Ahead {
+    chapters: Option<Sender<usize>>,
+    /// The chapter being laid out now, if any.
+    busy: Arc<(Mutex<Option<usize>>, Condvar)>,
+}
+
+impl Ahead {
+    fn start(book: &Book) -> Ahead {
+        let (path, app) = (book.path.clone(), book.app.clone());
+        let (tx, rx) = channel::<usize>();
+        let busy = Arc::new((Mutex::new(None), Condvar::new()));
+        let shared = Arc::clone(&busy);
+        std::thread::spawn(move || {
+            // On Linux, nice applies to the calling thread alone.
+            unsafe {
+                libc::nice(10);
             }
+            let mut book: Option<Book> = None;
+            while let Ok(mut now) = rx.recv() {
+                // Only the latest chapter matters.
+                while let Ok(later) = rx.try_recv() {
+                    now = later;
+                }
+                if book.is_none() {
+                    book = Book::open(&path, &app).ok();
+                }
+                if let Some(b) = &book {
+                    let started = Instant::now();
+                    let next = now + 1;
+                    if next < b.chapters() && !b.is_cached(next) {
+                        match b.chapter(next) {
+                            Ok(t) => {
+                                eprintln!(
+                                    "ahead: chapter {next} laid out in {:?}",
+                                    started.elapsed()
+                                );
+                                // Done with the layout: the reader needn't
+                                // wait for the images.
+                                free(&shared);
+                                b.prepare_pictures(&t);
+                            }
+                            Err(e) => eprintln!("ahead: chapter {next}: {e}"),
+                        }
+                    }
+                    free(&shared);
+                    if let Ok(t) = b.chapter(now) {
+                        b.prepare_pictures(&t);
+                    }
+                }
+                free(&shared);
+            }
+        });
+        Ahead {
+            chapters: Some(tx),
+            busy,
         }
-    })
+    }
+
+    /// The reader is on chapter `k` of `book`. The next chapter is marked
+    /// as being laid out before the thread hears of it, so a quick turn to
+    /// it waits rather than lays it out a second time.
+    fn reading(&self, book: &Book, k: usize) {
+        let Some(tx) = &self.chapters else { return };
+        let next = k + 1;
+        if next < book.chapters() && !book.is_cached(next) {
+            *self.busy.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(next);
+        }
+        let _ = tx.send(k);
+    }
+
+    /// Waits while chapter `k` is being laid out.
+    fn wait_for(&self, k: usize) {
+        let (lock, done) = &*self.busy;
+        let mut busy = lock.lock().unwrap_or_else(|e| e.into_inner());
+        if *busy != Some(k) {
+            return;
+        }
+        let waited = Instant::now();
+        // Not forever, should the thread have stopped.
+        let limit = std::time::Duration::from_secs(10);
+        while *busy == Some(k) && waited.elapsed() < limit {
+            busy = done
+                .wait_timeout(busy, limit - waited.elapsed())
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
+        eprintln!("waited {:?} for chapter {k}", waited.elapsed());
+    }
+}
+
+/// Marks nothing as being laid out, and wakes the reader if it's waiting.
+fn free(busy: &(Mutex<Option<usize>>, Condvar)) {
+    *busy.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    busy.1.notify_all();
+}
+
+impl Drop for Ahead {
+    /// The thread ends once it's done with what it's doing.
+    fn drop(&mut self) {
+        self.chapters.take();
+    }
 }
 
 /// Draws a whole page; returns its pixels.

@@ -61,8 +61,7 @@ impl Book {
         let profile = Profile::load(&profile_path)?;
         let fonts = Fonts::load(&profile.dir, &profile.fonts)?;
         let epub = Epub::open(path)?;
-        let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let book = hex(&Sha256::digest(&bytes))[..16].to_string();
+        let book = book_hash(path, app)?;
         let mut settings = Sha256::new();
         settings.update(std::fs::read(&profile_path).unwrap_or_default());
         settings.update(LAYOUT);
@@ -75,7 +74,7 @@ impl Book {
             .map(|s| s.path.clone())
             .collect();
         let lang = epub.meta.language.clone().unwrap_or_else(|| "en".into());
-        eprintln!("{name}: opened and hashed in {:?}", started.elapsed());
+        eprintln!("{name}: opened in {:?}", started.elapsed());
         Ok(Book {
             name,
             path: path.to_path_buf(),
@@ -283,4 +282,42 @@ impl Book {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The first 16 hex digits of the book file's SHA-256: the name of its
+/// cache. Hashing a large book takes a while on the Kobo, so the hash is
+/// kept in `cache/hashes.json` with the file's size and time, and used
+/// again while those stay the same.
+fn book_hash(path: &Path, app: &Path) -> Result<String, String> {
+    use std::collections::BTreeMap;
+    use std::time::UNIX_EPOCH;
+    let meta = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let time = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs());
+    let stamp = format!("{} {time}", meta.len());
+    let known = app.join("cache").join("hashes.json");
+    let mut hashes: BTreeMap<String, (String, String)> = std::fs::read(&known)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default();
+    let name = path.to_string_lossy().into_owned();
+    if let Some((s, hash)) = hashes.get(&name) {
+        if *s == stamp {
+            return Ok(hash.clone());
+        }
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let hash = hex(&Sha256::digest(&bytes))[..16].to_string();
+    hashes.insert(name, (stamp, hash.clone()));
+    // Kept if it can be, but a book opens without it.
+    if let Ok(json) = serde_json::to_vec(&hashes) {
+        let part = known.with_extension("json.part");
+        let _ = std::fs::create_dir_all(app.join("cache"))
+            .and_then(|_| std::fs::write(&part, json))
+            .and_then(|_| std::fs::rename(&part, &known));
+    }
+    Ok(hash)
 }
