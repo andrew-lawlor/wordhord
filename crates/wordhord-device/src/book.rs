@@ -40,6 +40,9 @@ enum Source {
         profile: Box<Profile>,
         /// The documents that make up the reading order.
         chapters: Vec<String>,
+        /// How much of the book each is, for saying how far through:
+        /// its size, or nothing for what comes before the text.
+        weights: Vec<f32>,
         lang: String,
         /// Where this layout's pages are cached.
         pages: PathBuf,
@@ -70,12 +73,13 @@ impl Book {
         settings.update(chosen.key());
         let key = hex(&settings.finalize())[..12].to_string();
         let dir = app.join("cache").join(&book);
-        let chapters = epub
+        let chapters: Vec<String> = epub
             .spine
             .iter()
             .filter(|s| s.linear)
             .map(|s| s.path.clone())
             .collect();
+        let weights = weights(&epub, &chapters);
         let lang = epub.meta.language.clone().unwrap_or_else(|| "en".into());
         eprintln!("{name}: opened in {:?}", started.elapsed());
         Ok(Book {
@@ -87,6 +91,7 @@ impl Book {
                 epub: Box::new(epub),
                 profile: Box::new(profile),
                 chapters,
+                weights,
                 lang,
                 pages: dir.join("pages").join(key),
             },
@@ -132,6 +137,23 @@ impl Book {
         })
     }
 
+    /// How far through the book a reader is, from 0 to 1, at `share` of
+    /// the way through chapter `k`. The cover, title page and the rest
+    /// before the text count for nothing; each chapter after counts by its
+    /// size.
+    pub fn progress(&self, k: usize, share: f32) -> f32 {
+        let Source::Epub { weights, .. } = &self.source else {
+            return share;
+        };
+        let total: f32 = weights.iter().sum();
+        if total <= 0.0 {
+            return (k as f32 + share) / weights.len().max(1) as f32;
+        }
+        let before: f32 = weights.iter().take(k).sum();
+        let here = weights.get(k).copied().unwrap_or(0.0);
+        ((before + here * share) / total).clamp(0.0, 1.0)
+    }
+
     pub fn chapters(&self) -> usize {
         match &self.source {
             Source::Compiled(_) => 1,
@@ -160,6 +182,7 @@ impl Book {
                 chapters,
                 lang,
                 pages,
+                ..
             } => (epub, profile, chapters, lang, pages),
         };
         let path = chapters.get(k).ok_or_else(|| format!("no chapter {k}"))?;
@@ -292,6 +315,60 @@ impl Book {
         let _ = std::fs::create_dir_all(&self.dir);
         let _ = std::fs::write(self.dir.join("position"), format!("{chapter} {page}\n"));
     }
+}
+
+/// What a document before the text is often called, in its file name or
+/// its line in the contents.
+const FRONT: [&str; 14] = [
+    "cover",
+    "title",
+    "copyright",
+    "contents",
+    "toc",
+    "dedication",
+    "epigraph",
+    "imprint",
+    "praise",
+    "also by",
+    "alsoby",
+    "frontmatter",
+    "front matter",
+    "front-matter",
+];
+
+/// Each chapter's weight for progress: its size, with everything before
+/// the text weighed at nothing. The text starts where the book says, or
+/// else at the first document that isn't named like front matter.
+fn weights(epub: &Epub, chapters: &[String]) -> Vec<f32> {
+    let label = |path: &str| {
+        epub.toc
+            .iter()
+            .find(|t| t.target.split('#').next() == Some(path))
+            .map(|t| t.label.to_lowercase())
+            .unwrap_or_default()
+    };
+    let front = |path: &str| {
+        let name = path.rsplit('/').next().unwrap_or(path).to_lowercase();
+        let label = label(path);
+        FRONT.iter().any(|w| name.contains(w) || label.contains(w))
+    };
+    let start = epub
+        .body
+        .as_ref()
+        .and_then(|b| chapters.iter().position(|c| c == b))
+        .or_else(|| chapters.iter().position(|c| !front(c)))
+        .unwrap_or(0);
+    chapters
+        .iter()
+        .enumerate()
+        .map(|(k, c)| {
+            if k < start {
+                0.0
+            } else {
+                epub.size(c).unwrap_or(1) as f32
+            }
+        })
+        .collect()
 }
 
 fn hex(bytes: &[u8]) -> String {

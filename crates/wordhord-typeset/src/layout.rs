@@ -2023,6 +2023,28 @@ fn greedy(items: &[Item], measure: f32) -> (Vec<usize>, Vec<f32>) {
     (breaks, ratios)
 }
 
+/// Where the letters of a shaped word start and end, from its glyphs:
+/// the punctuation around them left out. `text` is what was shaped, so
+/// each glyph's cluster points into it.
+fn letters(frags: &[Frag], text: &str) -> Option<(f32, f32)> {
+    let mut span: Option<(f32, f32)> = None;
+    for f in frags {
+        for (k, g) in f.glyphs.iter().enumerate() {
+            let letter = text
+                .get(g.cluster as usize..)
+                .and_then(|t| t.chars().next())
+                .is_some_and(char::is_alphanumeric);
+            if !letter {
+                continue;
+            }
+            let end = f.glyphs.get(k + 1).map_or(f.width, |n| n.x);
+            let (a, b) = (f.x + g.x, f.x + end);
+            span = Some(span.map_or((a, b), |(x0, x1)| (x0.min(a), x1.max(b))));
+        }
+    }
+    span
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2083,26 +2105,4 @@ mod tests {
         lines.push(line(false, false));
         assert_eq!(plan(&lines, 0.0, 0.0, 55.0), [4]);
     }
-}
-
-/// Where the letters of a shaped word start and end, from its glyphs:
-/// the punctuation around them left out. `text` is what was shaped, so
-/// each glyph's cluster points into it.
-fn letters(frags: &[Frag], text: &str) -> Option<(f32, f32)> {
-    let mut span: Option<(f32, f32)> = None;
-    for f in frags {
-        for (k, g) in f.glyphs.iter().enumerate() {
-            let letter = text
-                .get(g.cluster as usize..)
-                .and_then(|t| t.chars().next())
-                .is_some_and(char::is_alphanumeric);
-            if !letter {
-                continue;
-            }
-            let end = f.glyphs.get(k + 1).map_or(f.width, |n| n.x);
-            let (a, b) = (f.x + g.x, f.x + end);
-            span = Some(span.map_or((a, b), |(x0, x1)| (x0.min(a), x1.max(b))));
-        }
-    }
-    span
 }

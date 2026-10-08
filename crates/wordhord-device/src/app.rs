@@ -665,9 +665,8 @@ fn read(
             page = page_with(&t, word);
         }
         let mut reader = Reader::new(&t, page);
-        let chapters = book.chapters() as f32;
         let progress =
-            |page: usize| (chapter as f32 + (page + 1) as f32 / t.pages.len() as f32) / chapters;
+            |page: usize| book.progress(chapter, (page + 1) as f32 / t.pages.len() as f32);
         book.remember(chapter, reader.page);
         library::opened(app, path, progress(reader.page));
         // The page as drawn, to put back where the panel or bar was.

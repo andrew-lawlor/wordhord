@@ -16,6 +16,10 @@ pub struct Epub {
     /// Documents in reading order.
     pub spine: Vec<SpineItem>,
     pub toc: Vec<TocEntry>,
+    /// Where the text proper begins, past the cover, title page and the
+    /// rest, as the book marks it: EPUB 3's `bodymatter` landmark, or EPUB
+    /// 2's guide reference of type `text`. An archive path, no fragment.
+    pub body: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -150,6 +154,7 @@ impl Epub {
             manifest: Vec::new(),
             spine: Vec::new(),
             toc: Vec::new(),
+            body: None,
         };
         let container = epub.text("META-INF/container.xml")?;
         let doc = xml::parse(&container).map_err(|e| format!("container.xml: {e}"))?;
@@ -161,7 +166,51 @@ impl Epub {
             .to_string();
         epub.read_package(&opf_path)?;
         epub.toc = epub.read_toc(&opf_path).unwrap_or_default();
+        epub.body = epub.read_body(&opf_path);
         Ok(epub)
+    }
+
+    /// A file's size in the archive, unpacked: for weighing chapters.
+    pub fn size(&self, path: &str) -> Option<u64> {
+        self.zip.borrow_mut().by_name(path).ok().map(|e| e.size())
+    }
+
+    fn read_body(&self, opf_path: &str) -> Option<String> {
+        let strip = |t: String| t.split('#').next().unwrap_or_default().to_string();
+        // EPUB 3: the nav document's landmarks.
+        if let Some(nav) = self
+            .manifest
+            .iter()
+            .find(|i| i.properties.iter().any(|p| p == "nav"))
+        {
+            let text = self.text(&nav.path).ok()?;
+            let doc = xml::parse(&text).ok()?;
+            let body = doc
+                .descendants()
+                .filter(|n| n.has_tag_name("a"))
+                .find(|n| {
+                    n.attributes().any(|a| {
+                        a.name() == "type"
+                            && a.value().split_whitespace().any(|t| t == "bodymatter")
+                    })
+                })
+                .and_then(|n| n.attribute("href"));
+            if let Some(href) = body {
+                return Some(strip(resolve(&nav.path, href)));
+            }
+        }
+        // EPUB 2: the guide.
+        let opf = self.text(opf_path).ok()?;
+        let doc = xml::parse(&opf).ok()?;
+        let href = doc
+            .descendants()
+            .filter(|n| n.has_tag_name("reference"))
+            .find(|n| {
+                n.attribute("type")
+                    .is_some_and(|t| t.eq_ignore_ascii_case("text"))
+            })
+            .and_then(|n| n.attribute("href"))?;
+        Some(strip(resolve(opf_path, href)))
     }
 
     /// A file in the archive, as bytes.
