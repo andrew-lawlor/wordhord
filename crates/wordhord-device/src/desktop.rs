@@ -308,11 +308,16 @@ struct Script {
     gestures: std::vec::IntoIter<Gesture>,
     frames: PathBuf,
     drawn: usize,
+    /// The pen's points for each stroke step, in order, and those of the
+    /// step just given.
+    strokes: std::collections::VecDeque<Vec<(i32, i32, u16)>>,
+    ink: Vec<(i32, i32, u16)>,
 }
 
 impl Script {
     fn new(size: (u32, u32), script: &str, frames: &Path) -> Result<Script, String> {
         let mut gestures = Vec::new();
+        let mut strokes = std::collections::VecDeque::new();
         for step in script.split(',').map(str::trim).filter(|s| !s.is_empty()) {
             let words: Vec<&str> = step.split_whitespace().collect();
             let g = match words.as_slice() {
@@ -333,6 +338,33 @@ impl Script {
                     x.parse().map_err(|_| format!("`{step}`"))?,
                     y.parse().map_err(|_| format!("`{step}`"))?,
                 ),
+                // The pen drawn through points: a stroke, given a few
+                // points at a time as the Kobo does.
+                ["ink", rest @ ..] if rest.len() >= 4 && rest.len() % 2 == 0 => {
+                    let n = |v: &str| v.parse::<i32>().map_err(|_| format!("`{step}`"));
+                    let mut corners = Vec::new();
+                    for pair in rest.chunks(2) {
+                        corners.push((n(pair[0])?, n(pair[1])?));
+                    }
+                    let mut points = Vec::new();
+                    for w in corners.windows(2) {
+                        let ((ax, ay), (bx, by)) = (w[0], w[1]);
+                        let steps = ((bx - ax).abs().max((by - ay).abs()) / 4).max(1);
+                        for k in 0..steps {
+                            points.push((ax + (bx - ax) * k / steps, ay + (by - ay) * k / steps, 2000));
+                        }
+                    }
+                    let last = *corners.last().expect("two corners");
+                    points.push((last.0, last.1, 2000));
+                    for chunk in points.chunks(6) {
+                        let (x, y, _) = chunk[chunk.len() - 1];
+                        gestures.push(Gesture::Ink(x, y));
+                        strokes.push_back(chunk.to_vec());
+                    }
+                    // The lift brings no points of its own.
+                    strokes.push_back(Vec::new());
+                    Gesture::InkUp(last.0, last.1)
+                }
                 // Pressed at one place, dragged to another and let go.
                 ["drag", x0, y0, x1, y1] => {
                     let n = |v: &str| v.parse::<i32>().map_err(|_| format!("`{step}`"));
@@ -360,6 +392,8 @@ impl Script {
             gestures: gestures.into_iter(),
             frames: frames.to_path_buf(),
             drawn: 0,
+            strokes,
+            ink: Vec::new(),
         })
     }
 }
@@ -380,8 +414,16 @@ impl Platform for Script {
         }
     }
 
+    fn take_ink(&mut self) -> Vec<(i32, i32, u16)> {
+        std::mem::take(&mut self.ink)
+    }
+
     fn next(&mut self) -> Gesture {
-        self.gestures.next().unwrap_or(Gesture::Power)
+        let g = self.gestures.next().unwrap_or(Gesture::Power);
+        if let Gesture::Ink(..) | Gesture::InkUp(..) = g {
+            self.ink = self.strokes.pop_front().unwrap_or_default();
+        }
+        g
     }
 }
 

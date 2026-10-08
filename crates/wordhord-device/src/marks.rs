@@ -1,4 +1,4 @@
-//! Marks made in books: underlines, so far. A log, `notes.jsonl` in the app
+//! Marks made in books: underlines, and the pen's ink. A log, `notes.jsonl` in the app
 //! folder, one record a line: a passage underlined, or an underline
 //! removed. Never edited, only added to, as the hoard is.
 //!
@@ -37,10 +37,31 @@ pub struct Underline {
     pub section: Option<String>,
 }
 
+/// A stroke of the pen. Its points are measured from the top left of the
+/// word it's anchored to, in that word's line heights, with the pen's
+/// width: so it moves with the word, and grows with the type. A stroke in
+/// a margin keeps its height from the word, but its place across is a
+/// share of the margin's width, so a change of type can't push it off the
+/// page.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Ink {
+    pub id: String,
+    pub time: u64,
+    pub book: String,
+    pub path: String,
+    pub chapter: usize,
+    pub anchor: Anchor,
+    /// "left" or "right", for a stroke in a margin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub margin: Option<String>,
+    pub points: Vec<[f32; 3]>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 enum Record {
     Underline(Box<Underline>),
+    Ink(Box<Ink>),
     Remove { id: String, time: u64 },
 }
 
@@ -48,21 +69,32 @@ pub struct Marks {
     path: PathBuf,
     /// Underlines not removed, oldest first.
     underlines: Vec<Underline>,
+    /// Strokes of the pen not removed, oldest first.
+    inks: Vec<Ink>,
 }
 
 impl Marks {
     pub fn load(app: &Path) -> Marks {
         let path = app.join("notes.jsonl");
         let mut underlines: Vec<Underline> = Vec::new();
+        let mut inks: Vec<Ink> = Vec::new();
         for line in std::fs::read_to_string(&path).unwrap_or_default().lines() {
             // A line cut short by a crash is skipped, not fatal.
             match serde_json::from_str::<Record>(line) {
                 Ok(Record::Underline(u)) => underlines.push(*u),
-                Ok(Record::Remove { id, .. }) => underlines.retain(|u| u.id != id),
+                Ok(Record::Ink(i)) => inks.push(*i),
+                Ok(Record::Remove { id, .. }) => {
+                    underlines.retain(|u| u.id != id);
+                    inks.retain(|i| i.id != id);
+                }
                 Err(_) => {}
             }
         }
-        Marks { path, underlines }
+        Marks {
+            path,
+            underlines,
+            inks,
+        }
     }
 
     fn append(&self, record: &Record) -> Result<(), String> {
@@ -76,24 +108,35 @@ impl Marks {
     }
 
     pub fn underline(&mut self, mut u: Underline) -> Result<(), String> {
-        let time = now();
-        u.time = time;
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.subsec_nanos());
-        u.id = format!("{time:x}-{nanos:x}");
+        (u.time, u.id) = stamp();
         self.append(&Record::Underline(Box::new(u.clone())))?;
         self.underlines.push(u);
         Ok(())
     }
 
+    pub fn ink(&mut self, mut i: Ink) -> Result<(), String> {
+        (i.time, i.id) = stamp();
+        self.append(&Record::Ink(Box::new(i.clone())))?;
+        self.inks.push(i);
+        Ok(())
+    }
+
+    /// An underline or a stroke taken away.
     pub fn remove(&mut self, id: &str) -> Result<(), String> {
         self.append(&Record::Remove {
             id: id.to_string(),
             time: now(),
         })?;
         self.underlines.retain(|u| u.id != id);
+        self.inks.retain(|i| i.id != id);
         Ok(())
+    }
+
+    /// The strokes in a chapter of a book.
+    pub fn ink_in<'a>(&'a self, path: &'a str, chapter: usize) -> impl Iterator<Item = &'a Ink> {
+        self.inks
+            .iter()
+            .filter(move |i| i.path == path && i.chapter == chapter)
     }
 
     /// Every underline, for the commonplace book: by book, the book
@@ -145,6 +188,15 @@ impl Marks {
             .iter()
             .filter(move |u| u.path == path && u.chapter == chapter)
     }
+}
+
+/// The time now, and an id made from it.
+fn stamp() -> (u64, String) {
+    let time = now();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos());
+    (time, format!("{time:x}-{nanos:x}"))
 }
 
 /// A day, as a reader says it: "8 October", with the year if it isn't

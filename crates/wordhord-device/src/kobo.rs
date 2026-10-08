@@ -177,6 +177,14 @@ impl Platform for Kobo {
         }
     }
 
+    fn ink(&mut self, on: bool) {
+        self.gestures.ink = on;
+    }
+
+    fn take_ink(&mut self) -> Vec<(i32, i32, u16)> {
+        std::mem::take(&mut self.gestures.points)
+    }
+
     fn next(&mut self) -> Gesture {
         if let Some(g) = self.held.take() {
             return g;
@@ -189,7 +197,7 @@ impl Platform for Kobo {
         );
         // A finger dragged on while the last drag was drawn: only where it
         // is now matters. Anything else that comes is kept for next time.
-        while let Gesture::Drag(..) = g {
+        while let Gesture::Drag(..) | Gesture::Ink(..) = g {
             read_ready(&self.inputs, &mut self.pending);
             let Some((k, e)) = self.pending.pop_front() else {
                 break;
@@ -202,7 +210,8 @@ impl Platform for Kobo {
                 None
             };
             match next {
-                Some(d @ Gesture::Drag(..)) => g = d,
+                // The latest place; ink keeps every point meanwhile.
+                Some(d @ (Gesture::Drag(..) | Gesture::Ink(..))) if same(&d, &g) => g = d,
                 Some(other) => {
                     self.held = Some(other);
                     break;
@@ -212,6 +221,11 @@ impl Platform for Kobo {
         }
         g
     }
+}
+
+/// Whether two gestures are of a kind: two drags, or two points of ink.
+fn same(a: &Gesture, b: &Gesture) -> bool {
+    std::mem::discriminant(a) == std::mem::discriminant(b)
 }
 
 /// The input fingers come from: the touch screen. A pen's own device is
@@ -234,7 +248,9 @@ fn read_ready(inputs: &[Input], pending: &mut std::collections::VecDeque<(usize,
                 break;
             }
             for chunk in buf[..got as usize].chunks_exact(EVENT_SIZE) {
-                pending.push_back((k, Event::parse(chunk.try_into().expect("16 bytes"))));
+                let e = Event::parse(chunk.try_into().expect("16 bytes"));
+                probe(k, &e);
+                pending.push_back((k, e));
             }
         }
     }
@@ -309,9 +325,44 @@ fn next_gesture(
                     break;
                 }
                 for chunk in buf[..got as usize].chunks_exact(EVENT_SIZE) {
-                    pending.push_back((k, Event::parse(chunk.try_into().expect("16 bytes"))));
+                    let e = Event::parse(chunk.try_into().expect("16 bytes"));
+                    probe(k, &e);
+                    pending.push_back((k, e));
                 }
             }
         }
+    }
+}
+
+/// For finding out how the pen's buttons and other end report
+/// themselves: keys, and changes of tool and of contact, to `input.log`
+/// beside the reader. Temporary.
+fn probe(k: usize, e: &Event) {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+    static WRITTEN: AtomicUsize = AtomicUsize::new(0);
+    static LAST: [AtomicI32; 3] = [AtomicI32::new(-9), AtomicI32::new(-9), AtomicI32::new(-9)];
+    const EV_KEY: u16 = 1;
+    const EV_ABS: u16 = 3;
+    let watched = match (e.kind, e.code) {
+        (EV_KEY, _) => true,
+        (EV_ABS, 0x37) => LAST[0].swap(e.value, Ordering::Relaxed) != e.value,
+        (EV_ABS, 0x3b) => LAST[1].swap(e.value, Ordering::Relaxed) != e.value,
+        (EV_ABS, 0x39) => (LAST[2].swap(e.value, Ordering::Relaxed) != e.value),
+        _ => false,
+    };
+    if !watched || WRITTEN.fetch_add(1, Ordering::Relaxed) > 20_000 {
+        return;
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/mnt/onboard/.adds/wordhord/input.log")
+    {
+        let _ = writeln!(
+            f,
+            "{:.3} in{k} type {} code {:#x} value {}",
+            e.time, e.kind, e.code, e.value
+        );
     }
 }

@@ -86,7 +86,7 @@ The Kobo Stylus 2 has a tip, a button and an eraser end. Wordhord reads the pen'
 
 Hold the button while writing: always ink, never a gesture. The eraser end: erase.
 
-**Ink belongs to the text, not the page.** Each stroke is anchored to the words nearest it, with its offset from them. Change the font size and a note in the margin moves with its paragraph. Ink across the text, like an underline, stays with its words. Ink that can't be anchored, on a blank page or an image, keeps its place for that layout.
+**Ink belongs to the text, not the page.** Each stroke is anchored to the words nearest it, with its offset from them. Change the font size and a note in the margin moves with its paragraph. Ink across the text, like an underline, stays with its words. Ink that can't be anchored, on a blank page or an image, keeps its place for that layout. A stroke is measured from its word in that word's line heights, so it grows with the type; one in a margin starts at the same share of the margin's width and keeps its shape from there. The pen writes only on a book's pages: a pen that doesn't move is a tap, and elsewhere a stroke is a finger's.
 
 **Strokes are data.** Raw points with pressure and time, as recorded, in the log (§9). A stroke can be redrawn exactly, replayed, sent to a handwriting model or turned into SVG. Kollate already transcribes handwriting locally. It reads Wordhord's ink the same way.
 

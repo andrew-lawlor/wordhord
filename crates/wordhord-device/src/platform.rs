@@ -18,6 +18,16 @@ pub trait Platform {
         self.draw(grey, w, h, x, y, false);
     }
 
+    /// Whether a pen that moves writes, from here on: in a book it does;
+    /// elsewhere it's a finger.
+    fn ink(&mut self, _on: bool) {}
+
+    /// The pen's points since last asked: screen position and pressure,
+    /// 0 to 4095.
+    fn take_ink(&mut self) -> Vec<(i32, i32, u16)> {
+        Vec::new()
+    }
+
     /// Waits for the next gesture.
     fn next(&mut self) -> Gesture;
 }

@@ -22,7 +22,7 @@ use crate::hoard::{self, Hoard, Kept};
 use crate::lexicon::{self, Lexicon};
 use crate::library::{self, Entry, Library};
 use crate::light::Light;
-use crate::marks::{Anchor, Marks, Underline, Words};
+use crate::marks::{Anchor, Ink, Marks, Underline, Words};
 use crate::platform::Platform;
 use crate::reader::{Effect, Reader};
 use crate::settings::{self, Settings};
@@ -529,6 +529,142 @@ fn entry_of(
         readings.retain(|r| r.entry.word == head);
     }
     Some(lexicon::entry_blocks(head, &readings))
+}
+
+/// What's drawn over a page of a book: underlines, as rules; and strokes
+/// of the pen, each a run of points with the pen's radius there.
+#[derive(Default)]
+struct Decor {
+    rules: Vec<Rect>,
+    strokes: Vec<Vec<(f32, f32, f32)>>,
+}
+
+/// The pen's radius in pixels at a pressure, 0 to 4095: a fine line,
+/// fuller as it's pressed.
+fn pen_radius(pressure: u16) -> f32 {
+    1.2 + 1.8 * (pressure as f32 / 4095.0).powf(0.8)
+}
+
+/// A stroke inked into a screen's pixels: discs along it, close enough to
+/// join. Where it went, if anywhere.
+fn ink_into(
+    pixels: &mut [u8],
+    width: u32,
+    height: u32,
+    stroke: &[(f32, f32, f32)],
+) -> Option<Rect> {
+    let mut bounds: Option<Rect> = None;
+    let mut disc = |x: f32, y: f32, r: f32| {
+        let (x0, x1) = (
+            (x - r).floor().max(0.0) as u32,
+            ((x + r).ceil() as u32).min(width),
+        );
+        let (y0, y1) = (
+            (y - r).floor().max(0.0) as u32,
+            ((y + r).ceil() as u32).min(height),
+        );
+        for py in y0..y1 {
+            for px in x0..x1 {
+                let (dx, dy) = (px as f32 + 0.5 - x, py as f32 + 0.5 - y);
+                if dx * dx + dy * dy <= r * r {
+                    pixels[(py * width + px) as usize] = 0;
+                }
+            }
+        }
+        let b = bounds.get_or_insert(Rect {
+            x0: x0 as f32,
+            y0: y0 as f32,
+            x1: x1 as f32,
+            y1: y1 as f32,
+        });
+        b.x0 = b.x0.min(x0 as f32);
+        b.y0 = b.y0.min(y0 as f32);
+        b.x1 = b.x1.max(x1 as f32);
+        b.y1 = b.y1.max(y1 as f32);
+    };
+    if let [(x, y, r)] = stroke {
+        disc(*x, *y, *r);
+    }
+    for pair in stroke.windows(2) {
+        let ((ax, ay, ar), (bx, by, br)) = (pair[0], pair[1]);
+        let steps = ((bx - ax).hypot(by - ay) / 0.7).ceil().max(1.0) as usize;
+        for k in 0..=steps {
+            let f = k as f32 / steps as f32;
+            disc(ax + (bx - ax) * f, ay + (by - ay) * f, ar + (br - ar) * f);
+        }
+    }
+    bounds.filter(|b| b.x1 > b.x0 && b.y1 > b.y0)
+}
+
+/// A page's margins, as where each starts across and how wide it is: the
+/// left, from the page's edge to the text; the right, from the text to the
+/// page's edge. The text is as wide as its words reach.
+fn text_edges(page: &Page, width: u32) -> ((f32, f32), (f32, f32)) {
+    let x0 = page.words.iter().map(|w| w.x0).fold(f32::MAX, f32::min);
+    let x1 = page.words.iter().map(|w| w.x1).fold(0.0, f32::max);
+    let (x0, x1) = if x0 < x1 {
+        (x0, x1)
+    } else {
+        (0.0, width as f32)
+    };
+    ((0.0, x0.max(1.0)), (x1, (width as f32 - x1).max(1.0)))
+}
+
+/// The strokes of a page, placed from the words they're anchored to.
+fn strokes(
+    page: &Page,
+    numbered: &Words,
+    k: usize,
+    marks: &Marks,
+    path: &str,
+    chapter: usize,
+    page_width: u32,
+) -> Vec<Vec<(f32, f32, f32)>> {
+    let numbers = &numbered.on_page[k];
+    marks
+        .ink_in(path, chapter)
+        .filter_map(|ink| {
+            let n = numbered.anchors.iter().position(|a| *a == ink.anchor)?;
+            let w = &page.words[numbers.iter().position(|&m| m == n)?];
+            let lh = w.y1 - w.y0;
+            let (left, right) = text_edges(page, page_width);
+            let start = ink.points.first().map_or(0.0, |p| p[0]);
+            let first = match ink.margin.as_deref() {
+                Some("right") => Some(right.0 + start * right.1),
+                Some("left") => Some(left.0 + start * left.1),
+                _ => None,
+            };
+            let mut points: Vec<(f32, f32, f32)> = ink
+                .points
+                .iter()
+                .enumerate()
+                .map(|(k, [u, v, r])| {
+                    let x = match first {
+                        Some(f) if k == 0 => f,
+                        Some(f) => f + u * lh,
+                        None => w.x0 + u * lh,
+                    };
+                    (x, w.y0 + v * lh, r * lh)
+                })
+                .collect();
+            // A margin's stroke kept on the page.
+            if first.is_some() {
+                let lo = points.iter().map(|p| p.0 - p.2).fold(f32::MAX, f32::min);
+                let hi = points.iter().map(|p| p.0 + p.2).fold(0.0, f32::max);
+                let shift = if hi > page_width as f32 {
+                    page_width as f32 - hi
+                } else if lo < 0.0 {
+                    -lo
+                } else {
+                    0.0
+                };
+                for p in &mut points {
+                    p.0 += shift;
+                }
+            }
+            Some(points)
+        })
+        .collect()
 }
 
 /// Underlines, drawn in: dark rules in the paper.
@@ -1065,8 +1201,19 @@ fn read(
                 .filter_map(|u| numbered.span(u))
                 .collect()
         };
-        let rules =
-            |page: usize| underlines(&t.pages[page], &numbered.on_page[page], &spans(), fonts);
+        // What's drawn over a page: its underlines and its strokes of ink.
+        let rules = |page: usize| Decor {
+            rules: underlines(&t.pages[page], &numbered.on_page[page], &spans(), fonts),
+            strokes: strokes(
+                &t.pages[page],
+                &numbered,
+                page,
+                &tools.marks.borrow(),
+                path,
+                chapter,
+                width,
+            ),
+        };
         let mut shown = draw(
             screen,
             &mut renderer,
@@ -1106,6 +1253,8 @@ fn read(
         let mut marked_rows: Option<(u32, u32)> = None;
         // Pressed on an underline already there: its id, and the word.
         let mut editing: Option<(String, usize)> = None;
+        // The stroke the pen is drawing: its points, with the pen's radius.
+        let mut stroke: Vec<(f32, f32, f32)> = Vec::new();
         // The loupe: where it is, the point it was placed from, and the
         // word the passage ended on when last drawn.
         let mut loupe_at: Option<Rect> = None;
@@ -1116,8 +1265,81 @@ fn read(
         // Where a light gauge is showing, to clear at the next touch.
         let mut gauge: Option<Rect> = None;
         let step = 'reading: loop {
+            // On the page, a pen that moves writes.
+            screen.ink(true);
             let gesture = screen.next();
+            screen.ink(false);
             let page_now = &t.pages[reader.page];
+            if let Gesture::Ink(..) | Gesture::InkUp(..) = gesture {
+                let points: Vec<(f32, f32, f32)> = screen
+                    .take_ink()
+                    .iter()
+                    .map(|&(x, y, p)| (x as f32, y as f32, pen_radius(p)))
+                    .collect();
+                // From the last point drawn, so the line has no gaps.
+                let mut piece: Vec<_> = stroke.last().copied().into_iter().collect();
+                piece.extend(&points);
+                if let Some(r) = ink_into(&mut shown, width, height, &piece) {
+                    let block = cut(&shown, width, &r);
+                    let (w, h) = ((r.x1 - r.x0) as u32, (r.y1 - r.y0) as u32);
+                    screen.draw_fast(&block, w, h, r.x0 as u32, r.y0 as u32);
+                }
+                stroke.extend(points);
+                if matches!(gesture, Gesture::InkUp(..)) && !stroke.is_empty() {
+                    // Anchored to the word nearest its middle, measured in
+                    // that word's line heights.
+                    let (sx, sy) = stroke
+                        .iter()
+                        .fold((0.0, 0.0), |(a, b), p| (a + p.0, b + p.1));
+                    let n = stroke.len() as f32;
+                    if let Some(k) = nearest_word(page_now, sx / n, sy / n) {
+                        let w = &page_now.words[k];
+                        let lh = (w.y1 - w.y0).max(1.0);
+                        let round = |v: f32| (v * 1000.0).round() / 1000.0;
+                        // In a margin, if its middle is outside the text.
+                        let (left, right) = text_edges(page_now, width);
+                        let margin = if sx / n > right.0 {
+                            Some(("right", right))
+                        } else if sx / n < left.0 + left.1 {
+                            Some(("left", left))
+                        } else {
+                            None
+                        };
+                        // In a margin, the first point across as a share of
+                        // it, and the rest from that point, so the stroke
+                        // keeps its shape.
+                        let first = stroke[0].0;
+                        let across = |k: usize, x: f32| match margin {
+                            Some((_, (from, span))) if k == 0 => (x - from) / span,
+                            Some(_) => (x - first) / lh,
+                            None => (x - w.x0) / lh,
+                        };
+                        let points = stroke
+                            .iter()
+                            .enumerate()
+                            .map(|(k, (x, y, r))| {
+                                [round(across(k, *x)), round((y - w.y0) / lh), round(r / lh)]
+                            })
+                            .collect();
+                        let done = tools.marks.borrow_mut().ink(Ink {
+                            id: String::new(),
+                            time: 0,
+                            book: book.title(),
+                            path: path.to_string(),
+                            chapter,
+                            anchor: numbered.anchors[numbered.on_page[reader.page][k]].clone(),
+                            margin: margin.map(|m| m.0.to_string()),
+                            points,
+                        });
+                        match done {
+                            Ok(()) => eprintln!("ink: {} points by {:?}", stroke.len(), w.text),
+                            Err(e) => eprintln!("ink: {e}"),
+                        }
+                    }
+                    stroke.clear();
+                }
+                continue;
+            }
             let numbers = &numbered.on_page[reader.page];
             // The grey a word looked up has, over a passage, line by line.
             let mark = |chosen: (usize, usize)| -> Vec<Rect> {
@@ -2120,12 +2342,15 @@ fn draw(
     renderer: &mut Renderer,
     page: &Page,
     flash: bool,
-    rules: &[Rect],
+    decor: &Decor,
 ) -> Vec<u8> {
     let (width, height) = screen.size();
     let started = Instant::now();
     let mut pixels = renderer.page(page, width, height);
-    rule(&mut pixels, width, height, rules);
+    rule(&mut pixels, width, height, &decor.rules);
+    for stroke in &decor.strokes {
+        ink_into(&mut pixels, width, height, stroke);
+    }
     let rendered = started.elapsed();
     screen.draw(&pixels, width, height, 0, 0, flash);
     eprintln!(
@@ -2167,7 +2392,7 @@ pub fn say(screen: &mut dyn Platform, fonts: &Path, lines: &[&str]) {
         y += size * 2.0;
     }
     let mut renderer = Renderer::new(&fonts);
-    draw(screen, &mut renderer, &page, true, &[]);
+    draw(screen, &mut renderer, &page, true, &Decor::default());
 }
 
 fn message_font(dir: &Path) -> Option<Fonts> {
