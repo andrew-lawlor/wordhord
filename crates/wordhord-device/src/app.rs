@@ -385,7 +385,10 @@ fn word_page(tools: &Tools, k: usize, page: usize) -> Screen {
         .enumerate()
         .map(|(k, kept)| kept_quote(kept, &format!("kept-{k}")))
         .collect();
-    if let Some(entry) = entry_of(tools, w.head, w.lang) {
+    let mut kept: Vec<&str> = w.kept.iter().map(|k| k.pos.as_str()).collect();
+    kept.sort_unstable();
+    kept.dedup();
+    if let Some(entry) = entry_of(tools, w.head, w.lang, &kept) {
         blocks.push(block(BlockKind::SceneBreak));
         blocks.extend(entry);
     }
@@ -399,11 +402,21 @@ fn word_page(tools: &Tools, k: usize, page: usize) -> Screen {
     s
 }
 
-/// A word of the hoard's dictionary entry: only its own readings, not
-/// those of other words that list it among their forms.
-fn entry_of(tools: &Tools, head: &str, lang: &str) -> Option<Vec<wordhord_book::model::Block>> {
+/// A word of the hoard's dictionary entry: only the readings kept, as
+/// parts of speech, not the word's others or those of words that list it
+/// among their forms.
+fn entry_of(
+    tools: &Tools,
+    head: &str,
+    lang: &str,
+    kept: &[&str],
+) -> Option<Vec<wordhord_book::model::Block>> {
     let (_, mut readings) = tools.lexicon.look_up(head, lang)?;
-    if readings.iter().any(|r| r.entry.word == head) {
+    let chosen =
+        |r: &wordhord_dict::Reading| r.entry.word == head && kept.contains(&r.entry.pos.as_str());
+    if readings.iter().any(chosen) {
+        readings.retain(chosen);
+    } else if readings.iter().any(|r| r.entry.word == head) {
         readings.retain(|r| r.entry.word == head);
     }
     Some(lexicon::entry_blocks(head, &readings))
@@ -444,7 +457,7 @@ fn unlock(screen: &mut dyn Platform, renderer: &mut Renderer, tools: &Tools) -> 
             let kept = w.kept[hoard.reviewed(&head, &lang) % w.kept.len()];
             let quote = kept_quote(kept, "kept-0");
             let mut back = vec![quote.clone(), block(BlockKind::SceneBreak)];
-            back.extend(entry_of(tools, &head, &lang).unwrap_or_default());
+            back.extend(entry_of(tools, &head, &lang, &[&kept.pos]).unwrap_or_default());
             (vec![quote], back, hoard.state(&head, &lang), kept.clone())
         };
         let now = hoard::now();

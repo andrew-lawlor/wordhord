@@ -638,17 +638,22 @@ impl<'f> Ui<'f> {
         y += self.mm(4.0);
         let name = Type::new(Face::Regular, self.pt(14.0));
         let figure = Type::new(Face::Regular, self.pt(12.0));
-        let row = self.mm(14.0);
         // The shelves, and the hoard of words kept, once there is one.
-        let rows = shelves
+        let rows: Vec<_> = shelves
             .iter()
             .map(|(shelf, count)| (shelf.name(), *count, Action::Shelf(*shelf)))
             .chain((hoard > 0).then_some(("The hoard", hoard, Action::Hoard)))
-            .chain((due > 0).then_some(("Unlock the hoard", due, Action::Unlock)));
+            .chain((due > 0).then_some(("Unlock the hoard", due, Action::Unlock)))
+            .filter(|r| r.1 > 0)
+            .collect();
+        // Close, at the foot, keeps its own ground: the rows close up to
+        // stay clear of it.
+        let foot = self.h - self.mm(12.0);
+        let close_top = foot - self.mm(9.0);
+        let row = self
+            .mm(14.0)
+            .min((close_top - self.mm(3.0) - y) / rows.len().max(1) as f32);
         for (title, count, action) in rows {
-            if count == 0 {
-                continue;
-            }
             let baseline = y + (row + name.size * 0.6) / 2.0;
             let nw = self.text(&mut s.page, title, name, m, baseline, self.w);
             let n = count.to_string();
@@ -672,14 +677,12 @@ impl<'f> Ui<'f> {
             ));
             y += row;
         }
-        // Close, at the foot of the page.
-        let foot = self.h - self.mm(12.0);
         let close = "close wordhord";
         let w = self.centred(&mut s.page, close, label, foot);
         s.hits.push((
             Rect {
                 x0: (self.w - w) / 2.0 - self.mm(10.0),
-                y0: foot - self.mm(10.0),
+                y0: close_top,
                 x1: (self.w + w) / 2.0 + self.mm(10.0),
                 y1: self.h,
             },
