@@ -248,7 +248,7 @@ fn gesture(from: (i32, i32), to: (i32, i32), held: Duration, width: u32) -> Gest
         };
     }
     if held > Duration::from_secs(1) {
-        return Gesture::Hold;
+        return Gesture::Hold(from.0, from.1);
     }
     Gesture::Tap(from.0, from.1)
 }
@@ -284,12 +284,17 @@ impl Script {
                 ),
                 ["swipe", "left"] => Gesture::SwipeLeft,
                 ["swipe", "right"] => Gesture::SwipeRight,
-                ["hold"] => Gesture::Hold,
+                // Held where there's no word: closing.
+                ["hold"] => Gesture::Hold(0, 0),
+                ["hold", x, y] => Gesture::Hold(
+                    x.parse().map_err(|_| format!("`{step}`"))?,
+                    y.parse().map_err(|_| format!("`{step}`"))?,
+                ),
                 ["power"] => Gesture::Power,
                 _ => {
                     return Err(format!(
-                        "`{step}` isn't a gesture: tap X Y, swipe left, swipe right, hold, power"
-                    ))
+                    "`{step}` isn't a gesture: tap X Y, swipe left, swipe right, hold [X Y], power"
+                ))
                 }
             });
         }
@@ -346,7 +351,7 @@ mod tests {
         );
         assert_eq!(
             gesture((700, 300), (700, 300), Duration::from_secs(2), 1404),
-            Gesture::Hold
+            Gesture::Hold(700, 300)
         );
     }
 }

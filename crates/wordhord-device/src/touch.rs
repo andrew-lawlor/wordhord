@@ -51,7 +51,8 @@ pub enum Gesture {
     SwipeLeft,
     /// The finger moved right: back to the previous page.
     SwipeRight,
-    Hold,
+    /// A finger held down a second, where it landed.
+    Hold(i32, i32),
     Power,
 }
 
@@ -128,7 +129,7 @@ impl Gestures {
                     });
                 }
                 if e.time - landed > HOLD_SECONDS {
-                    return Some(Gesture::Hold);
+                    return Some(Gesture::Hold(start.0, start.1));
                 }
                 return Some(Gesture::Tap(start.0, start.1));
             }
@@ -218,7 +219,7 @@ mod tests {
         );
         assert_eq!(
             touch(&mut g, (900, 700), (900, 700), 1.5),
-            Some(Gesture::Hold)
+            Some(Gesture::Hold(700, 971))
         );
     }
 

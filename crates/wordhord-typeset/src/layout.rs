@@ -36,13 +36,23 @@ pub struct Frag {
     pub glyphs: Vec<Glyph>,
 }
 
+/// A word on a line: its text, its start and end, and where its letters
+/// start and end, without the punctuation around them.
+#[derive(Debug, Clone, Default)]
+pub struct LineWord {
+    pub text: String,
+    pub x0: f32,
+    pub x1: f32,
+    pub letters: Option<(f32, f32)>,
+}
+
 /// One line of text, relative to the left edge of the text block.
 #[derive(Debug, Clone, Default)]
 pub struct Line {
     pub x: f32,
     pub frags: Vec<Frag>,
     /// Words: text, start and end within the line.
-    pub words: Vec<(String, f32, f32)>,
+    pub words: Vec<LineWord>,
     /// Note markers: the note's ID, start and end within the line.
     pub notes: Vec<(String, f32, f32)>,
     /// Commentary marks in the margin: the commentary's ID, and the box
@@ -1246,14 +1256,23 @@ impl<'a> Layout<'a> {
                                 ..f.clone()
                             });
                         }
+                        let shown = crate::fonts::visible(text);
+                        let letters = letters(frags, &shown).map(|(a, b)| (x + a, x + b));
                         match line.words.last_mut() {
-                            Some((t, _, end)) if joined => {
-                                t.push_str(&crate::fonts::visible(text));
-                                *end = x + width;
+                            Some(w) if joined => {
+                                w.text.push_str(&shown);
+                                w.x1 = x + width;
+                                w.letters = match (w.letters, letters) {
+                                    (Some((a, _)), Some((_, b))) => Some((a, b)),
+                                    (a, b) => a.or(b),
+                                };
                             }
-                            _ if !text.is_empty() => {
-                                line.words.push((crate::fonts::visible(text), x, x + width))
-                            }
+                            _ if !text.is_empty() => line.words.push(LineWord {
+                                text: shown,
+                                x0: x,
+                                x1: x + width,
+                                letters,
+                            }),
                             _ => {}
                         }
                         joined = true;
@@ -1679,8 +1698,13 @@ impl<'a> Layout<'a> {
                     for f in first.frags {
                         line.frags.push(Frag { x: x + f.x, ..f });
                     }
-                    for (t, a, b) in first.words {
-                        line.words.push((t, x + a, x + b));
+                    for w in first.words {
+                        line.words.push(LineWord {
+                            x0: x + w.x0,
+                            x1: x + w.x1,
+                            letters: w.letters.map(|(a, b)| (x + a, x + b)),
+                            ..w
+                        });
                     }
                 }
                 x += widths.get(c).copied().unwrap_or(0.0) + gap;
@@ -1834,7 +1858,7 @@ impl<'a> Layout<'a> {
             });
         }
         if let Some((id, n)) = &line.back {
-            if let (Some((_, x0, _)), Some((_, _, x1))) =
+            if let (Some(LineWord { x0, .. }), Some(LineWord { x1, .. })) =
                 (line.words.first(), line.words.get(n.saturating_sub(1)))
             {
                 page.links.push(Link {
@@ -1846,15 +1870,17 @@ impl<'a> Layout<'a> {
                 });
             }
         }
-        for (n, (text, x0, x1)) in line.words.iter().enumerate() {
+        for (n, w) in line.words.iter().enumerate() {
+            let at = left + line.x;
             page.words.push(Word {
                 continues: n == 0 && line.continues,
-                text: text.clone(),
+                text: w.text.clone(),
                 block: line.block.clone(),
-                x0: left + line.x + x0,
+                x0: at + w.x0,
                 y0: baseline - ascent,
-                x1: left + line.x + x1,
+                x1: at + w.x1,
                 y1: baseline + descent,
+                letters: w.letters.map(|(a, b)| (at + a, at + b)),
             });
         }
     }
@@ -2022,4 +2048,26 @@ mod tests {
         lines.push(line(false, false));
         assert_eq!(plan(&lines, 0.0, 0.0, 55.0), [4]);
     }
+}
+
+/// Where the letters of a shaped word start and end, from its glyphs:
+/// the punctuation around them left out. `text` is what was shaped, so
+/// each glyph's cluster points into it.
+fn letters(frags: &[Frag], text: &str) -> Option<(f32, f32)> {
+    let mut span: Option<(f32, f32)> = None;
+    for f in frags {
+        for (k, g) in f.glyphs.iter().enumerate() {
+            let letter = text
+                .get(g.cluster as usize..)
+                .and_then(|t| t.chars().next())
+                .is_some_and(char::is_alphanumeric);
+            if !letter {
+                continue;
+            }
+            let end = f.glyphs.get(k + 1).map_or(f.width, |n| n.x);
+            let (a, b) = (f.x + g.x, f.x + end);
+            span = Some(span.map_or((a, b), |(x0, x1)| (x0.min(a), x1.max(b))));
+        }
+    }
+    span
 }

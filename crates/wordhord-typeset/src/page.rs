@@ -130,4 +130,8 @@ pub struct Word {
     pub y0: f32,
     pub x1: f32,
     pub y1: f32,
+    /// Where its letters start and end, without the punctuation around
+    /// them: what's marked when it's looked up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub letters: Option<(f32, f32)>,
 }

@@ -82,7 +82,11 @@ impl<'t> Reader<'t> {
 
     pub fn act(&mut self, g: Gesture) -> Effect {
         match g {
-            Gesture::Hold | Gesture::Power => Effect::Close,
+            // Held on a word, anywhere (by the edges too, where a tap
+            // turns the page): look it up. Held anywhere else: close.
+            Gesture::Hold(x, y) => word_at(&self.t.pages[self.page], x as f32, y as f32)
+                .map_or(Effect::Close, Effect::Look),
+            Gesture::Power => Effect::Close,
             Gesture::SwipeLeft => self.turn(1),
             Gesture::SwipeRight => self.turn(-1),
             Gesture::Tap(x, y) => self.tap(x as f32, y as f32),
@@ -368,6 +372,7 @@ mod tests {
             y0: 880.0,
             x1: 700.0,
             y1: 920.0,
+            letters: None,
         });
         let mut r = Reader::new(&t, 0);
         assert_eq!(r.act(Gesture::Tap(650, 900)), Effect::Look(0));
@@ -378,10 +383,33 @@ mod tests {
     }
 
     #[test]
+    fn a_word_by_the_edge_is_held_to_look_it_up() {
+        let mut t = book();
+        t.pages[0].words.push(wordhord_typeset::page::Word {
+            text: "hwæt".into(),
+            continues: false,
+            block: "b1".into(),
+            x0: 1250.0,
+            y0: 880.0,
+            x1: 1330.0,
+            y1: 920.0,
+            letters: None,
+        });
+        let mut r = Reader::new(&t, 0);
+        assert_eq!(r.act(Gesture::Hold(1300, 900)), Effect::Look(0));
+        assert_eq!(r.page, 0);
+        // A tap there still turns the page.
+        assert!(matches!(
+            r.act(Gesture::Tap(1300, 900)),
+            Effect::Page { .. }
+        ));
+    }
+
+    #[test]
     fn hold_and_power_close() {
         let t = book();
         let mut r = Reader::new(&t, 0);
-        assert_eq!(r.act(Gesture::Hold), Effect::Close);
+        assert_eq!(r.act(Gesture::Hold(650, 1300)), Effect::Close);
         assert_eq!(r.act(Gesture::Power), Effect::Close);
     }
 }
