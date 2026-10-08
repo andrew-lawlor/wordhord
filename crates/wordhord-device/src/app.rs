@@ -319,8 +319,15 @@ impl Browser {
                     .books
                     .iter()
                     .filter(|e| {
+                        // The language by name too: "norse" finds the
+                        // Edda.
+                        let language = e
+                            .language
+                            .as_deref()
+                            .map(|l| lexicon::language_name(&lexicon::three_letter(l)).to_string())
+                            .unwrap_or_default();
                         let hay = format!(
-                            "{} {} {} {}",
+                            "{} {} {} {} {language}",
                             e.title,
                             e.authors.join(" "),
                             e.series.as_deref().unwrap_or(""),
@@ -1897,6 +1904,7 @@ fn type_in(
                 Some(Action::Delete) => {
                     text.pop();
                 }
+                Some(Action::Clear) => text.clear(),
                 Some(Action::Shift) => {
                     shift = !shift;
                     whole = true;

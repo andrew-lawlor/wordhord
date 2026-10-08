@@ -77,6 +77,8 @@ pub enum Action {
     /// index.
     SearchLibrary,
     SearchNotes,
+    /// On the keyboard: clear what's been typed.
+    Clear,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -466,14 +468,30 @@ impl<'f> Ui<'f> {
         let (_, band_bottom) = self.typing_band();
         let field = Type::new(Face::Regular, self.pt(18.0));
         let baseline = band_bottom - self.mm(8.0);
-        let tw = self.text(
-            &mut s.page,
-            text,
-            field,
-            m,
-            baseline,
-            self.w - 2.0 * m - self.mm(4.0),
-        );
+        // Clear, at the end of the line, once there's something to clear.
+        let label = Type::new(Face::Regular, self.pt(10.0)).caps(0.14);
+        let cw = self.width("clear", label);
+        if !text.is_empty() {
+            self.text(
+                &mut s.page,
+                "clear",
+                label,
+                self.w - m - cw,
+                baseline,
+                cw + 1.0,
+            );
+            s.hits.push((
+                Rect {
+                    x0: self.w - m - cw - self.mm(8.0),
+                    y0: baseline - self.mm(12.0),
+                    x1: self.w,
+                    y1: baseline + self.mm(6.0),
+                },
+                Action::Clear,
+            ));
+        }
+        let room = self.w - 2.0 * m - cw - self.mm(8.0);
+        let tw = self.text(&mut s.page, text, field, m, baseline, room);
         let tw = if text.is_empty() { 0.0 } else { tw };
         self.rule(
             &mut s.page,
@@ -864,21 +882,6 @@ impl<'f> Ui<'f> {
             pages: 1,
         };
         let m = self.margin();
-        // Search, at the head of the page, as close is at its foot.
-        let label = Type::new(Face::Regular, self.pt(10.0)).caps(0.14);
-        let sw = self.width("search", label);
-        // On the masthead's line.
-        let sy = self.mm(11.0) + self.pt(22.0);
-        self.text(&mut s.page, "search", label, self.w - m - sw, sy, sw + 1.0);
-        s.hits.push((
-            Rect {
-                x0: self.w - m - sw - self.mm(10.0),
-                y0: 0.0,
-                x1: self.w,
-                y1: sy + self.mm(8.0),
-            },
-            Action::SearchLibrary,
-        ));
         let mut y = self.mm(11.0) + self.pt(22.0);
         self.centred(
             &mut s.page,
@@ -936,17 +939,21 @@ impl<'f> Ui<'f> {
         let name = Type::new(Face::Regular, self.pt(14.0));
         let figure = Type::new(Face::Regular, self.pt(12.0));
         // The shelves, and the hoard of words kept, once there is one.
-        let rows: Vec<_> = shelves
-            .iter()
-            .map(|(shelf, count)| (shelf.name(), *count, Action::Shelf(*shelf)))
-            .chain((hoard > 0).then_some(("The hoard", hoard, Action::Hoard)))
-            .chain((due > 0).then_some(("Unlock the hoard", due, Action::Unlock)))
-            .chain((underlines > 0).then_some((
-                "Commonplace book",
-                underlines,
-                Action::Commonplace,
-            )))
-            .filter(|r| r.1 > 0)
+        // First, a way to search them, as a book's contents have.
+        let rows: Vec<_> = std::iter::once(("Search the library", None, Action::SearchLibrary))
+            .chain(
+                shelves
+                    .iter()
+                    .map(|(shelf, count)| (shelf.name(), Some(*count), Action::Shelf(*shelf)))
+                    .chain((hoard > 0).then_some(("The hoard", Some(hoard), Action::Hoard)))
+                    .chain((due > 0).then_some(("Unlock the hoard", Some(due), Action::Unlock)))
+                    .chain((underlines > 0).then_some((
+                        "Commonplace book",
+                        Some(underlines),
+                        Action::Commonplace,
+                    )))
+                    .filter(|r| r.1 > Some(0)),
+            )
             .collect();
         // Close, at the foot, keeps its own ground: the rows close up to
         // stay clear of it.
@@ -958,16 +965,18 @@ impl<'f> Ui<'f> {
         for (title, count, action) in rows {
             let baseline = y + (row + name.size * 0.6) / 2.0;
             let nw = self.text(&mut s.page, title, name, m, baseline, self.w);
-            let n = count.to_string();
-            let fw = self.width(&n, figure);
-            self.text(&mut s.page, &n, figure, self.w - m - fw, baseline, self.w);
-            self.leaders(
-                &mut s.page,
-                m + nw + self.mm(3.0),
-                self.w - m - fw - self.mm(3.0),
-                baseline,
-                figure.size,
-            );
+            if let Some(count) = count {
+                let n = count.to_string();
+                let fw = self.width(&n, figure);
+                self.text(&mut s.page, &n, figure, self.w - m - fw, baseline, self.w);
+                self.leaders(
+                    &mut s.page,
+                    m + nw + self.mm(3.0),
+                    self.w - m - fw - self.mm(3.0),
+                    baseline,
+                    figure.size,
+                );
+            }
             s.hits.push((
                 Rect {
                     x0: 0.0,
