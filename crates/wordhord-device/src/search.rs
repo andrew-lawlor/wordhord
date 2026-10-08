@@ -24,9 +24,55 @@ pub fn loose(word: &str) -> String {
     wordhord_dict::fold(&word.replace('’', "'"))
 }
 
+/// A chapter's text for searching: each block the pages can find again,
+/// with its words, and the same words as they're compared, both joined by
+/// single spaces, so the nth of each go together.
+pub type Chapter = Vec<(String, String, String)>;
+
+/// A book's text for searching, read a chapter at a time the first time a
+/// search needs it, and kept while the book is open: so a second search,
+/// or the same one refined, is quick.
+#[derive(Default)]
+pub struct Text {
+    chapters: std::cell::RefCell<Vec<Option<std::rc::Rc<Chapter>>>>,
+}
+
+impl Text {
+    fn chapter(&self, book: &Book, k: usize) -> std::rc::Rc<Chapter> {
+        let mut all = self.chapters.borrow_mut();
+        if all.len() < book.chapters() {
+            all.resize(book.chapters(), None);
+        }
+        all[k]
+            .get_or_insert_with(|| std::rc::Rc::new(read(&book.blocks(k))))
+            .clone()
+    }
+}
+
+fn read(blocks: &[Block]) -> Chapter {
+    let mut all = Vec::new();
+    model::walk(blocks, &mut all);
+    all.into_iter()
+        .filter_map(|b| {
+            let id = b.id.clone()?;
+            let words: Vec<String> = model::block_inlines(b)
+                .into_iter()
+                .flat_map(|line| {
+                    model::plain_text(line)
+                        .split_whitespace()
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            let keys: Vec<String> = words.iter().map(|w| loose(w)).collect();
+            Some((id, words.join(" "), keys.join(" ")))
+        })
+        .collect()
+}
+
 /// The places in `book` that match `query`, at most `limit`, in reading
 /// order.
-pub fn search(book: &Book, query: &str, limit: usize) -> Vec<Found> {
+pub fn search(book: &Book, text: &Text, query: &str, limit: usize) -> Vec<Found> {
     let asked: Vec<String> = query
         .split_whitespace()
         .map(loose)
@@ -37,7 +83,13 @@ pub fn search(book: &Book, query: &str, limit: usize) -> Vec<Found> {
         return out;
     }
     for chapter in 0..book.chapters() {
-        in_blocks(&book.blocks(chapter), chapter, &asked, limit, &mut out);
+        in_chapter(
+            &text.chapter(book, chapter),
+            chapter,
+            &asked,
+            limit,
+            &mut out,
+        );
         if out.len() >= limit {
             break;
         }
@@ -45,32 +97,23 @@ pub fn search(book: &Book, query: &str, limit: usize) -> Vec<Found> {
     out
 }
 
-fn in_blocks(
-    blocks: &[Block],
+fn in_chapter(
+    text: &Chapter,
     chapter: usize,
     asked: &[String],
     limit: usize,
     out: &mut Vec<Found>,
 ) {
-    let mut all = Vec::new();
-    model::walk(blocks, &mut all);
-    for b in all {
-        // Only blocks the pages can find again.
-        let Some(id) = b.id.as_deref() else { continue };
-        let words: Vec<String> = model::block_inlines(b)
-            .into_iter()
-            .flat_map(|line| {
-                model::plain_text(line)
-                    .split_whitespace()
-                    .map(str::to_string)
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        let keys: Vec<String> = words.iter().map(|w| loose(w)).collect();
+    for (id, words, keys) in text {
+        let words: Vec<&str> = words.split(' ').collect();
+        let keys: Vec<&str> = keys.split(' ').collect();
         let n = asked.len();
-        for at in 0..keys.len().saturating_sub(n - 1) {
+        if keys.len() < n {
+            continue;
+        }
+        for at in 0..=keys.len() - n {
             let fits = asked.iter().enumerate().all(|(j, a)| {
-                let k = &keys[at + j];
+                let k = keys[at + j];
                 if j + 1 == n {
                     k.starts_with(a.as_str())
                 } else {
@@ -93,7 +136,7 @@ fn in_blocks(
             out.push(Found {
                 chapter,
                 anchor: Anchor {
-                    block: id.to_string(),
+                    block: id.clone(),
                     word: at,
                 },
                 before,
@@ -123,20 +166,15 @@ mod tests {
             reference: None,
             line: 0,
         }];
+        let text = read(&blocks);
         let mut out = Vec::new();
-        in_blocks(
-            &blocks,
-            3,
-            &["ancient".into(), "rumou".into()],
-            10,
-            &mut out,
-        );
+        in_chapter(&text, 3, &["ancient".into(), "rumou".into()], 10, &mut out);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].anchor.word, 5);
         assert_eq!(out[0].words, "ancient Rumour");
         assert_eq!(out[0].before, "Yet she had heard an");
         out.clear();
-        in_blocks(&blocks, 3, &[loose("voluspa")], 10, &mut out);
+        in_chapter(&text, 3, &[loose("voluspa")], 10, &mut out);
         assert_eq!(out[0].words, "Vǫluspá's");
     }
 }

@@ -475,6 +475,17 @@ fn rule(pixels: &mut [u8], width: u32, height: u32, rules: &[Rect]) {
     }
 }
 
+/// The pixels of a screen inside `r`, as a block of their own.
+fn cut(pixels: &[u8], width: u32, r: &Rect) -> Vec<u8> {
+    let (x0, x1) = (r.x0.max(0.0) as usize, (r.x1 as usize).min(width as usize));
+    let mut out = Vec::with_capacity((x1 - x0) * (r.y1 - r.y0) as usize);
+    for y in r.y0.max(0.0) as usize..r.y1 as usize {
+        let row = y * width as usize;
+        out.extend_from_slice(&pixels[row + x0..row + x1]);
+    }
+    out
+}
+
 /// A block of grey pixels laid over a screen's at `r`.
 fn paste(pixels: &mut [u8], width: u32, height: u32, block: &[u8], r: &Rect) {
     let (x0, y0) = (r.x0.max(0.0) as u32, r.y0.max(0.0) as u32);
@@ -897,6 +908,8 @@ fn read(
     let mut find: Option<usize> = None;
     // A renderer for the bar and the contents, in the app's own fonts.
     let mut chrome = Renderer::new(fonts);
+    // The book's text for searching, kept while it's open.
+    let search_text = crate::search::Text::default();
     loop {
         // If this chapter is being laid out ahead, wait for it rather than
         // do the work twice.
@@ -1573,7 +1586,7 @@ fn read(
                             }
                         }
                         Some(Action::Contents) => {
-                            match contents(screen, &book, ui, &mut chrome, chapter) {
+                            match contents(screen, &book, ui, &mut chrome, chapter, &search_text) {
                                 Some(Ok((k, at))) => break Step::Jump(k, at),
                                 Some(Err(leave)) => break Step::Leave(leave),
                                 None => {
@@ -1639,6 +1652,7 @@ fn contents(
     ui: &Ui,
     chrome: &mut Renderer,
     current: usize,
+    text: &crate::search::Text,
 ) -> Option<Result<(usize, Arrival), Leave>> {
     let (width, height) = screen.size();
     let entries = book.contents();
@@ -1703,7 +1717,7 @@ fn contents(
                     Some(Action::Chapter(k)) => return Some(Ok((*k, None))),
                     Some(Action::Back) => return None,
                     Some(Action::Search) => {
-                        match search_book(screen, book, ui, chrome, &mut query) {
+                        match search_book(screen, book, ui, chrome, &mut query, text) {
                             Some(found) => return Some(found),
                             None => break,
                         }
@@ -1737,6 +1751,8 @@ fn type_in(
     // The whole screen at first and when the keys change; else only the
     // line of text.
     let mut whole = true;
+    // A key tapped, shown pressed until the screen catches up.
+    let mut pressed: Option<Rect> = None;
     loop {
         let s = ui.typing(title, text, shift);
         let pixels = chrome.page(&s.page, width, height);
@@ -1747,14 +1763,51 @@ fn type_in(
             let (top, bottom) = (top as u32, (bottom as u32).min(height));
             let rows = &pixels[(top * width) as usize..(bottom * width) as usize];
             screen.draw(rows, width, bottom - top, 0, top, false);
+            // The key back as it was.
+            if let Some(r) = pressed.take() {
+                let key = cut(&pixels, width, &r);
+                screen.draw_fast(
+                    &key,
+                    (r.x1 - r.x0) as u32,
+                    (r.y1 - r.y0) as u32,
+                    r.x0 as u32,
+                    r.y0 as u32,
+                );
+            }
         }
         whole = false;
         loop {
-            let action = match screen.next() {
+            let hit = match screen.next() {
                 Gesture::Power => return Typed::Close,
-                Gesture::Tap(x, y) => s.hit(x as f32, y as f32).cloned(),
+                Gesture::Tap(x, y) => s
+                    .hits
+                    .iter()
+                    .find(|(r, _)| r.contains(x as f32, y as f32))
+                    .cloned(),
                 _ => None,
             };
+            // A key goes down at once, white on black, before the text it
+            // types can be drawn: e-ink is slow to show a letter, and space
+            // or delete show little.
+            if let Some((r, Action::Key(_) | Action::Delete | Action::Shift | Action::Done)) = &hit
+            {
+                let r = Rect {
+                    x0: r.x0.round(),
+                    y0: r.y0.round() + 2.0,
+                    x1: r.x1.round(),
+                    y1: r.y1.round() - 1.0,
+                };
+                let key: Vec<u8> = cut(&pixels, width, &r).iter().map(|p| 255 - p).collect();
+                screen.draw_fast(
+                    &key,
+                    (r.x1 - r.x0) as u32,
+                    (r.y1 - r.y0) as u32,
+                    r.x0 as u32,
+                    r.y0 as u32,
+                );
+                pressed = Some(r);
+            }
+            let action = hit.map(|(_, a)| a);
             match action {
                 Some(Action::Key(c)) => {
                     text.push(c);
@@ -1788,6 +1841,7 @@ fn search_book(
     ui: &Ui,
     chrome: &mut Renderer,
     query: &mut String,
+    text: &crate::search::Text,
 ) -> Option<Result<(usize, Arrival), Leave>> {
     let (width, height) = screen.size();
     let entries = book.contents();
@@ -1801,7 +1855,7 @@ fn search_book(
         let pixels = chrome.page(&s.page, width, height);
         screen.draw(&pixels, width, height, 0, 0, false);
         let started = Instant::now();
-        let found = crate::search::search(book, query, 200);
+        let found = crate::search::search(book, text, query, 200);
         eprintln!(
             "search {query:?}: {} found in {:?}",
             found.len(),
