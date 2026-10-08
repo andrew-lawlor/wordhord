@@ -73,6 +73,10 @@ pub enum Action {
     /// in the results.
     Search,
     Found(usize),
+    /// Search the library, from home; and the commonplace book, from its
+    /// index.
+    SearchLibrary,
+    SearchNotes,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -860,6 +864,21 @@ impl<'f> Ui<'f> {
             pages: 1,
         };
         let m = self.margin();
+        // Search, at the head of the page, as close is at its foot.
+        let label = Type::new(Face::Regular, self.pt(10.0)).caps(0.14);
+        let sw = self.width("search", label);
+        // On the masthead's line.
+        let sy = self.mm(11.0) + self.pt(22.0);
+        self.text(&mut s.page, "search", label, self.w - m - sw, sy, sw + 1.0);
+        s.hits.push((
+            Rect {
+                x0: self.w - m - sw - self.mm(10.0),
+                y0: 0.0,
+                x1: self.w,
+                y1: sy + self.mm(8.0),
+            },
+            Action::SearchLibrary,
+        ));
         let mut y = self.mm(11.0) + self.pt(22.0);
         self.centred(
             &mut s.page,

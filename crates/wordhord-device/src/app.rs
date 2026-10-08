@@ -127,6 +127,10 @@ enum View {
     Commonplace,
     /// One book's passages, by its place in the commonplace book's index.
     Passages(usize),
+    /// What a search found, of the library's books or the commonplace
+    /// book's passages: the words asked for are the browser's.
+    FoundBooks,
+    FoundPassages,
 }
 
 /// Where in the library the reader is: the views gone through, each with
@@ -134,6 +138,8 @@ enum View {
 #[derive(Default)]
 struct Browser {
     stack: Vec<(View, usize)>,
+    /// What was last searched for, to start from again.
+    query: String,
 }
 
 impl Browser {
@@ -247,34 +253,90 @@ impl Browser {
             View::Word(k) => word_page(tools, k, page),
             View::Commonplace => {
                 let books = tools.marks.borrow().books();
-                // With one book, the index would only be in the way.
-                if books.len() == 1 {
-                    return passages(tools, 0, page, false);
-                }
-                let rows: Vec<Row> = books
-                    .iter()
-                    .enumerate()
-                    .map(|(k, (path, title, n))| Row {
-                        title: title.clone(),
-                        // As the shelves give a book: its author in small
-                        // caps under its title.
-                        detail: library
-                            .books
-                            .iter()
-                            .find(|b| &b.path == path)
-                            .map(|e| vec![Part::Caps(e.byline().0)])
-                            .unwrap_or_default(),
-                        cover: None,
-                        progress: None,
-                        count: Some(*n),
-                        mark: false,
-                        action: Action::Passages(k),
-                        depth: 0,
-                    })
+                // First a way to search it, as a book's contents have.
+                let search = Row {
+                    title: "Search the commonplace book".into(),
+                    detail: Vec::new(),
+                    cover: None,
+                    progress: None,
+                    count: None,
+                    mark: false,
+                    action: Action::SearchNotes,
+                    depth: 0,
+                };
+                let rows: Vec<Row> = std::iter::once(search)
+                    .chain(books.iter().enumerate().map(|(k, (path, title, n))| {
+                        Row {
+                            title: title.clone(),
+                            // As the shelves give a book: its author in small
+                            // caps under its title.
+                            detail: library
+                                .books
+                                .iter()
+                                .find(|b| &b.path == path)
+                                .map(|e| vec![Part::Caps(e.byline().0)])
+                                .unwrap_or_default(),
+                            cover: None,
+                            progress: None,
+                            count: Some(*n),
+                            mark: false,
+                            action: Action::Passages(k),
+                            depth: 0,
+                        }
+                    }))
                     .collect();
                 ui.list("Commonplace book", &rows, page, true)
             }
-            View::Passages(k) => passages(tools, k, page, true),
+            View::Passages(k) => {
+                let books = tools.marks.borrow().books();
+                let Some((path, title, _)) = books.get(k) else {
+                    return ui.list("Commonplace book", &[], 0, true);
+                };
+                passages(tools, |u| &u.path == path, title, false, page)
+            }
+            View::FoundPassages => {
+                let q = self.query.as_str();
+                let found = |u: &Underline| {
+                    let hay = format!(
+                        "{} {} {}",
+                        u.text,
+                        u.book,
+                        u.section.as_deref().unwrap_or("")
+                    );
+                    crate::search::matches(&hay, q)
+                };
+                let any = tools.marks.borrow().by_book().into_iter().any(found);
+                let heading = if any {
+                    format!("“{q}”")
+                } else {
+                    format!("Nothing for “{q}”")
+                };
+                passages(tools, found, &heading, true, page)
+            }
+            View::FoundBooks => {
+                let q = self.query.as_str();
+                let rows: Vec<Row> = library
+                    .books
+                    .iter()
+                    .filter(|e| {
+                        let hay = format!(
+                            "{} {} {} {}",
+                            e.title,
+                            e.authors.join(" "),
+                            e.series.as_deref().unwrap_or(""),
+                            e.tags.join(" ")
+                        );
+                        crate::search::matches(&hay, q)
+                    })
+                    .map(row)
+                    .collect();
+                let title = if rows.is_empty() {
+                    format!("Nothing for “{q}”")
+                } else {
+                    format!("“{q}”")
+                };
+                ui.list(&title, &rows, page, true)
+            }
             View::Shelf(Shelf::All) => {
                 let rows: Vec<Row> = library.books.iter().map(row).collect();
                 ui.list(Shelf::All.name(), &rows, page, true)
@@ -572,31 +634,38 @@ fn nearest_word(page: &Page, x: f32, y: f32) -> Option<usize> {
         .map(|(k, _)| k)
 }
 
-/// One book's passages in the commonplace book, by its place in the
-/// index: set as quotations, each with the part of the book it's in and the
-/// day it was underlined. A tap on one opens the book there. `indexed`:
-/// reached from the index, rather than straight from home.
-fn passages(tools: &Tools, k: usize, page: usize, indexed: bool) -> Screen {
+/// Passages of the commonplace book that `select` picks, under `heading`:
+/// set as quotations, each with the part of the book it's in and the day
+/// it was underlined; and with the book, if `with_book`, where they may
+/// come from several. A tap on one opens the book there.
+fn passages(
+    tools: &Tools,
+    select: impl Fn(&Underline) -> bool,
+    heading: &str,
+    with_book: bool,
+    page: usize,
+) -> Screen {
     use wordhord_book::model::{Block, BlockKind, Inline};
     let ui = tools.ui;
     let marks = tools.marks.borrow();
-    let books = marks.books();
-    let Some((path, title, _)) = books.get(k) else {
-        return ui.list("Commonplace book", &[], 0, true);
-    };
     let all = marks.by_book();
     let mut blocks = Vec::new();
-    for (n, u) in all.iter().enumerate().filter(|(_, u)| &u.path == path) {
+    for (n, u) in all.iter().enumerate().filter(|(_, u)| select(u)) {
         let id = format!("passage-{n}");
         let with_id = |b: Block| Block {
             id: Some(id.clone()),
             ..b
         };
         let day = crate::marks::day(u.time);
-        let whence = match &u.section {
-            Some(s) => format!("{s} · {day}"),
-            None => day,
-        };
+        let mut whence: Vec<&str> = Vec::new();
+        if with_book {
+            whence.push(&u.book);
+        }
+        if let Some(s) = &u.section {
+            whence.push(s);
+        }
+        whence.push(&day);
+        let whence = whence.join(" · ");
         blocks.push(with_id(block(BlockKind::Quote(vec![
             with_id(block(BlockKind::Paragraph(vec![Inline::Text(
                 u.text.clone(),
@@ -636,11 +705,6 @@ fn passages(tools: &Tools, k: usize, page: usize, indexed: bool) -> Screen {
             )),
         }
     }
-    let heading = if indexed {
-        title.as_str()
-    } else {
-        "Commonplace book"
-    };
     let mut s = ui.titled(heading, content, page, pages);
     s.hits.extend(hits);
     s
@@ -810,6 +874,20 @@ fn browse(
                 }
                 Gesture::Tap(x, y) => match s.hit(x as f32, y as f32) {
                     Some(Action::Open(path)) => return Some((path.clone(), None)),
+                    Some(a @ (Action::SearchLibrary | Action::SearchNotes)) => {
+                        let (title, view) = if *a == Action::SearchLibrary {
+                            ("Search the library", View::FoundBooks)
+                        } else {
+                            ("Search the commonplace book", View::FoundPassages)
+                        };
+                        match type_in(screen, tools.ui, &mut renderer, title, &mut browser.query) {
+                            Typed::Done => browser.stack.push((view, 0)),
+                            Typed::Back => {}
+                            Typed::Close => return None,
+                        }
+                        flash = true;
+                        break;
+                    }
                     Some(Action::Passage(k)) => {
                         let marks = tools.marks.borrow();
                         if let Some(u) = marks.by_book().get(*k) {

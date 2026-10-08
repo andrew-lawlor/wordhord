@@ -27,6 +27,8 @@ A normal e-reader for stylus Kobos. Smaller and faster than KOReader. Built arou
 
 ## 3. What it does
 
+**The library** is searched from *search* on its home, on the masthead's line: titles, authors, series and tags, each word typed the start of one of theirs.
+
 **Reading.** EPUB 2 and 3, reflowable, DRM-free. Type set on one screen, against a specimen passage with italics, figures and Old English and Norse letters: five faces, each marked with the old languages it can set; sizes by the printers' names (long primer to great primer); the measure in characters to a line; leading; justified or ragged. Kept in `wordhord.toml`. Footnotes open in a panel at the foot of the page. A table of contents. Search within the book, from the contents: typed on Wordhord's own keyboard, set like the rest, with a row of the old letters (þ ð æ ǫ ȝ ƿ œ ø) over the alphabet. Words match loosely (no case, no accents, ǫ as o) and the last may be the start of one. Results by chapter, the words in their context in italic; a tap opens the page with them marked grey. Page turns by swipe or edge tap. The light by a slide up or down: the left half for how bright, the right for how warm, with a hairline gauge at that edge until the next touch.
 
 **Library.** Every EPUB on the device, found by a scan. Sorted by last read, title or author. Shelves are folders. Covers in a grid or a plain list. Nothing is imported or copied: the file on disk is the book.
@@ -39,7 +41,7 @@ A normal e-reader for stylus Kobos. Smaller and faster than KOReader. Built arou
 
 **The hoard.** One tap hoards a word, with its sentence, book and place. Unlock it on the device: review. Export anywhere (§8).
 
-**Commonplace book.** Every highlight, note and kept word, across all books, in one place on the device and in one Markdown file on export. First, underlines: a row on the library's home opens an index of the books underlined in, the last first, each with its author and how many passages (straight to the passages if there's one book). A book's page sets its passages as quotations, each with the part of the book it's in and the day, *Book I · 8 October*. A tap on a passage opens the book at it.
+**Commonplace book.** Every highlight, note and kept word, across all books, in one place on the device and in one Markdown file on export. First, underlines: a row on the library's home opens an index of the books underlined in, the last first, each with its author and how many passages. A book's page sets its passages as quotations, each with the part of the book it's in and the day, *Book I · 8 October*. A tap on a passage opens the book at it. The index starts with *Search the commonplace book*: passages whose words, book or part start with each word typed, with the book named on each.
 
 ## 4. Not goals
 

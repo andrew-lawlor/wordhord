@@ -8,6 +8,20 @@ use wordhord_book::model::{self, Block};
 use crate::book::Book;
 use crate::marks::Anchor;
 
+/// Whether every word asked for starts a word of `haystack`, loosely:
+/// for the library's titles and authors, and the commonplace book.
+pub fn matches(haystack: &str, query: &str) -> bool {
+    let words: Vec<String> = haystack
+        .split(|c: char| c.is_whitespace() || c == '-' || c == '/')
+        .map(loose)
+        .collect();
+    query
+        .split_whitespace()
+        .map(loose)
+        .filter(|q| !q.is_empty())
+        .all(|q| words.iter().any(|w| w.starts_with(q.as_str())))
+}
+
 /// A place found: its chapter, its first word, and the words around it.
 pub struct Found {
     pub chapter: usize,
@@ -154,6 +168,15 @@ fn in_chapter(
 mod tests {
     use super::*;
     use wordhord_book::model::{BlockKind, Inline};
+
+    #[test]
+    fn every_word_asked_for_starts_one_there() {
+        let book = "The Brothers Karamazov Dostoevsky, Fyodor Fiction / Classics";
+        assert!(matches(book, "dost kar"));
+        assert!(matches(book, "Karamázov"));
+        assert!(!matches(book, "dost idiot"));
+        assert!(matches("Völuspá", "voluspa"));
+    }
 
     #[test]
     fn words_are_found_loosely_with_the_last_as_a_start() {
