@@ -531,6 +531,43 @@ fn entry_of(
     Some(lexicon::entry_blocks(head, &readings))
 }
 
+/// The sign that the pen is near and fingers are ignored: "pen" in small
+/// caps at the top right, in the margin. The pixels for where it goes,
+/// with it (`on`) or as the page is without it, and where.
+fn pen_sign(ui: &Ui, chrome: &mut Renderer, shown: &[u8], width: u32, on: bool) -> (Vec<u8>, Rect) {
+    let right = width as f32 - ui.margin_px();
+    let (mark, hit) = ui.label("pen", false, right, ui.margin_px() * 0.75);
+    let r = Rect {
+        x0: hit.x0.max(0.0).round(),
+        y0: hit.y0.max(0.0).round(),
+        x1: hit.x1.min(width as f32).round(),
+        y1: hit.y1.round(),
+    };
+    let mut block = cut(shown, width, &r);
+    if on {
+        let (w, h) = ((r.x1 - r.x0) as u32, r.y1 as u32);
+        let over = chrome.page(&mark, width, h);
+        let rows = r.y1 as usize - r.y0 as usize;
+        for row in 0..rows {
+            for col in 0..w as usize {
+                let o = over[(r.y0 as usize + row) * width as usize + r.x0 as usize + col];
+                let p = &mut block[row * w as usize + col];
+                *p = (*p).min(o);
+            }
+        }
+    }
+    (block, r)
+}
+
+/// The pen's sign drawn, or taken away, on the fast refresh. Taking it
+/// away from a page drawn since does no harm.
+fn show_pen(screen: &mut dyn Platform, ui: &Ui, chrome: &mut Renderer, shown: &[u8], on: bool) {
+    let (width, _) = screen.size();
+    let (block, r) = pen_sign(ui, chrome, shown, width, on);
+    let (w, h) = ((r.x1 - r.x0) as u32, (r.y1 - r.y0) as u32);
+    screen.draw_fast(&block, w, h, r.x0 as u32, r.y0 as u32);
+}
+
 /// An underline of the words `a` to `b` of a page, either way round: its
 /// anchors, its text (lines of verse marked " / "), and the part of the
 /// book it's in.
@@ -575,6 +612,67 @@ fn underline_of(
         end: numbered.anchors[numbers[b]].clone(),
         text,
         section,
+    }
+}
+
+/// Underlines the words `a` to `b` of a page. Underlines it overlaps or
+/// touches are taken into it, so going over a passage again, or along from
+/// it, makes one underline, not several; unless together they'd reach off
+/// this page, when the new one stands alone.
+#[allow(clippy::too_many_arguments)]
+fn save_underline(
+    tools: &Tools,
+    book: &Book,
+    path: &str,
+    chapter: usize,
+    page: &Page,
+    numbers: &[usize],
+    numbered: &Words,
+    a: usize,
+    b: usize,
+) {
+    let (a, b) = (a.min(b), a.max(b));
+    let (mut s, mut e) = (numbers[a], numbers[b]);
+    let touching: Vec<(String, (usize, usize))> = tools
+        .marks
+        .borrow()
+        .in_chapter(path, chapter)
+        .filter_map(|u| {
+            let span = numbered.span(u)?;
+            (span.0 <= e + 1 && span.1 + 1 >= s).then(|| (u.id.clone(), span))
+        })
+        .collect();
+    for (_, (us, ue)) in &touching {
+        s = s.min(*us);
+        e = e.max(*ue);
+    }
+    let whole = (
+        numbers.iter().position(|&n| n == s),
+        numbers.iter().rposition(|&n| n == e),
+    );
+    let (from, to, merged) = match whole {
+        (Some(from), Some(to)) => (from, to, touching),
+        _ => (a, b, Vec::new()),
+    };
+    let mut marks = tools.marks.borrow_mut();
+    for (id, _) in &merged {
+        if let Err(e) = marks.remove(id) {
+            eprintln!("underline: {e}");
+        }
+    }
+    let u = underline_of(book, path, chapter, page, numbers, numbered, from, to);
+    match marks.underline(u) {
+        Ok(()) => eprintln!(
+            "underlined words {} to {}{}",
+            numbers[from],
+            numbers[to],
+            if merged.is_empty() {
+                String::new()
+            } else {
+                format!(", taking in {}", merged.len())
+            }
+        ),
+        Err(e) => eprintln!("underline: {e}"),
     }
 }
 
@@ -1308,6 +1406,8 @@ fn read(
         let mut editing: Option<(String, usize)> = None;
         // The stroke the pen is drawing: its points, with the pen's radius.
         let mut stroke: Vec<(f32, f32, f32)> = Vec::new();
+        // Whether the pen is near, and its sign up in the corner.
+        let mut pen_mark = false;
         // The loupe: where it is, the point it was placed from, and the
         // word the passage ended on when last drawn.
         let mut loupe_at: Option<Rect> = None;
@@ -1323,6 +1423,11 @@ fn read(
             let gesture = screen.next();
             screen.ink(false);
             let page_now = &t.pages[reader.page];
+            if let Gesture::PenNear | Gesture::PenAway = gesture {
+                pen_mark = matches!(gesture, Gesture::PenNear);
+                show_pen(screen, ui, &mut chrome, &shown, pen_mark);
+                continue;
+            }
             if let Gesture::Ink(..) | Gesture::InkUp(..) = gesture {
                 let tool = screen.tool();
                 let up = matches!(gesture, Gesture::InkUp(..));
@@ -1394,6 +1499,7 @@ fn read(
                             false,
                             &rules(reader.page),
                         );
+                        show_pen(screen, ui, &mut chrome, &shown, pen_mark);
                     }
                     continue;
                 }
@@ -1423,15 +1529,9 @@ fn read(
                         .collect();
                     if let (Some(&a), Some(&b)) = (hit.first(), hit.last()) {
                         let numbers = &numbered.on_page[reader.page];
-                        let u =
-                            underline_of(&book, path, chapter, page_now, numbers, &numbered, a, b);
-                        match tools.marks.borrow_mut().underline(u) {
-                            Ok(()) => eprintln!(
-                                "underlined words {} to {} with the pen",
-                                numbers[a], numbers[b]
-                            ),
-                            Err(e) => eprintln!("underline: {e}"),
-                        }
+                        save_underline(
+                            tools, &book, path, chapter, page_now, numbers, &numbered, a, b,
+                        );
                     }
                     stroke.clear();
                     // The trail gone, the underline drawn.
@@ -1442,6 +1542,7 @@ fn read(
                         false,
                         &rules(reader.page),
                     );
+                    show_pen(screen, ui, &mut chrome, &shown, pen_mark);
                     continue;
                 }
                 if up && !stroke.is_empty() {
@@ -1659,13 +1760,9 @@ fn read(
             if let Gesture::Release(..) = gesture {
                 marked_rows = None;
                 if let Some((a, b)) = chosen.take() {
-                    let u = underline_of(&book, path, chapter, page_now, numbers, &numbered, a, b);
-                    let (s, e) = (numbers[a.min(b)], numbers[a.max(b)]);
-                    let done = tools.marks.borrow_mut().underline(u);
-                    match done {
-                        Ok(()) => eprintln!("underlined words {s} to {e}"),
-                        Err(e) => eprintln!("underline: {e}"),
-                    }
+                    save_underline(
+                        tools, &book, path, chapter, page_now, numbers, &numbered, a, b,
+                    );
                 }
                 shown = draw(
                     screen,

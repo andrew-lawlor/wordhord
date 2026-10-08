@@ -234,6 +234,11 @@ impl<'f> Ui<'f> {
         self.mm(9.0)
     }
 
+    /// The margin the library's screens keep, in pixels.
+    pub fn margin_px(&self) -> f32 {
+        self.margin()
+    }
+
     /// Glyph runs for `text`, from x = 0, and their width.
     fn set(&self, text: &str, t: Type) -> (Vec<Run>, f32) {
         let features: &[&str] = if t.caps { &["onum", "smcp"] } else { &["onum"] };

@@ -76,6 +76,11 @@ pub enum Gesture {
     Ink(i32, i32),
     /// The pen lifted from a stroke, here.
     InkUp(i32, i32),
+    /// The pen has come near the screen, where it writes: fingers are
+    /// ignored until it has gone.
+    PenNear,
+    /// The pen has gone, and fingers count again.
+    PenAway,
     Power,
 }
 
@@ -137,6 +142,8 @@ pub struct Gestures {
     /// When the pen was last near the screen: fingers are ignored while
     /// it is, and a little after, so a hand that writes can rest.
     pen_near: Option<std::time::Instant>,
+    /// Whether the pen's coming near has been told, and not yet its going.
+    told_near: bool,
     /// Points of ink not yet taken: screen position and pressure.
     pub points: Vec<(i32, i32, u16)>,
     /// The ends and button of the stylus, as last reported; and the tool
@@ -169,6 +176,15 @@ impl Gestures {
     /// finger lifts.
     pub fn touch(&mut self, e: Event, panel: &Panel) -> Option<Gesture> {
         match (e.kind, e.code) {
+            (EV_ABS, ABS_MT_TOOL_TYPE) if e.value != 0 && self.ink && !self.told_near => {
+                // The pen come near a page it writes on: say so, once.
+                self.tool = e.value;
+                self.pen_near = Some(std::time::Instant::now());
+                self.told_near = true;
+                self.down = None;
+                self.start = None;
+                return Some(Gesture::PenNear);
+            }
             (EV_ABS, ABS_MT_TOOL_TYPE) => {
                 // A pen now: whatever a finger had begun is forgotten.
                 if e.value != 0 && self.tool == 0 {
@@ -351,9 +367,24 @@ impl Gestures {
         Some(held.saturating_sub(self.landed?.elapsed()))
     }
 
-    /// Called when a finger has been down a while: pressed, if it's been
-    /// held still long enough.
+    /// How long until the pen, gone quiet, counts as gone, if it's been
+    /// told as near.
+    pub fn away_due(&self) -> Option<std::time::Duration> {
+        if !self.told_near {
+            return None;
+        }
+        let palm = std::time::Duration::from_secs_f64(PALM_SECONDS);
+        Some(palm.saturating_sub(self.pen_near?.elapsed()))
+    }
+
+    /// Called when time has passed with nothing from the screen: the pen
+    /// gone, if it's been quiet long enough; else a finger pressed, if it's
+    /// been held still long enough.
     pub fn tick(&mut self) -> Option<Gesture> {
+        if self.away_due().is_some_and(|d| d.is_zero()) {
+            self.told_near = false;
+            return Some(Gesture::PenAway);
+        }
         if self.press_due()? > std::time::Duration::ZERO {
             return None;
         }

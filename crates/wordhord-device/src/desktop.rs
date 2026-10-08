@@ -338,6 +338,8 @@ impl Script {
                     y.parse().map_err(|_| format!("`{step}`"))?,
                 ),
                 ["power"] => Gesture::Power,
+                ["near"] => Gesture::PenNear,
+                ["away"] => Gesture::PenAway,
                 ["press", x, y] => Gesture::Press(
                     x.parse().map_err(|_| format!("`{step}`"))?,
                     y.parse().map_err(|_| format!("`{step}`"))?,

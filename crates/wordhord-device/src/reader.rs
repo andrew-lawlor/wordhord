@@ -102,7 +102,9 @@ impl<'t> Reader<'t> {
             // Underlining is the app's: it draws as the finger moves.
             Gesture::Press(..) | Gesture::Drag(..) | Gesture::Release(..) => Effect::Nothing,
             // So is ink.
-            Gesture::Ink(..) | Gesture::InkUp(..) => Effect::Nothing,
+            Gesture::Ink(..) | Gesture::InkUp(..) | Gesture::PenNear | Gesture::PenAway => {
+                Effect::Nothing
+            }
             Gesture::SwipeLeft => self.turn(1),
             Gesture::SwipeRight => self.turn(-1),
             Gesture::Tap(x, y) => self.tap(x as f32, y as f32),

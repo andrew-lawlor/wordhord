@@ -298,8 +298,12 @@ fn next_gesture(
             // Nothing to read from: nothing can close the reader.
             return Gesture::Power;
         }
-        // A finger down and still: wake when it would be pressed.
-        let press = gestures.press_due();
+        // A finger down and still: wake when it would be pressed. The pen
+        // gone quiet: wake when it counts as gone.
+        let press = [gestures.press_due(), gestures.away_due()]
+            .into_iter()
+            .flatten()
+            .min();
         let wait = press.map_or(IDLE_MS, |d| d.as_millis() as c_int + 1);
         let n = unsafe { libc::poll(polls.as_mut_ptr(), polls.len() as _, wait) };
         if n == 0 {
