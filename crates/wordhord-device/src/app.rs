@@ -11,8 +11,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
 use wordhord_typeset::fonts::{Face, FontFile, Fonts};
-use wordhord_typeset::page::{Page, Run};
-use wordhord_typeset::profile::Profile;
+use wordhord_typeset::page::{Page, Run, Typeset};
+use wordhord_typeset::profile::{FontPaths, Profile};
 use wordhord_typeset::render::{self, Renderer};
 
 use crate::book::Book;
@@ -20,8 +20,9 @@ use crate::lexicon::{self, Lexicon};
 use crate::library::{self, Entry, Library};
 use crate::platform::Platform;
 use crate::reader::{Effect, Reader};
+use crate::settings::{self, Settings};
 use crate::touch::Gesture;
-use crate::ui::{Action, Part, Recent, Rect, Row, Screen, Shelf, Ui, COVER};
+use crate::ui::{Action, Choice, Part, Recent, Rect, Row, Screen, Shelf, Ui, COVER};
 
 /// How a book was left.
 enum Leave {
@@ -305,6 +306,9 @@ enum Step {
     Next,
     Previous,
     Jump(usize),
+    /// The type has changed: lay the book out again, at the page holding
+    /// this word of the chapter.
+    Retype(usize),
     Leave(Leave),
 }
 
@@ -318,7 +322,7 @@ fn read(
     let (ui, fonts) = (tools.ui, tools.fonts);
     let (width, height) = screen.size();
     let started = Instant::now();
-    let book = Book::open(&root.join(path), app)?;
+    let mut book = Book::open(&root.join(path), app)?;
     eprintln!(
         "{}: {} chapters, opened in {:?}",
         book.name,
@@ -328,7 +332,9 @@ fn read(
     let (mut chapter, mut page) = book.position();
     let mut flash = true;
     // Chapters laid out ahead, on another thread.
-    let ahead = Ahead::start(&book);
+    let mut ahead = Ahead::start(&book);
+    // After the type changes: the word to find in the new pages.
+    let mut find: Option<usize> = None;
     // A renderer for the bar and the contents, in the app's own fonts.
     let mut chrome = Renderer::new(fonts);
     loop {
@@ -346,6 +352,9 @@ fn read(
         let mut renderer = Renderer::new(&book.fonts)
             .with_images(&read)
             .with_picture_cache(book.picture_dir());
+        if let Some(word) = find.take() {
+            page = page_with(&t, word);
+        }
         let mut reader = Reader::new(&t, page);
         let chapters = book.chapters() as f32;
         let progress =
@@ -508,6 +517,24 @@ fn read(
                     };
                     match action {
                         Some(Action::Library) => break Step::Leave(Leave::Library),
+                        Some(Action::Type) => {
+                            let here = &t.pages[reader.page];
+                            let block = here.words.first().map(|w| w.block.clone());
+                            match type_settings(screen, &book, app, ui, &mut chrome, chapter, block)
+                            {
+                                Some(Ok(())) => {
+                                    // The first word on this page, counted
+                                    // through the chapter.
+                                    let word =
+                                        t.pages[..reader.page].iter().map(|p| p.words.len()).sum();
+                                    break Step::Retype(word);
+                                }
+                                Some(Err(leave)) => break Step::Leave(leave),
+                                None => {
+                                    shown = draw(screen, &mut renderer, &t.pages[reader.page], true)
+                                }
+                            }
+                        }
                         Some(Action::Contents) => {
                             match contents(screen, &book, ui, &mut chrome, chapter) {
                                 Some(Ok(k)) => break Step::Jump(k),
@@ -544,6 +571,12 @@ fn read(
                 chapter -= 1;
                 // The previous chapter opens at its last page.
                 page = usize::MAX;
+            }
+            Step::Retype(word) => {
+                book = Book::open(&root.join(path), app)?;
+                ahead = Ahead::start(&book);
+                find = Some(word);
+                flash = true;
             }
             Step::Jump(k) => {
                 chapter = k;
@@ -804,4 +837,241 @@ fn highlight(page: &[u8], width: u32, height: u32, boxes: &[Rect]) -> Vec<u8> {
         }
     }
     out
+}
+
+/// The page of `t` that holds its `word`th word.
+fn page_with(t: &Typeset, word: usize) -> usize {
+    let mut seen = 0;
+    for (k, p) in t.pages.iter().enumerate() {
+        seen += p.words.len();
+        if word < seen {
+            return k;
+        }
+    }
+    t.pages.len().saturating_sub(1)
+}
+
+/// The type screen. Each choice sets the specimen again: the paragraph
+/// being read, in the type chosen. Changed settings are saved, and `Ok`;
+/// unchanged, `None`.
+fn type_settings(
+    screen: &mut dyn Platform,
+    book: &Book,
+    app: &Path,
+    ui: &Ui,
+    chrome: &mut Renderer,
+    chapter: usize,
+    block: Option<String>,
+) -> Option<Result<(), Leave>> {
+    use wordhord_book::model::{self, BlockKind};
+    let (width, height) = screen.size();
+    let base = Profile::load(&app.join("profile.toml")).ok()?;
+    let mut chosen = Settings::load(app);
+    let before = chosen.clone();
+    // The specimen: the block the page starts in, or the chapter's first
+    // paragraph of some length.
+    let blocks = book.blocks(chapter);
+    let specimen = blocks
+        .iter()
+        .find(|b| b.id.is_some() && b.id == block)
+        .or_else(|| {
+            blocks.iter().find(
+                |b| matches!(&b.kind, BlockKind::Paragraph(i) if model::plain_text(i).len() > 200),
+            )
+        })
+        .or(blocks.first())?
+        .clone();
+    // A specimen, not the whole poem: what fits under the glass.
+    let mut specimen = specimen;
+    if let BlockKind::Verse(v) | BlockKind::Stanza(v) = &mut specimen.kind {
+        v.lines.truncate(16);
+        v.stanzas.clear();
+    }
+    // Every letter the chapter uses, to say which a face lacks.
+    let mut all = Vec::new();
+    model::walk(&blocks, &mut all);
+    let mut letters: Vec<char> = all
+        .iter()
+        .flat_map(|b| model::block_inlines(b))
+        .flat_map(|i| model::plain_text(i).chars().collect::<Vec<_>>())
+        .filter(|c| c.is_alphabetic())
+        .collect();
+    letters.sort_unstable();
+    letters.dedup();
+    // Each face's regular, for its name and the languages it can set.
+    let faces: Vec<Option<Fonts>> = settings::FACES
+        .iter()
+        .map(|f| {
+            let file = format!("fonts/{}", f.files[0]);
+            let paths = FontPaths {
+                regular: file.clone(),
+                italic: file.clone(),
+                bold: file.clone(),
+                bold_italic: file,
+                mono: None,
+                fallback: None,
+            };
+            Fonts::load(&base.dir, &paths).ok()
+        })
+        .collect();
+    let languages: Vec<Vec<&str>> = faces
+        .iter()
+        .map(|f| f.as_ref().map(settings::languages).unwrap_or_default())
+        .collect();
+    let rows: [(Choice, &str, Vec<&str>); 4] = [
+        (
+            Choice::Size,
+            "size",
+            settings::SIZES.iter().map(|s| s.0).collect(),
+        ),
+        (
+            Choice::Measure,
+            "measure",
+            settings::MEASURES.iter().map(|s| s.0).collect(),
+        ),
+        (
+            Choice::Leading,
+            "leading",
+            settings::LEADINGS.iter().map(|s| s.0).collect(),
+        ),
+        (
+            Choice::Setting,
+            "setting",
+            settings::SETTINGS.iter().map(|s| s.0).collect(),
+        ),
+    ];
+    let lang = book.language();
+    let mut flash = true;
+    loop {
+        let started = Instant::now();
+        let at = |names: &[&str], name: &str| names.iter().position(|n| *n == name).unwrap_or(0);
+        let picked = [
+            settings::FACES
+                .iter()
+                .position(|f| f.key == chosen.typeface().key)
+                .unwrap_or(0),
+            at(&rows[0].2, &chosen.size),
+            at(&rows[1].2, &chosen.measure),
+            at(&rows[2].2, &chosen.leading),
+            at(&rows[3].2, &chosen.setting),
+        ];
+        let (profile, fonts) = chosen.apply(&base).ok()?;
+        let lacking: String = letters
+            .iter()
+            .filter(|c| !fonts.covers(**c))
+            .take(8)
+            .collect();
+        let note = (!lacking.is_empty()).then(|| {
+            format!(
+                "{} lacks {}: set in DejaVu Serif.",
+                chosen.typeface().name,
+                lacking
+                    .chars()
+                    .map(String::from)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        });
+        let ts = ui.type_screen(&rows, &picked, &languages, note.as_deref());
+        let mut pixels = chrome.page(&ts.screen.page, width, height);
+        // The specimen, from the top of a page set as chosen.
+        let set = wordhord_typeset::lay_out(
+            std::slice::from_ref(&specimen),
+            &lang,
+            &profile,
+            &fonts,
+            &[],
+            None,
+        );
+        if let Some(first) = set.pages.first() {
+            let page = Renderer::new(&fonts).page(first, width, height);
+            let from = (profile.mm(profile.margins.top) - profile.mm(3.0)).max(0.0) as usize;
+            let (y0, y1) = (ts.specimen.y0 as usize, ts.specimen.y1 as usize);
+            let w = width as usize;
+            // Whole lines only: none cut by the rule under it.
+            let pitch = profile.pt(profile.body_size) * profile.leading;
+            let lines = ((y1 - y0) as f32 - profile.mm(3.0)) / pitch;
+            let whole = (profile.mm(3.0) + lines.floor().max(1.0) * pitch) as usize;
+            let rows = whole.min(y1 - y0).min(height as usize - from);
+            pixels[y0 * w..(y0 + rows) * w].copy_from_slice(&page[from * w..(from + rows) * w]);
+        }
+        // Each face's name, in that face.
+        for (k, (x, baseline, size)) in ts.names.iter().enumerate() {
+            let Some(f) = faces.get(k).and_then(|f| f.as_ref()) else {
+                continue;
+            };
+            let band = (size * 2.0) as u32;
+            let top = (baseline - size * 1.4).max(0.0) as u32;
+            let mut p = Page::default();
+            let mut cx = *x;
+            for s in f.shape(
+                settings::FACES[k].name,
+                wordhord_typeset::fonts::Face::Regular,
+                *size,
+                &["onum"],
+            ) {
+                p.runs.push(Run {
+                    font: s.font,
+                    size: s.size,
+                    x: cx,
+                    y: size * 1.4,
+                    glyphs: s.glyphs.iter().map(|g| (g.id, g.x, g.y)).collect(),
+                });
+                cx += s.width;
+            }
+            let name = Renderer::new(f).page(&p, width, band);
+            for (row, line) in name.chunks(width as usize).enumerate() {
+                let y = top as usize + row;
+                if y >= height as usize {
+                    break;
+                }
+                let dst = &mut pixels[y * width as usize..(y + 1) * width as usize];
+                for (d, s) in dst.iter_mut().zip(line) {
+                    *d = (*d).min(*s);
+                }
+            }
+        }
+        screen.draw(&pixels, width, height, 0, 0, flash);
+        flash = false;
+        eprintln!("type: {} drawn in {:?}", chosen.key(), started.elapsed());
+        let action = loop {
+            match screen.next() {
+                Gesture::Tap(x, y) => {
+                    if let Some(a) = ts.screen.hit(x as f32, y as f32) {
+                        break a.clone();
+                    }
+                }
+                Gesture::Power => return Some(Err(Leave::Close)),
+                _ => {}
+            }
+        };
+        let name = |list: &[&str], k: usize| list.get(k).map(|n| n.to_string());
+        match action {
+            Action::Back => break,
+            Action::Choose(Choice::Face, k) => {
+                chosen.face = settings::FACES.get(k).map_or(chosen.face, |f| f.key.into())
+            }
+            Action::Choose(Choice::Size, k) => {
+                chosen.size = name(&rows[0].2, k).unwrap_or(chosen.size)
+            }
+            Action::Choose(Choice::Measure, k) => {
+                chosen.measure = name(&rows[1].2, k).unwrap_or(chosen.measure)
+            }
+            Action::Choose(Choice::Leading, k) => {
+                chosen.leading = name(&rows[2].2, k).unwrap_or(chosen.leading)
+            }
+            Action::Choose(Choice::Setting, k) => {
+                chosen.setting = name(&rows[3].2, k).unwrap_or(chosen.setting)
+            }
+            _ => {}
+        }
+    }
+    if chosen == before {
+        return None;
+    }
+    if let Err(e) = chosen.save(app) {
+        eprintln!("type: {e}");
+        return None;
+    }
+    Some(Ok(()))
 }

@@ -1000,7 +1000,12 @@ impl<'a> Layout<'a> {
     // ---- atoms to items --------------------------------------------
 
     fn frags(&self, text: &str, style: Style, dy: f32) -> (Vec<Frag>, f32) {
-        let features: &[&str] = if style.smcp { &["smcp"] } else { &[] };
+        // Old-style figures in running text, where the face has them.
+        let features: &[&str] = if style.smcp {
+            &["smcp", "onum"]
+        } else {
+            &["onum"]
+        };
         let mut x = 0.0;
         let mut frags = Vec::new();
         for s in self.fonts.shape(text, style.face, style.size, features) {
@@ -1227,7 +1232,9 @@ impl<'a> Layout<'a> {
             let ratio = match (justify, n + 1 < breaks.len()) {
                 (true, true) => ratios[n],
                 (true, false) => ratios[n].min(0.0),
-                (false, _) => 0.0,
+                // Ragged: at its natural spacing, shrunk only if it was
+                // broken to fit by shrinking.
+                (false, _) => ratios.get(n).copied().unwrap_or(0.0).min(0.0),
             };
             while start < b && matches!(items[start], Item::Glue { .. } | Item::Penalty { .. }) {
                 start += 1;
@@ -1361,7 +1368,8 @@ impl<'a> Layout<'a> {
             Some(b) => (b.at, b.ratios),
             None => greedy(&items, measure),
         };
-        let mut lines = self.assemble(&items, &contents, &at, &ratios, true, size, block);
+        let justify = self.profile.justify;
+        let mut lines = self.assemble(&items, &contents, &at, &ratios, justify, size, block);
         for l in &mut lines {
             l.x = left;
         }
@@ -1893,8 +1901,8 @@ fn is_gap(line: &Line) -> bool {
 
 /// Where a unit's lines start new pages, if it starts at `y`. Verse breaks
 /// between its groups (stanzas set off by space, or Dante's tercets set
-/// off by indent) when one ended in the last three lines, and never inside
-/// a turned-over line. Otherwise a last line is never left alone at the top
+/// off by indent) when one ended in the last three lines, and not inside
+/// a turned-over line unless it's too long to move whole. Otherwise a last line is never left alone at the top
 /// of a page. A first line alone at the foot is prevented before the unit
 /// starts.
 fn plan(lines: &[Line], mut y: f32, top: f32, bottom: f32) -> Vec<usize> {
@@ -1911,8 +1919,17 @@ fn plan(lines: &[Line], mut y: f32, top: f32, bottom: f32) -> Vec<usize> {
                 None if k + 1 == lines.len() && k >= start + 3 => k - 1,
                 None => k,
             };
-            while lines[b].turned && b > start + 2 {
-                b -= 1;
+            // Not inside a turned-over line: before it, if that leaves two
+            // lines or more on this page. A line too long for that (a
+            // whole paragraph set as one verse line) breaks like prose.
+            if lines[b].turned {
+                let mut first = b;
+                while lines[first].turned && first > start {
+                    first -= 1;
+                }
+                if first >= start + 2 {
+                    b = first;
+                }
             }
             breaks.push(b);
             start = b;

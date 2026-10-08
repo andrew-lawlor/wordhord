@@ -15,8 +15,10 @@ use wordhord_typeset::fonts::{FontFile, Fonts};
 use wordhord_typeset::page::Typeset;
 use wordhord_typeset::profile::Profile;
 
+use crate::settings::Settings;
+
 /// Bumped when layout changes, so cached pages are laid out again.
-const LAYOUT: &str = "3";
+const LAYOUT: &str = "4";
 
 pub struct Book {
     /// Where the book's state lives: its position, and for an EPUB its
@@ -58,13 +60,14 @@ impl Book {
         }
         let started = Instant::now();
         let profile_path = app.join("profile.toml");
-        let profile = Profile::load(&profile_path)?;
-        let fonts = Fonts::load(&profile.dir, &profile.fonts)?;
+        let chosen = Settings::load(app);
+        let (profile, fonts) = chosen.apply(&Profile::load(&profile_path)?)?;
         let epub = Epub::open(path)?;
         let book = book_hash(path, app)?;
         let mut settings = Sha256::new();
         settings.update(std::fs::read(&profile_path).unwrap_or_default());
         settings.update(LAYOUT);
+        settings.update(chosen.key());
         let key = hex(&settings.finalize())[..12].to_string();
         let dir = app.join("cache").join(&book);
         let chapters = epub
@@ -134,6 +137,17 @@ impl Book {
             Source::Compiled(_) => 1,
             Source::Epub { chapters, .. } => chapters.len(),
         }
+    }
+
+    /// A chapter's text, as blocks: none for a compiled book.
+    pub fn blocks(&self, k: usize) -> Vec<wordhord_book::model::Block> {
+        let Source::Epub { epub, chapters, .. } = &self.source else {
+            return Vec::new();
+        };
+        chapters
+            .get(k)
+            .and_then(|path| wordhord_epub::convert::chapter(epub, path).ok())
+            .unwrap_or_default()
     }
 
     /// A chapter's pages: from the cache, or laid out now and cached.

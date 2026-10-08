@@ -27,7 +27,7 @@ A normal e-reader for stylus Kobos. Smaller and faster than KOReader. Built arou
 
 ## 3. What it does
 
-**Reading.** EPUB 2 and 3, reflowable, DRM-free. Font, size, margins, line spacing. Footnotes open in a panel at the foot of the page. A table of contents. Search within the book. Page turns by swipe or edge tap.
+**Reading.** EPUB 2 and 3, reflowable, DRM-free. Type set on one screen, against a specimen of the book being read: five faces, each marked with the old languages it can set; sizes by the printers' names (long primer to great primer); the measure in characters to a line; leading; justified or ragged. Kept in `wordhord.toml`. Footnotes open in a panel at the foot of the page. A table of contents. Search within the book. Page turns by swipe or edge tap.
 
 **Library.** Every EPUB on the device, found by a scan. Sorted by last read, title or author. Shelves are folders. Covers in a grid or a plain list. Nothing is imported or copied: the file on disk is the book.
 

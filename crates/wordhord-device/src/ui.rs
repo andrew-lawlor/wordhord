@@ -42,9 +42,13 @@ pub enum Action {
     /// A chapter of the book being read.
     Chapter(usize),
     Back,
-    /// The reader's bar: back to the library, or to the contents.
+    /// The reader's bar: back to the library, to the type, or to the
+    /// contents.
     Library,
+    Type,
     Contents,
+    /// On the type screen: the nth choice of a row.
+    Choose(Choice, usize),
     /// Close Wordhord, back to the Kobo's own reader.
     Close,
 }
@@ -78,6 +82,26 @@ impl Screen {
             .find(|(r, _)| r.contains(x, y))
             .map(|(_, a)| a)
     }
+}
+
+/// A row of the type screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Choice {
+    Face,
+    Size,
+    Measure,
+    Leading,
+    Setting,
+}
+
+/// The type screen as drawn by the library's fonts. The specimen, and each
+/// face's name in that face, are drawn over it by the caller.
+pub struct TypeScreen {
+    pub screen: Screen,
+    /// Where the specimen goes.
+    pub specimen: Rect,
+    /// Where each face's name goes: its left edge and baseline, and size.
+    pub names: Vec<(f32, f32, f32)>,
 }
 
 /// A row in a list.
@@ -609,8 +633,117 @@ impl<'f> Ui<'f> {
         s
     }
 
+    /// The type screen: a specimen of the book, set as chosen; then the
+    /// faces, each marked with the old languages it can set; then size,
+    /// measure, leading and setting, each a row of names to tap, the one
+    /// chosen in italic. `chosen` is each row's choice, in `Choice` order.
+    pub fn type_screen(
+        &self,
+        rows: &[(Choice, &str, Vec<&str>)],
+        chosen: &[usize],
+        faces: &[Vec<&str>],
+        note: Option<&str>,
+    ) -> TypeScreen {
+        let mut s = Screen {
+            page: Page::default(),
+            hits: Vec::new(),
+            pages: 1,
+        };
+        let m = self.margin();
+        let mut y = self.header(&mut s, "Type", true, 0);
+        let specimen = Rect {
+            x0: 0.0,
+            y0: y,
+            x1: self.w,
+            y1: y + self.mm(50.0),
+        };
+        y = specimen.y1;
+        self.hairline(&mut s.page, y, 0);
+        y += self.mm(2.0);
+        if let Some(note) = note {
+            let t = Type::new(Face::Italic, self.pt(9.0));
+            self.centred(&mut s.page, note, t, y + t.size);
+        }
+        y += self.mm(7.0);
+        let label = Type::new(Face::Regular, self.pt(9.0)).caps(0.14);
+        let mut names = Vec::new();
+        let face_choice = chosen.first().copied().unwrap_or(0);
+        self.text(&mut s.page, "face", label, m, y, self.w);
+        y += self.mm(2.0);
+        let row = self.mm(9.0);
+        let small = Type::new(Face::Regular, self.pt(8.5)).caps(0.06);
+        for (k, languages) in faces.iter().enumerate() {
+            let baseline = y + row * 0.68;
+            names.push((m, baseline, self.pt(13.0)));
+            let list = languages.join(" · ");
+            let lw = self.width(&list, small);
+            self.text(
+                &mut s.page,
+                &list,
+                small,
+                self.w - m - lw,
+                baseline,
+                lw + 1.0,
+            );
+            if k == face_choice {
+                let t = Type::new(Face::Regular, self.pt(10.5));
+                let w = self.width("❧", t);
+                self.text(&mut s.page, "❧", t, m - w - self.mm(2.5), baseline, w + 1.0);
+            }
+            s.hits.push((
+                Rect {
+                    x0: 0.0,
+                    y0: y,
+                    x1: self.w,
+                    y1: y + row,
+                },
+                Action::Choose(Choice::Face, k),
+            ));
+            y += row;
+        }
+        y += self.mm(5.0);
+        let word = Type::new(Face::Regular, self.pt(12.0));
+        for (n, (choice, name, options)) in rows.iter().enumerate() {
+            self.text(&mut s.page, name, label, m, y, self.w);
+            let baseline = y + self.mm(7.5);
+            let mut x = m;
+            let now = chosen.get(n + 1).copied().unwrap_or(0);
+            for (k, option) in options.iter().enumerate() {
+                if k > 0 {
+                    x += self.text(&mut s.page, "  ·  ", word, x, baseline, self.w);
+                }
+                let t = if k == now {
+                    Type::new(Face::Italic, word.size)
+                } else {
+                    word
+                };
+                let w = self.text(&mut s.page, option, t, x, baseline, self.w);
+                if k == now {
+                    self.rule(&mut s.page, x, baseline + word.size * 0.25, w, 1.0, 0);
+                }
+                // Generous to tap: up to halfway to the next word.
+                s.hits.push((
+                    Rect {
+                        x0: x - self.mm(2.0),
+                        y0: y - label.size,
+                        x1: x + w + self.mm(2.0),
+                        y1: baseline + self.mm(4.0),
+                    },
+                    Action::Choose(*choice, k),
+                ));
+                x += w;
+            }
+            y = baseline + self.mm(9.0);
+        }
+        TypeScreen {
+            screen: s,
+            specimen,
+            names,
+        }
+    }
+
     /// The bar over the top of a page while reading: back to the library,
-    /// the book's title, and the contents.
+    /// the book's title, the type, and the contents.
     pub fn reading_bar(&self, title: &str) -> (Screen, u32) {
         let mut s = Screen {
             page: Page::default(),
@@ -632,10 +765,24 @@ impl<'f> Ui<'f> {
             baseline,
             self.w / 3.0,
         );
+        let yw = self.width("type", label);
+        let yx = self.w - m - cw - self.mm(8.0) - yw;
+        self.text(&mut s.page, "type", label, yx, baseline, yw + 1.0);
+        s.hits.push((
+            Rect {
+                x0: yx - self.mm(4.0),
+                y0: 0.0,
+                x1: yx + yw + self.mm(4.0),
+                y1: height,
+            },
+            Action::Type,
+        ));
         let t = Type::new(Face::Italic, size);
+        // The title sits between, centred on the page if it can be.
+        let right = self.w - yx + self.mm(4.0);
         let tw = self
             .width(title, t)
-            .min(self.w - 2.0 * m - lw - cw - 2.0 * m);
+            .min(self.w - 2.0 * right.max(m + lw + m));
         self.text(
             &mut s.page,
             title,
@@ -656,7 +803,7 @@ impl<'f> Ui<'f> {
         ));
         s.hits.push((
             Rect {
-                x0: self.w - m - cw - m,
+                x0: self.w - m - cw - self.mm(4.0),
                 y0: 0.0,
                 x1: self.w,
                 y1: height,

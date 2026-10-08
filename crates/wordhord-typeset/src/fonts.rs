@@ -83,16 +83,7 @@ impl Fonts {
             if let Some(k) = files.iter().position(|f| f.path == path) {
                 return Ok(k);
             }
-            let data: &'static [u8] = Box::leak(
-                std::fs::read(root.join(path))
-                    .map_err(|e| format!("{path}: {e}"))?
-                    .into_boxed_slice(),
-            );
-            rustybuzz::Face::from_slice(data, 0).ok_or_else(|| format!("{path}: not a font"))?;
-            let sha256 = Sha256::digest(data)
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect();
+            let (data, sha256) = read_font(&root.join(path))?;
             files.push(FontFile {
                 path: path.to_string(),
                 sha256,
@@ -219,6 +210,11 @@ impl Fonts {
             .collect()
     }
 
+    /// Whether the regular face itself has `c`, without the fallback.
+    pub fn covers(&self, c: char) -> bool {
+        c.is_whitespace() || self.rb(self.file(Face::Regular)).glyph_index(c).is_some()
+    }
+
     /// The width of a space in the regular face at `size`.
     pub fn space(&self, size: f32) -> f32 {
         self.shape(" ", Face::Regular, size, &[])
@@ -247,4 +243,30 @@ pub fn visible(text: &str) -> String {
             )
         })
         .collect()
+}
+
+/// A font file's bytes, kept for as long as the program runs, and their
+/// SHA-256. Each file is read once: opening a book again, or trying faces
+/// in the settings, uses the copy already read.
+fn read_font(path: &Path) -> Result<(&'static [u8], String), String> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    type Read = HashMap<std::path::PathBuf, (&'static [u8], String)>;
+    static READ: OnceLock<Mutex<Read>> = OnceLock::new();
+    let read = READ.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(found) = read.lock().unwrap_or_else(|e| e.into_inner()).get(path) {
+        return Ok(found.clone());
+    }
+    let shown = path.display();
+    let bytes = std::fs::read(path).map_err(|e| format!("{shown}: {e}"))?;
+    rustybuzz::Face::from_slice(&bytes, 0).ok_or_else(|| format!("{shown}: not a font"))?;
+    let sha256: String = Sha256::digest(&bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let data: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+    read.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(path.to_path_buf(), (data, sha256.clone()));
+    Ok((data, sha256))
 }

@@ -18,6 +18,9 @@ pub struct Profile {
     pub body_size: f32,
     /// Baseline to baseline, as a multiple of the size.
     pub leading: f32,
+    /// Prose justified, or set ragged right.
+    #[serde(default = "justified")]
+    pub justify: bool,
     pub fonts: FontPaths,
     /// The folder the profile was read from: font paths are relative to it.
     #[serde(skip)]
@@ -43,6 +46,10 @@ pub struct FontPaths {
     /// For code.
     pub mono: Option<String>,
     pub fallback: Option<String>,
+}
+
+fn justified() -> bool {
+    true
 }
 
 impl Profile {
