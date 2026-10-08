@@ -22,7 +22,7 @@ use crate::hoard::{self, Hoard, Kept};
 use crate::lexicon::{self, Lexicon};
 use crate::library::{self, Entry, Library};
 use crate::light::Light;
-use crate::marks::{Marks, Underline, Words};
+use crate::marks::{Anchor, Marks, Underline, Words};
 use crate::platform::Platform;
 use crate::reader::{Effect, Reader};
 use crate::settings::{self, Settings};
@@ -79,7 +79,8 @@ pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), Str
     let mut open = library::recent(app)
         .into_iter()
         .map(|o| o.path)
-        .find(|p| library.books.iter().any(|b| &b.path == p));
+        .find(|p| library.books.iter().any(|b| &b.path == p))
+        .map(|p| (p, None));
     let mut browser = Browser::default();
     let tools = Tools {
         ui: &ui,
@@ -91,8 +92,8 @@ pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), Str
         marks: &marks,
     };
     loop {
-        if let Some(path) = open.take() {
-            match read(screen, root, &path, app, &tools) {
+        if let Some((path, at)) = open.take() {
+            match read(screen, root, &path, at, app, &tools) {
                 Ok(Leave::Library) => {}
                 Ok(Leave::Close) => return Ok(()),
                 Err(e) => {
@@ -107,7 +108,7 @@ pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), Str
             }
         }
         match browse(screen, &mut browser, &library, root, app, &tools) {
-            Some(path) => open = Some(path),
+            Some(book) => open = Some(book),
             None => return Ok(()),
         }
     }
@@ -123,6 +124,7 @@ enum View {
     Hoard,
     /// A word of the hoard, by its place in the list.
     Word(usize),
+    Commonplace,
 }
 
 /// Where in the library the reader is: the views gone through, each with
@@ -143,6 +145,7 @@ impl Browser {
             Action::Group(s, k) => self.stack.push((View::Group(*s, *k), 0)),
             Action::Hoard => self.stack.push((View::Hoard, 0)),
             Action::Word(k) => self.stack.push((View::Word(*k), 0)),
+            Action::Commonplace => self.stack.push((View::Commonplace, 0)),
             Action::Back => {
                 self.stack.pop();
             }
@@ -212,6 +215,7 @@ impl Browser {
                     ],
                     tools.hoard.borrow().words().len(),
                     tools.hoard.borrow().due(hoard::now()).len(),
+                    tools.marks.borrow().count(),
                 )
             }
             View::Hoard => {
@@ -238,6 +242,7 @@ impl Browser {
                 ui.list("The hoard", &rows, page, true)
             }
             View::Word(k) => word_page(tools, k, page),
+            View::Commonplace => commonplace(tools, page),
             View::Shelf(Shelf::All) => {
                 let rows: Vec<Row> = library.books.iter().map(row).collect();
                 ui.list(Shelf::All.name(), &rows, page, true)
@@ -438,6 +443,18 @@ fn rule(pixels: &mut [u8], width: u32, height: u32, rules: &[Rect]) {
     }
 }
 
+/// A block of grey pixels laid over a screen's at `r`.
+fn paste(pixels: &mut [u8], width: u32, height: u32, block: &[u8], r: &Rect) {
+    let (x0, y0) = (r.x0.max(0.0) as u32, r.y0.max(0.0) as u32);
+    let bw = (r.x1 - r.x0) as u32;
+    let (w, h) = (bw.min(width - x0), ((r.y1 - r.y0) as u32).min(height - y0));
+    for row in 0..h {
+        let dst = ((y0 + row) * width + x0) as usize;
+        let src = (row * bw) as usize;
+        pixels[dst..dst + w as usize].copy_from_slice(&block[src..src + w as usize]);
+    }
+}
+
 /// Runs of words on a page that `chosen` picks, each within one line: the
 /// first and last of each, by their place on the page.
 fn runs(page: &Page, chosen: impl Fn(usize) -> bool) -> Vec<(usize, usize)> {
@@ -509,6 +526,69 @@ fn nearest_word(page: &Page, x: f32, y: f32) -> Option<usize> {
                 .then(along(a).total_cmp(&along(b)))
         })
         .map(|(k, _)| k)
+}
+
+/// The commonplace book: every passage underlined, set as quotations
+/// under their books' titles. A tap on one opens the book there.
+fn commonplace(tools: &Tools, page: usize) -> Screen {
+    use wordhord_book::model::{Block, BlockKind, Inline};
+    let ui = tools.ui;
+    let marks = tools.marks.borrow();
+    let all = marks.by_book();
+    let mut blocks = Vec::new();
+    let mut last_book = "";
+    for (k, u) in all.iter().enumerate() {
+        if u.path != last_book {
+            last_book = &u.path;
+            if k > 0 {
+                blocks.push(block(BlockKind::SceneBreak));
+            }
+            blocks.push(block(BlockKind::Paragraph(vec![Inline::Emphasis(vec![
+                Inline::Text(u.book.clone()),
+            ])])));
+        }
+        let id = format!("passage-{k}");
+        let with_id = |b: Block| Block {
+            id: Some(id.clone()),
+            ..b
+        };
+        blocks.push(with_id(block(BlockKind::Quote(vec![with_id(block(
+            BlockKind::Paragraph(vec![Inline::Text(u.text.clone())]),
+        ))]))));
+    }
+    let set = set_pages(tools, &blocks, tools.profile.height as f32);
+    let pages = set.len().max(1);
+    let page = page.min(pages - 1);
+    let content = set.into_iter().nth(page).unwrap_or_default();
+    // Each passage, wherever its words are on the page, is a place to tap.
+    let mut hits: Vec<(Rect, Action)> = Vec::new();
+    for w in &content.words {
+        let Some(k) = w
+            .block
+            .strip_prefix("passage-")
+            .and_then(|n| n.parse::<usize>().ok())
+        else {
+            continue;
+        };
+        match hits.iter_mut().find(|(_, a)| *a == Action::Passage(k)) {
+            Some((r, _)) => {
+                r.y0 = r.y0.min(w.y0);
+                r.y1 = r.y1.max(w.y1);
+            }
+            None => hits.push((
+                Rect {
+                    x0: 0.0,
+                    y0: w.y0,
+                    x1: tools.profile.width as f32,
+                    y1: w.y1,
+                },
+                Action::Passage(k),
+            )),
+        }
+    }
+    let mut s = ui.titled("Commonplace book", content, page, pages);
+    s.hits.extend(hits);
+    s
 }
 
 /// When a word graded so would come back, in words.
@@ -630,7 +710,7 @@ fn browse(
     root: &Path,
     app: &Path,
     tools: &Tools,
-) -> Option<String> {
+) -> Option<(String, Place)> {
     let fonts = tools.fonts;
     let (width, height) = screen.size();
     let read = |src: &str| {
@@ -674,7 +754,13 @@ fn browse(
                     break;
                 }
                 Gesture::Tap(x, y) => match s.hit(x as f32, y as f32) {
-                    Some(Action::Open(path)) => return Some(path.clone()),
+                    Some(Action::Open(path)) => return Some((path.clone(), None)),
+                    Some(Action::Passage(k)) => {
+                        let marks = tools.marks.borrow();
+                        if let Some(u) = marks.by_book().get(*k) {
+                            return Some((u.path.clone(), Some((u.chapter, u.start.clone()))));
+                        }
+                    }
                     Some(Action::Close) => return None,
                     Some(Action::Unlock) => {
                         if !unlock(screen, &mut renderer, tools) {
@@ -724,10 +810,14 @@ enum Step {
     Leave(Leave),
 }
 
+/// A place in a book to open it at: a chapter, and a word of it.
+type Place = Option<(usize, Anchor)>;
+
 fn read(
     screen: &mut dyn Platform,
     root: &Path,
     path: &str,
+    at: Place,
     app: &Path,
     tools: &Tools,
 ) -> Result<Leave, String> {
@@ -742,6 +832,12 @@ fn read(
         started.elapsed()
     );
     let (mut chapter, mut page) = book.position();
+    // Opened at a passage: its chapter now, its page once laid out.
+    let mut find_anchor = None;
+    if let Some((c, anchor)) = at.filter(|a| a.0 < book.chapters()) {
+        chapter = c;
+        find_anchor = Some(anchor);
+    }
     let mut flash = true;
     // Chapters laid out ahead, on another thread.
     let mut ahead = Ahead::start(&book);
@@ -766,6 +862,15 @@ fn read(
             .with_picture_cache(book.picture_dir());
         if let Some(word) = find.take() {
             page = page_with(&t, word);
+        }
+        if let Some(anchor) = find_anchor.take() {
+            let words = Words::of(&t);
+            page = words
+                .anchors
+                .iter()
+                .position(|a| *a == anchor)
+                .and_then(|n| words.on_page.iter().position(|p| p.contains(&n)))
+                .unwrap_or(0);
         }
         let mut reader = Reader::new(&t, page);
         let progress =
@@ -797,6 +902,8 @@ fn read(
         // by their place on the page; and the rows last drawn marked.
         let mut chosen: Option<(usize, usize)> = None;
         let mut marked_rows: Option<(u32, u32)> = None;
+        // Pressed on an underline already there: its id, and the word.
+        let mut editing: Option<(String, usize)> = None;
         flash = false;
         ahead.reading(&book, chapter);
         // Where a light gauge is showing, to clear at the next touch.
@@ -804,7 +911,8 @@ fn read(
         let step = 'reading: loop {
             let gesture = screen.next();
             let page_now = &t.pages[reader.page];
-            // Choosing a passage: pressed on a word, dragged, let go.
+            let numbers = &numbered.on_page[reader.page];
+            // The grey a word looked up has, over a passage, line by line.
             let mark = |chosen: (usize, usize)| -> Vec<Rect> {
                 let (a, b) = (chosen.0.min(chosen.1), chosen.0.max(chosen.1));
                 runs(page_now, |k| (a..=b).contains(&k))
@@ -812,11 +920,56 @@ fn read(
                     .map(|r| run_box(page_now, r))
                     .collect()
             };
+            // The rows from `boxes` and those last drawn over, from `pixels`.
+            let mut redraw_rows = |screen: &mut dyn Platform, pixels: &[u8], boxes: &[Rect]| {
+                let top = boxes
+                    .iter()
+                    .map(|b| b.y0.max(0.0) as u32)
+                    .min()
+                    .unwrap_or(height);
+                let bottom = boxes
+                    .iter()
+                    .map(|b| b.y1 as u32)
+                    .max()
+                    .unwrap_or(0)
+                    .min(height);
+                let (top, bottom) = match marked_rows.take() {
+                    Some((t0, b0)) => (top.min(t0), bottom.max(b0)),
+                    None => (top, bottom),
+                };
+                if bottom > top {
+                    let rows = &pixels[(top * width) as usize..(bottom * width) as usize];
+                    screen.draw(rows, width, bottom - top, 0, top, false);
+                }
+                (top, bottom)
+            };
             match gesture {
                 Gesture::Press(x, y) => {
-                    chosen = crate::reader::word_at(page_now, x as f32, y as f32).map(|k| (k, k));
+                    let k = crate::reader::word_at(page_now, x as f32, y as f32);
+                    chosen = k.map(|k| (k, k));
+                    editing = None;
+                    // Pressed on an underline: the whole of it, to take
+                    // away, rather than a new one.
+                    if let Some(k) = k {
+                        let n = numbers[k];
+                        let found = tools
+                            .marks
+                            .borrow()
+                            .in_chapter(path, chapter)
+                            .find_map(|u| {
+                                let (s, e) = numbered.span(u)?;
+                                (s..=e).contains(&n).then(|| (u.id.clone(), s, e))
+                            });
+                        if let Some((id, s, e)) = found {
+                            let on: Vec<usize> = (0..numbers.len())
+                                .filter(|&i| (s..=e).contains(&numbers[i]))
+                                .collect();
+                            chosen = Some((on[0], on[on.len() - 1]));
+                            editing = Some((id, k));
+                        }
+                    }
                 }
-                Gesture::Drag(x, y) => {
+                Gesture::Drag(x, y) if editing.is_none() => {
                     if let (Some(c), Some(k)) = (chosen, nearest_word(page_now, x as f32, y as f32))
                     {
                         chosen = Some((c.0, k));
@@ -824,43 +977,84 @@ fn read(
                 }
                 _ => {}
             }
-            if let (Gesture::Press(..) | Gesture::Drag(..), Some(c)) = (gesture, chosen) {
-                // The grey as a word looked up has, over the passage so far;
-                // drawn over the rows it covers now and covered before.
-                let boxes = mark(c);
-                let marked = highlight(&shown, width, height, &boxes);
-                let top = boxes
-                    .iter()
-                    .map(|b| b.y0.max(0.0) as u32)
-                    .min()
-                    .unwrap_or(0);
-                let bottom = boxes
-                    .iter()
-                    .map(|b| b.y1 as u32)
-                    .max()
-                    .unwrap_or(0)
-                    .min(height);
-                let (top, bottom) = match marked_rows {
-                    Some((t0, b0)) => (top.min(t0), bottom.max(b0)),
-                    None => (top, bottom),
-                };
-                marked_rows = Some((top, bottom));
-                if bottom > top {
-                    let rows = &marked[(top * width) as usize..(bottom * width) as usize];
-                    screen.draw(rows, width, bottom - top, 0, top, false);
-                }
+            if let (Gesture::Press(x, y) | Gesture::Drag(x, y), Some(c)) = (gesture, chosen) {
+                // The passage grey so far, and over it a loupe with the
+                // word under the finger, which the finger hides.
+                let mut boxes = mark(c);
+                let mut marked = highlight(&shown, width, height, &boxes);
+                let under = editing.as_ref().map_or(c.1, |e| e.1);
+                let word = &page_now.words[under].text;
+                let (lp, lr) = ui.loupe(word, x as f32, y as f32);
+                let (lw, lh) = ((lr.x1 - lr.x0) as u32, (lr.y1 - lr.y0) as u32);
+                let lens = chrome.page(&lp, lw, lh);
+                paste(&mut marked, width, height, &lens, &lr);
+                boxes.push(lr);
+                marked_rows = Some(redraw_rows(screen, &marked, &boxes));
                 continue;
+            }
+            let mut forced = None;
+            let held = matches!(gesture, Gesture::Release(..) | Gesture::Hold(..));
+            if let (true, Some((id, k)), Some(c)) = (
+                held && editing.is_some() && chosen.is_some(),
+                editing.take(),
+                chosen,
+            ) {
+                chosen = None;
+                // An underline held: grey still, with what can be done
+                // with it beside it.
+                let mut boxes = mark(c);
+                let above = boxes.iter().map(|b| b.y0).fold(f32::MAX, f32::min);
+                let below = boxes.iter().map(|b| b.y1).fold(0.0, f32::max);
+                let mut marked = highlight(&shown, width, height, &boxes);
+                let (bp, br, hits) = ui.choices(&["remove underline", "look up"], above, below);
+                let (bw, bh) = ((br.x1 - br.x0) as u32, (br.y1 - br.y0) as u32);
+                let bar = chrome.page(&bp, bw, bh);
+                paste(&mut marked, width, height, &bar, &br);
+                boxes.push(br);
+                let rows = redraw_rows(screen, &marked, &boxes);
+                let choice = match screen.next() {
+                    Gesture::Tap(x, y) => hits.iter().position(|r| r.contains(x as f32, y as f32)),
+                    Gesture::Power => break Step::Leave(Leave::Close),
+                    _ => None,
+                };
+                if choice == Some(0) {
+                    match tools.marks.borrow_mut().remove(&id) {
+                        Ok(()) => eprintln!("underline removed"),
+                        Err(e) => eprintln!("underline: {e}"),
+                    }
+                    shown = draw(
+                        screen,
+                        &mut renderer,
+                        &t.pages[reader.page],
+                        false,
+                        &rules(reader.page),
+                    );
+                    continue;
+                }
+                // The page as it was, then the lookup, if that was chosen.
+                let page_rows = &shown[(rows.0 * width) as usize..(rows.1 * width) as usize];
+                screen.draw(page_rows, width, rows.1 - rows.0, 0, rows.0, false);
+                if choice != Some(1) {
+                    continue;
+                }
+                forced = Some(Effect::Look(k));
             }
             if let Gesture::Release(..) = gesture {
                 marked_rows = None;
                 if let Some((a, b)) = chosen.take() {
-                    let numbers = &numbered.on_page[reader.page];
                     let (s, e) = (numbers[a.min(b)], numbers[a.max(b)]);
+                    // In verse, a new line is marked as a quotation marks
+                    // it: " / ".
+                    let first = &page_now.words[a.min(b)];
+                    let verse = hoard::is_verse(&book.blocks(chapter), &first.block);
                     let mut text = String::new();
+                    let mut line = first.y0;
                     for w in page_now.words.iter().skip(a.min(b)).take(a.abs_diff(b) + 1) {
                         if !text.is_empty() && !w.continues {
-                            text.push(' ');
+                            let turned = (w.y0 - line).abs() > 1.0;
+                            text.push_str(if verse && turned { " / " } else { " " });
                         }
+                        line = w.y0;
                         text.push_str(&w.text);
                     }
                     let done = tools.marks.borrow_mut().underline(Underline {
@@ -887,10 +1081,13 @@ fn read(
                 );
                 continue;
             }
-            // Pressed but never moved: a hold, which looks the word up.
-            chosen = None;
+            // Pressed but never moved: a hold, which looks the word up. The
+            // loupe and the grey go first.
+            if chosen.take().is_some() {
+                redraw_rows(screen, &shown, &[]);
+            }
             marked_rows = None;
-            let effect = reader.act(gesture);
+            let effect = forced.unwrap_or_else(|| reader.act(gesture));
             eprintln!("{gesture:?}: {effect:?}");
             if let Some(r) = gauge.take() {
                 // A new page, or another gauge, covers it anyway.
@@ -1069,18 +1266,6 @@ fn read(
                             .unwrap_or_else(|| (printed.clone(), 0))
                     };
                     let mut here: Option<(String, usize)> = None;
-                    // An underline the word is in, which the panel can take
-                    // away.
-                    let underlined: Option<String> = {
-                        let n = numbered.on_page[reader.page][k];
-                        tools
-                            .marks
-                            .borrow()
-                            .in_chapter(path, chapter)
-                            .find(|u| numbered.span(u).is_some_and(|(s, e)| (s..=e).contains(&n)))
-                            .map(|u| u.id.clone())
-                    };
-                    let mut removed = false;
                     let mut at = 0;
                     loop {
                         let mut pixels = render::panel(&mut chrome, &pages[at], w, h);
@@ -1129,15 +1314,6 @@ fn read(
                                 }
                             }
                         }
-                        let remove = underlined.as_ref().map(|_| {
-                            let (mark, hit) =
-                                ui.label("remove underline", false, right, tools.profile.mm(4.8));
-                            let over = chrome.page(&mark, w_px, h);
-                            for (p, o) in pixels.iter_mut().zip(&over) {
-                                *p = (*p).min(*o);
-                            }
-                            hit
-                        });
                         if above {
                             // The rule goes on the panel's lower edge.
                             let rule = (w * 3) as usize;
@@ -1153,18 +1329,6 @@ fn read(
                             match screen.next() {
                                 Gesture::Tap(x, y) if inside(y) => {
                                     let (px, py) = (x as f32, y as f32 - area.y);
-                                    if remove.is_some_and(|r| r.contains(px, py)) {
-                                        if let Some(id) = &underlined {
-                                            match tools.marks.borrow_mut().remove(id) {
-                                                Ok(()) => {
-                                                    removed = true;
-                                                    eprintln!("underline removed");
-                                                }
-                                                Err(e) => eprintln!("underline: {e}"),
-                                            }
-                                        }
-                                        break usize::MAX;
-                                    }
                                     if let Some(&(_, n)) =
                                         marks.iter().find(|(r, _)| r.contains(px, py))
                                     {
@@ -1220,16 +1384,6 @@ fn read(
                             break;
                         }
                         at = next;
-                    }
-                    if removed {
-                        shown = draw(
-                            screen,
-                            &mut renderer,
-                            &t.pages[reader.page],
-                            false,
-                            &rules(reader.page),
-                        );
-                        continue;
                     }
                     // The page as it was: no panel, no mark.
                     let top = (area.y as u32)

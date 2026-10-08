@@ -93,6 +93,32 @@ impl Marks {
         Ok(())
     }
 
+    /// Every underline, for the commonplace book: by book, the book
+    /// underlined in last first; in each, in the order of its chapters,
+    /// then as they were made.
+    pub fn by_book(&self) -> Vec<&Underline> {
+        let mut books: Vec<(&str, u64)> = Vec::new();
+        for u in &self.underlines {
+            match books.iter_mut().find(|b| b.0 == u.path) {
+                Some(b) => b.1 = b.1.max(u.time),
+                None => books.push((&u.path, u.time)),
+            }
+        }
+        books.sort_by_key(|b| std::cmp::Reverse(b.1));
+        let mut out: Vec<&Underline> = Vec::new();
+        for (path, _) in books {
+            let mut these: Vec<&Underline> =
+                self.underlines.iter().filter(|u| u.path == path).collect();
+            these.sort_by_key(|u| (u.chapter, u.time));
+            out.extend(these);
+        }
+        out
+    }
+
+    pub fn count(&self) -> usize {
+        self.underlines.len()
+    }
+
     /// The underlines in a chapter of a book.
     pub fn in_chapter<'a>(
         &'a self,

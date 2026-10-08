@@ -33,13 +33,13 @@ A normal e-reader for stylus Kobos. Smaller and faster than KOReader. Built arou
 
 **Pen.** Write anywhere on the page. Ink is drawn as you write, with the fast waveform. Gestures in §6.
 
-**Highlights and notes.** A highlight is an underline: a fine rule under the words, as a pencil leaves in a printed book. Hold a word a second, it turns grey, drag over the passage and lift. A hold that doesn't move still looks the word up. Tap an underlined word and its panel offers *remove underline*. Underlines are anchored by paragraph and word, not page, so they keep to their words through any change of type, and keep their text in the log. Underline with the pen too, later. Add a written note with the pen, or a typed one.
+**Highlights and notes.** A highlight is an underline: a fine rule under the words, as a pencil leaves in a printed book. Hold a word a second: it turns grey, and a loupe above the finger shows the word under it, set large, since the finger hides it. Drag over the passage, the loupe following with the word it ends on, and lift. A hold that doesn't move still looks the word up. Tap reads, hold marks: a tap on an underlined word looks it up as any other; a hold on one greys the whole underline and offers *remove underline · look up*. Underlines are anchored by paragraph and word, not page, so they keep to their words through any change of type, and keep their text in the log. Underline with the pen too, later. Add a written note with the pen, or a typed one.
 
 **Dictionary.** Tap a word. Its Wiktionary entry opens in the panel: dictionary form, the grammar of the form you tapped, senses, etymology. Works on inflected forms (§7).
 
 **The hoard.** One tap hoards a word, with its sentence, book and place. Unlock it on the device: review. Export anywhere (§8).
 
-**Commonplace book.** Every highlight, note and kept word, across all books, in one place on the device and in one Markdown file on export.
+**Commonplace book.** Every highlight, note and kept word, across all books, in one place on the device and in one Markdown file on export. First, underlines: a row on the library's home, then each book's passages as quotations under its title, the book underlined in last first. A tap on a passage opens the book at it.
 
 ## 4. Not goals
 

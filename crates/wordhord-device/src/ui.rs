@@ -50,6 +50,10 @@ pub enum Action {
     /// The hoard: its words, and one word's page by its place in them.
     Hoard,
     Word(usize),
+    /// The commonplace book: every underline; and one passage of it, by
+    /// its place there, to open the book at.
+    Commonplace,
+    Passage(usize),
     /// Unlocking the hoard: begin, show the entry, grade it 1 to 4.
     Unlock,
     Reveal,
@@ -424,6 +428,99 @@ impl<'f> Ui<'f> {
         )
     }
 
+    /// A few choices in a framed strip, as small caps between middle dots:
+    /// above the rows from `above` to `below` if there's room, else under
+    /// them. In the strip's own coordinates; then where the strip goes, and
+    /// where each choice is on the screen.
+    pub fn choices(&self, names: &[&str], above: f32, below: f32) -> (Page, Rect, Vec<Rect>) {
+        let mut page = Page::default();
+        let t = Type::new(Face::Regular, self.pt(10.0)).caps(0.14);
+        let (pad, gap) = (self.mm(6.0), self.mm(9.0));
+        let widths: Vec<f32> = names.iter().map(|n| self.width(n, t)).collect();
+        let w = (widths.iter().sum::<f32>() + gap * (names.len() - 1) as f32 + 2.0 * pad).round();
+        let h = self.mm(11.0).round();
+        let top = if above - self.mm(3.0) - h >= 0.0 {
+            above - self.mm(3.0) - h
+        } else {
+            below + self.mm(3.0)
+        }
+        .round();
+        let left = ((self.w - w) / 2.0).round();
+        self.frame(&mut page, 0.0, 0.0, w, h, 0);
+        let baseline = (h + t.size * 0.55) / 2.0;
+        let mut x = pad;
+        let mut hits = Vec::new();
+        for (k, name) in names.iter().enumerate() {
+            if k > 0 {
+                let dot = Type::new(Face::Regular, self.pt(10.0));
+                let dw = self.width("·", dot);
+                self.text(
+                    &mut page,
+                    "·",
+                    dot,
+                    x - gap / 2.0 - dw / 2.0,
+                    baseline,
+                    dw + 1.0,
+                );
+            }
+            self.text(&mut page, name, t, x, baseline, widths[k] + 1.0);
+            hits.push(Rect {
+                x0: left + x - gap / 2.0,
+                y0: top,
+                x1: left + x + widths[k] + gap / 2.0,
+                y1: top + h,
+            });
+            x += widths[k] + gap;
+        }
+        (
+            page,
+            Rect {
+                x0: left,
+                y0: top,
+                x1: left + w,
+                y1: top + h,
+            },
+            hits,
+        )
+    }
+
+    /// A loupe: the word under a finger, set large in a framed box above
+    /// it, so the finger doesn't hide it. In the box's own coordinates, and
+    /// where the box goes: above (`x`, `y`) if there's room, else below.
+    pub fn loupe(&self, word: &str, x: f32, y: f32) -> (Page, Rect) {
+        let mut page = Page::default();
+        let t = Type::new(Face::Regular, self.pt(22.0));
+        let pad = self.mm(5.0);
+        let w = (self.width(word, t) + 2.0 * pad)
+            .max(self.mm(30.0))
+            .min(self.w - 2.0 * self.mm(3.0))
+            .round();
+        let h = (t.size * 1.6 + pad).round();
+        // Clear of the fingertip: well above it, or below near the top.
+        let lift = self.mm(14.0);
+        let top = if y - lift - h >= 0.0 {
+            y - lift - h
+        } else {
+            y + lift
+        };
+        let left = (x - w / 2.0).clamp(self.mm(3.0), self.w - self.mm(3.0) - w);
+        let (left, top) = (left.round(), top.round());
+        self.frame(&mut page, 0.0, 0.0, w, h, 0);
+        self.frame(&mut page, 1.0, 1.0, w - 2.0, h - 2.0, 0);
+        let tw = self.width(word, t).min(w - 2.0 * pad);
+        let baseline = (h + t.size * 0.62) / 2.0;
+        self.text(&mut page, word, t, (w - tw) / 2.0, baseline, w - 2.0 * pad);
+        (
+            page,
+            Rect {
+                x0: left,
+                y0: top,
+                x1: left + w,
+                y1: top + h,
+            },
+        )
+    }
+
     /// Where the foot of a card begins: what's above it is the card's.
     pub fn card_foot(&self) -> f32 {
         self.h - self.mm(26.0)
@@ -574,6 +671,7 @@ impl<'f> Ui<'f> {
         shelves: [(Shelf, usize); 4],
         hoard: usize,
         due: usize,
+        underlines: usize,
     ) -> Screen {
         let mut s = Screen {
             page: Page::default(),
@@ -644,6 +742,11 @@ impl<'f> Ui<'f> {
             .map(|(shelf, count)| (shelf.name(), *count, Action::Shelf(*shelf)))
             .chain((hoard > 0).then_some(("The hoard", hoard, Action::Hoard)))
             .chain((due > 0).then_some(("Unlock the hoard", due, Action::Unlock)))
+            .chain((underlines > 0).then_some((
+                "Commonplace book",
+                underlines,
+                Action::Commonplace,
+            )))
             .filter(|r| r.1 > 0)
             .collect();
         // Close, at the foot, keeps its own ground: the rows close up to

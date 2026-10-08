@@ -305,6 +305,15 @@ pub fn sentence(blocks: &[Block], id: &str, nth: usize, word: &str) -> Option<(S
     Some((text, offset))
 }
 
+/// Whether the block `id` is verse, set line by line.
+pub fn is_verse(blocks: &[Block], id: &str) -> bool {
+    let mut all = Vec::new();
+    model::walk(blocks, &mut all);
+    all.into_iter()
+        .find(|b| b.id.as_deref() == Some(id))
+        .is_some_and(block_inlines_are_lines)
+}
+
 fn block_inlines_are_lines(b: &Block) -> bool {
     use wordhord_book::model::BlockKind;
     matches!(b.kind, BlockKind::Verse(_) | BlockKind::Stanza(_))

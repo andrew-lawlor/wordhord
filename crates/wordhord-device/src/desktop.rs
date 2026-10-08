@@ -329,6 +329,10 @@ impl Script {
                     y.parse().map_err(|_| format!("`{step}`"))?,
                 ),
                 ["power"] => Gesture::Power,
+                ["press", x, y] => Gesture::Press(
+                    x.parse().map_err(|_| format!("`{step}`"))?,
+                    y.parse().map_err(|_| format!("`{step}`"))?,
+                ),
                 // Pressed at one place, dragged to another and let go.
                 ["drag", x0, y0, x1, y1] => {
                     let n = |v: &str| v.parse::<i32>().map_err(|_| format!("`{step}`"));
