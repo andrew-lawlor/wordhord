@@ -14,6 +14,9 @@ for face in junicode ebgaramond cardo literata atkinson; do
 	cp fonts/$face/*.otf fonts/$face/*.ttf "$APP/fonts/" 2>/dev/null || true
 	cp fonts/$face/OFL.txt "$APP/fonts/$face-OFL.txt"
 done
+# The sleep screen: Knud Baade's painting, with its credit.
+cp art/sleep.png "$APP/sleep.png"
+cp art/README.md "$APP/sleep-credit.txt"
 sed -e 's|"\.\./fonts/[a-z]*/|"fonts/|' profiles/elipsa-2e.toml >"$APP/profile.toml"
 # Dictionary packs built with `wordhord dictionary`, if any.
 mkdir -p "$APP/dictionaries"

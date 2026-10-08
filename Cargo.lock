@@ -1246,6 +1246,7 @@ dependencies = [
  "cc",
  "libc",
  "minifb",
+ "png 0.17.16",
  "serde",
  "serde_json",
  "sha2",

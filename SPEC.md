@@ -189,7 +189,7 @@ Everything that touches hardware sits behind one thin layer, so the rest of Word
 
 Three backends:
 
-**Kobo** (first). FBInk draws and refreshes. Input devices are read raw. NickelMenu starts a script that pauses Nickel with SIGSTOP and saves its screen; both come back on exit or crash. Wordhord closes itself after 30 minutes untouched, so Nickel's sleep and power handling return. Nickel holds the power button and the sleep cover, so Wordhord can't grab them; a power press while Wordhord runs reaches Nickel when it resumes. Wordhord closes from the foot of the library's home; it needs, later, its own sleep. With Nickel paused, Wordhord sets the front light itself, through the sysfs files KOReader uses, and puts Nickel's levels back on exit.
+**Kobo** (first). FBInk draws and refreshes. Input devices are read raw. NickelMenu starts a script that pauses Nickel with SIGSTOP and saves its screen; both come back on exit or crash. Wordhord closes itself after 30 minutes untouched, so Nickel's sleep and power handling return. Nickel holds the power button and the sleep cover, so Wordhord can't grab them; a power press while Wordhord runs reaches Nickel when it resumes. Wordhord closes from the foot of the library's home. It sleeps on its own: Nickel holds the power button's events, but Wordhord asks every 50 ms whether the button is down (EVIOCGKEY), and a press, or fifteen minutes untouched, shows the sleep screen, puts the light out and suspends the Kobo as KOReader does (state-extended, a pause, sync, wakeup_count, then `mem`). The e-ink controller refuses to suspend while it still powers the panel after drawing ("xon off timer pending"), so a refusal is tried again each second. On the charger a MediaTek Kobo crashes if it suspends, so there the sleep screen waits for the button without suspending. Waking puts the screen back as it was. The presses also queue for Nickel, which sleeps and wakes once on its return. The sleep screen is Knud Baade's *Fantasibilde fra den norske sagatid* (1850): the warden on the sea-cliff, the coast-guard who challenges Beowulf before he *wordhord onleac*. With Nickel paused, Wordhord sets the front light itself, through the sysfs files KOReader uses, and puts Nickel's levels back on exit.
 
 **PineNote** (later). The same 10.3" 1404×1872 panel as the Elipsa 2E, so layouts and cached pages carry over unchanged. It runs ordinary Linux, so Wordhord is a normal program there: no host app to pause. The pen is a Wacom digitiser, a standard input device. The work is the display: the `rockchip_ebc` e-ink driver, which is still changing. Check its state before starting.
 
@@ -211,7 +211,7 @@ Small things that make it Wordhord's:
 
 - **PDF with ink.** MuPDF is the obvious engine (AGPL). PDFs are where Elipsa owners write most. After v1, or in it?
 - **English dictionary size.** Trim to senses and forms, or ship it whole?
-- **Exit and sleep.** A gesture to leave and Wordhord's own sleep screen, or always hand back to Nickel?
+- **Exit and sleep.** Settled: Wordhord sleeps itself, and closes from home.
 - **Searching ink.** That needs transcription. Kollate does it on the desktop today. Is that enough?
 
 ## 16. Milestones

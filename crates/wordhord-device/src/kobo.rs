@@ -22,12 +22,19 @@ extern "C" {
 
 const INPUT_TOUCHSCREEN: u32 = 1 << 3;
 const INPUT_TABLET: u32 = 1 << 5;
+const INPUT_POWER_BUTTON: u32 = 1 << 16;
+/// `EVIOCGKEY(96)`: which keys are down now. Nickel holds the power
+/// button's events, but anyone may ask whether it's pressed.
+const EVIOCGKEY: libc::c_ulong = 0x8060_4518;
+const KEY_POWER: usize = 116;
+/// How often the power button is asked after.
+const POWER_MS: c_int = 50;
 /// `_IOW('E', 0x90, int)`: take a device's events for ourselves, so
 /// Nickel doesn't find our taps waiting when it resumes.
 const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
-/// Nickel's sleep timer is paused with it, so the reader closes itself
-/// after this long untouched, and Nickel takes over again.
-const IDLE_MS: c_int = 30 * 60 * 1000;
+/// Nickel's sleep timer is paused with it, so the reader puts the Kobo to
+/// sleep itself after this long untouched.
+const IDLE_SECONDS: u64 = 15 * 60;
 
 pub fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -114,6 +121,10 @@ fn run(library: &Path, app: &Path, screen: &str) -> ExitCode {
         );
     }
 
+    let power = inputs
+        .iter()
+        .find(|i| i.types & INPUT_POWER_BUTTON != 0)
+        .map(|i| i.fd);
     let mut kobo = Kobo {
         fd,
         panel,
@@ -121,6 +132,8 @@ fn run(library: &Path, app: &Path, screen: &str) -> ExitCode {
         gestures: Gestures::default(),
         pending: std::collections::VecDeque::new(),
         held: None,
+        power,
+        app: app.to_path_buf(),
     };
     let result = app::run(&mut kobo, library, app);
     let Kobo { fd, inputs, .. } = kobo;
@@ -156,6 +169,205 @@ struct Kobo {
     pending: std::collections::VecDeque<(usize, Event)>,
     /// A gesture found while catching up with drags, to give next.
     held: Option<Gesture>,
+    /// The power button's input, to ask whether it's pressed.
+    power: Option<c_int>,
+    /// The app folder, where the sleep screen is.
+    app: std::path::PathBuf,
+}
+
+/// Whether the key is down on an input now.
+fn key_down(fd: c_int, key: usize) -> bool {
+    let mut keys = [0u8; 96];
+    let rc = unsafe { libc::ioctl(fd, EVIOCGKEY as _, keys.as_mut_ptr()) };
+    rc >= 0 && keys[key / 8] & (1 << (key % 8)) != 0
+}
+
+fn write(path: &str, value: &str) -> bool {
+    std::fs::write(path, value).is_ok()
+}
+
+/// Whether the Kobo is on its charger: MediaTek Kobos crash if they sleep
+/// then, KOReader found.
+fn charging() -> bool {
+    std::fs::read_to_string("/sys/class/power_supply/bd71827_ac/online")
+        .is_ok_and(|v| v.trim() == "1")
+        || std::fs::read_to_string("/sys/class/power_supply/bd71827_bat/status")
+            .is_ok_and(|v| v.trim() == "Charging")
+}
+
+/// The Kobo to sleep, as KOReader does it: subsystems flagged, a pause,
+/// the disks synced, the wakeup count matched, then suspend to memory. Back
+/// when it wakes; false if it wouldn't sleep.
+///
+/// The e-ink controller keeps the panel powered a while after drawing, and
+/// refuses to suspend until it has let go ("xon off timer pending"); so
+/// a refusal is tried again, a second later, a few times; unless `stop`
+/// says the power button has asked to wake meanwhile.
+fn suspend(stop: impl Fn() -> bool) -> bool {
+    if !write("/sys/power/state-extended", "1") {
+        eprintln!("sleep: the kernel wouldn't flag subsystems");
+        return false;
+    }
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    unsafe { libc::sync() };
+    if let Ok(count) = std::fs::read_to_string("/sys/power/wakeup_count") {
+        if !write("/sys/power/wakeup_count", count.trim()) {
+            eprintln!("sleep: woken meanwhile");
+            write("/sys/power/state-extended", "0");
+            return false;
+        }
+    }
+    let mut tries = 0;
+    let slept = loop {
+        tries += 1;
+        match std::fs::write("/sys/power/state", "mem") {
+            Ok(()) => break Ok(()),
+            Err(e) if tries < 8 && !stop() => {
+                eprintln!("sleep: not yet ({e}); again in a second");
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+            Err(e) => break Err(e),
+        }
+    };
+    write("/sys/power/state-extended", "0");
+    if let Err(e) = &slept {
+        eprintln!("sleep: the kernel wouldn't sleep after {tries} tries: {e}");
+        wakeup_sources();
+    } else {
+        eprintln!("sleep: slept, at try {tries}");
+    }
+    slept.is_ok()
+}
+
+/// What's keeping the Kobo awake: the wakeup sources active now, or that
+/// were lately. Temporary, to find out why it won't sleep.
+fn wakeup_sources() {
+    eprintln!(
+        "sleep: wakeup_count {:?}",
+        std::fs::read_to_string("/sys/power/wakeup_count").map(|s| s.trim().to_string())
+    );
+    // The kernel's own account of who refused.
+    if let Ok(out) = std::process::Command::new("dmesg").output() {
+        let text = String::from_utf8_lossy(&out.stdout);
+        let lines: Vec<&str> = text.lines().collect();
+        for line in &lines[lines.len().saturating_sub(40)..] {
+            eprintln!("sleep: dmesg {line}");
+        }
+    }
+    if let Ok(dir) = std::fs::read_dir("/sys/class/net") {
+        for e in dir.flatten() {
+            let state = std::fs::read_to_string(e.path().join("operstate")).unwrap_or_default();
+            eprintln!("sleep: net {} {}", e.file_name().to_string_lossy(), state.trim());
+        }
+    }
+    if let Ok(mods) = std::fs::read_to_string("/proc/modules") {
+        let names: Vec<&str> = mods.lines().filter_map(|l| l.split_whitespace().next()).collect();
+        eprintln!("sleep: modules {}", names.join(" "));
+    }
+    let Ok(dir) = std::fs::read_dir("/sys/class/wakeup") else {
+        eprintln!("sleep: no /sys/class/wakeup");
+        if let Ok(all) = std::fs::read_to_string("/sys/kernel/debug/wakeup_sources") {
+            for line in all.lines().filter(|l| !l.contains("\t0\t0\t0")).take(40) {
+                eprintln!("sleep: {line}");
+            }
+        }
+        return;
+    };
+    for e in dir.flatten() {
+        let get = |leaf: &str| {
+            std::fs::read_to_string(e.path().join(leaf))
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default()
+        };
+        let active = get("active_time_ms");
+        let events = get("event_count");
+        if active != "0" || get("prevent_suspend_time_ms") != "0" || events != "0" {
+            eprintln!(
+                "sleep: {} active {active} ms, events {events}, active_count {}, last {}",
+                get("name"),
+                get("active_count"),
+                get("last_change_ms")
+            );
+        }
+    }
+}
+
+/// The sleep screen, an 8-bit grey PNG the size of the screen.
+fn sleep_screen(path: &Path, width: u32, height: u32) -> Option<Vec<u8>> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut reader = png::Decoder::new(std::io::BufReader::new(file))
+        .read_info()
+        .ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).ok()?;
+    (info.width == width && info.height == height && info.color_type == png::ColorType::Grayscale)
+        .then(|| buf[..(width * height) as usize].to_vec())
+}
+
+impl Kobo {
+    /// Sleep: the screen as it is saved, the sleep screen shown, the light
+    /// out, and the Kobo suspended until the power button wakes it; then
+    /// all put back as it was. On the charger it doesn't suspend, but
+    /// waits on the sleep screen for the button.
+    fn sleep(&mut self) {
+        let started = std::time::Instant::now();
+        let (width, height) = self.size();
+        let awake = CString::new("/tmp/wordhord-awake.dump").expect("no NUL");
+        let saved = unsafe { wh_save(self.fd, awake.as_ptr()) } == 0;
+        match sleep_screen(&self.app.join("sleep.png"), width, height) {
+            Some(pixels) => self.draw(&pixels, width, height, 0, 0, true),
+            None => self.draw(
+                &vec![255; (width * height) as usize],
+                width,
+                height,
+                0,
+                0,
+                true,
+            ),
+        }
+        let light = "/sys/class/backlight/mxc_msp430.0/brightness";
+        let was = std::fs::read_to_string(light).ok();
+        write(light, "0");
+        let power = self.power;
+        let down = |fd: Option<c_int>| fd.is_some_and(|fd| key_down(fd, KEY_POWER));
+        // The press that asked for sleep, let go of first.
+        while down(power) {
+            std::thread::sleep(std::time::Duration::from_millis(POWER_MS as u64));
+        }
+        let plugged = charging();
+        eprintln!(
+            "sleep: in {:?}{}",
+            started.elapsed(),
+            if plugged {
+                ", on the charger: not suspending"
+            } else {
+                ""
+            }
+        );
+        if plugged || !suspend(|| down(power)) {
+            // Awake on the sleep screen, until the button is pressed.
+            while !down(power) {
+                std::thread::sleep(std::time::Duration::from_millis(POWER_MS as u64));
+            }
+        }
+        let woke = std::time::Instant::now();
+        while down(power) {
+            std::thread::sleep(std::time::Duration::from_millis(POWER_MS as u64));
+        }
+        // Touches made asleep, or on the sleep screen, count for nothing.
+        read_ready(&self.inputs, &mut self.pending);
+        self.pending.clear();
+        let ink = self.gestures.ink;
+        self.gestures = Gestures::default();
+        self.gestures.ink = ink;
+        if let Some(was) = was {
+            write(light, was.trim());
+        }
+        if saved {
+            unsafe { wh_restore(self.fd, awake.as_ptr()) };
+        }
+        eprintln!("sleep: awake again in {:?}", woke.elapsed());
+    }
 }
 
 impl Platform for Kobo {
@@ -193,12 +405,20 @@ impl Platform for Kobo {
         if let Some(g) = self.held.take() {
             return g;
         }
-        let mut g = next_gesture(
-            &self.panel,
-            &self.inputs,
-            &mut self.gestures,
-            &mut self.pending,
-        );
+        // The power button, or long untouched: sleep, and on waking carry
+        // on as if nothing had happened.
+        let mut g = loop {
+            match next_gesture(
+                &self.panel,
+                &self.inputs,
+                &mut self.gestures,
+                &mut self.pending,
+                self.power,
+            ) {
+                Gesture::Power if self.power.is_some() => self.sleep(),
+                g => break g,
+            }
+        };
         // A finger dragged on while the last drag was drawn: only where it
         // is now matters. Anything else that comes is kept for next time.
         while let Gesture::Drag(..) | Gesture::Ink(..) = g {
@@ -266,7 +486,11 @@ fn next_gesture(
     inputs: &[Input],
     gestures: &mut Gestures,
     pending: &mut std::collections::VecDeque<(usize, Event)>,
+    power: Option<c_int>,
 ) -> Gesture {
+    let idle_since = std::time::Instant::now();
+    // The power button as it was: a press is its going down.
+    let mut power_was = power.is_some_and(|fd| key_down(fd, KEY_POWER));
     let fingers = fingers(inputs);
     let mut polls: Vec<libc::pollfd> = inputs
         .iter()
@@ -309,8 +533,21 @@ fn next_gesture(
             .into_iter()
             .flatten()
             .min();
-        let wait = press.map_or(IDLE_MS, |d| d.as_millis() as c_int + 1);
+        // Waking often enough to see the power button pressed.
+        let wait = press
+            .map_or(POWER_MS, |d| d.as_millis() as c_int + 1)
+            .min(if power.is_some() {
+                POWER_MS
+            } else {
+                c_int::MAX
+            });
         let n = unsafe { libc::poll(polls.as_mut_ptr(), polls.len() as _, wait) };
+        let power_now = power.is_some_and(|fd| key_down(fd, KEY_POWER));
+        if power_now && !power_was {
+            eprintln!("power button: sleep");
+            return Gesture::Power;
+        }
+        power_was = power_now;
         if n == 0 {
             if press.is_some() {
                 if let Some(g) = gestures.tick() {
@@ -318,8 +555,11 @@ fn next_gesture(
                 }
                 continue;
             }
-            eprintln!("untouched for {} minutes: closing", IDLE_MS / 60_000);
-            return Gesture::Power;
+            if idle_since.elapsed().as_secs() >= IDLE_SECONDS {
+                eprintln!("untouched for {} minutes: sleep", IDLE_SECONDS / 60);
+                return Gesture::Power;
+            }
+            continue;
         }
         if n < 0 {
             continue;
