@@ -19,7 +19,7 @@ use crate::library::{self, Entry, Library};
 use crate::platform::Platform;
 use crate::reader::{Effect, Reader};
 use crate::touch::Gesture;
-use crate::ui::{Action, Part, Recent, Row, Screen, Shelf, Ui, COVER};
+use crate::ui::{Action, Part, Recent, Rect, Row, Screen, Shelf, Ui, COVER};
 
 /// How a book was left.
 enum Leave {
@@ -402,12 +402,34 @@ fn read(
                 Effect::Look(k) => {
                     let words = &t.pages[reader.page].words;
                     // A word hyphenated across lines is one word.
+                    let mut parts = vec![k];
                     let mut word = words[k].text.clone();
                     if words[k].continues && k > 0 {
                         word = format!("{}{word}", words[k - 1].text);
+                        parts.insert(0, k - 1);
                     }
                     if words.get(k + 1).is_some_and(|w| w.continues) {
                         word.push_str(&words[k + 1].text);
+                        parts.push(k + 1);
+                    }
+                    // Mark the word at once, before the panel comes.
+                    let boxes: Vec<Rect> = parts
+                        .iter()
+                        .map(|&n| {
+                            let w = &words[n];
+                            Rect {
+                                x0: w.x0,
+                                y0: w.y0,
+                                x1: w.x1,
+                                y1: w.y1,
+                            }
+                        })
+                        .collect();
+                    let marked = highlight(&shown, width, height, &boxes);
+                    for b in &boxes {
+                        let (y0, y1) = (b.y0.max(0.0) as u32, (b.y1 as u32).min(height));
+                        let rows = &marked[(y0 * width) as usize..(y1 * width) as usize];
+                        screen.draw(rows, width, y1 - y0, 0, y0, false);
                     }
                     // Looked up as printed, so a capital can say it's a name;
                     // shown as the dictionary keys it.
@@ -419,8 +441,25 @@ fn read(
                         None => lexicon::not_found(&shown_as, &lang, !tools.lexicon.is_empty()),
                     };
                     let word = shown_as;
-                    let (area, pages) =
+                    let (mut area, pages) =
                         wordhord_typeset::panel_pages(&blocks, &lang, tools.profile, fonts);
+                    // Under the panel, the word would be hidden: the panel
+                    // comes down from the top instead.
+                    let above = boxes.iter().any(|b| b.y1 > area.y);
+                    if above {
+                        area.y = 0.0;
+                        // Down to the end of any line it would cut through,
+                        // so no slivers of letters show under it.
+                        let word_top = boxes.iter().map(|b| b.y0).fold(f32::MAX, f32::min);
+                        let cut = words
+                            .iter()
+                            .filter(|w| w.y0 < area.height && w.y1 > area.height)
+                            .map(|w| w.y1)
+                            .fold(area.height, f32::max);
+                        if cut <= word_top {
+                            area.height = cut.ceil();
+                        }
+                    }
                     eprintln!(
                         "look up {word:?}: {} panel pages in {:?}",
                         pages.len(),
@@ -429,13 +468,21 @@ fn read(
                     let (w, h) = (area.width as u32, area.height as u32);
                     let mut at = 0;
                     loop {
-                        let pixels = render::panel(&mut chrome, &pages[at], w, h);
+                        let mut pixels = render::panel(&mut chrome, &pages[at], w, h);
+                        if above {
+                            // The rule goes on the panel's lower edge.
+                            let rule = (w * 3) as usize;
+                            pixels[..rule].fill(255);
+                            let n = pixels.len();
+                            pixels[n - rule..].fill(0);
+                        }
                         screen.draw(&pixels, w, h, area.x as u32, area.y as u32, false);
                         // In the panel, the right half pages on and the left
                         // back; anything else closes it.
+                        let inside = |y: i32| (area.y..area.y + area.height).contains(&(y as f32));
                         let next = loop {
                             match screen.next() {
-                                Gesture::Tap(x, y) if y as f32 >= area.y => {
+                                Gesture::Tap(x, y) if inside(y) => {
                                     if x as f32 >= area.width / 2.0 && at + 1 < pages.len() {
                                         break at + 1;
                                     }
@@ -454,9 +501,14 @@ fn read(
                         }
                         at = next;
                     }
-                    let top = area.y as u32;
-                    let rows = &shown[top as usize * width as usize..];
-                    screen.draw(rows, width, height - top, 0, top, false);
+                    // The page as it was: no panel, no mark.
+                    let top = (area.y as u32)
+                        .min(boxes.iter().map(|b| b.y0 as u32).min().unwrap_or(height));
+                    let bottom = ((area.y + area.height) as u32)
+                        .max(boxes.iter().map(|b| b.y1 as u32).max().unwrap_or(0))
+                        .min(height);
+                    let rows = &shown[(top * width) as usize..(bottom * width) as usize];
+                    screen.draw(rows, width, bottom - top, 0, top, false);
                 }
                 Effect::Menu => {
                     let (bar, bar_h) = ui.reading_bar(&book.title());
@@ -668,4 +720,25 @@ fn message_font(dir: &Path) -> Option<Fonts> {
         data: Box::leak(data.into_boxed_slice()),
     }])
     .ok()
+}
+
+/// The page with each box's paper turned light grey, so a word stands
+/// marked while the ink stays as it was.
+fn highlight(page: &[u8], width: u32, height: u32, boxes: &[Rect]) -> Vec<u8> {
+    let mut out = page.to_vec();
+    for b in boxes {
+        // A little wider than the word, and clear of the lines around it.
+        let pad = (b.y1 - b.y0) * 0.12;
+        let x0 = (b.x0 - pad * 0.6).max(0.0) as u32;
+        let x1 = ((b.x1 + pad * 0.6) as u32).min(width);
+        let y0 = (b.y0 + pad).max(0.0) as u32;
+        let y1 = ((b.y1 - pad * 0.5) as u32).min(height);
+        for y in y0..y1 {
+            let row = (y * width) as usize;
+            for p in &mut out[row + x0 as usize..row + x1 as usize] {
+                *p = (*p).min(204);
+            }
+        }
+    }
+    out
 }
