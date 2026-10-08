@@ -26,7 +26,7 @@ use crate::marks::{Anchor, Ink, Marks, Underline, Words};
 use crate::platform::Platform;
 use crate::reader::{Effect, Reader};
 use crate::settings::{self, Settings};
-use crate::touch::Gesture;
+use crate::touch::{Gesture, Tool};
 use crate::ui::{Action, Choice, Part, Recent, Rect, Row, Screen, Shelf, Ui, COVER};
 
 /// How a book was left.
@@ -531,13 +531,63 @@ fn entry_of(
     Some(lexicon::entry_blocks(head, &readings))
 }
 
+/// An underline of the words `a` to `b` of a page, either way round: its
+/// anchors, its text (lines of verse marked " / "), and the part of the
+/// book it's in.
+#[allow(clippy::too_many_arguments)]
+fn underline_of(
+    book: &Book,
+    path: &str,
+    chapter: usize,
+    page: &Page,
+    numbers: &[usize],
+    numbered: &Words,
+    a: usize,
+    b: usize,
+) -> Underline {
+    let (a, b) = (a.min(b), a.max(b));
+    let first = &page.words[a];
+    let verse = hoard::is_verse(&book.blocks(chapter), &first.block);
+    let mut text = String::new();
+    let mut line = first.y0;
+    for w in page.words.iter().skip(a).take(b - a + 1) {
+        if !text.is_empty() && !w.continues {
+            let turned = (w.y0 - line).abs() > 1.0;
+            text.push_str(if verse && turned { " / " } else { " " });
+        }
+        line = w.y0;
+        text.push_str(&w.text);
+    }
+    // The part of the book it's in: the last entry of the contents at or
+    // before this chapter.
+    let section = book
+        .contents()
+        .into_iter()
+        .rfind(|c| c.2 <= chapter)
+        .map(|c| c.0);
+    Underline {
+        id: String::new(),
+        time: 0,
+        book: book.title(),
+        path: path.to_string(),
+        chapter,
+        start: numbered.anchors[numbers[a]].clone(),
+        end: numbered.anchors[numbers[b]].clone(),
+        text,
+        section,
+    }
+}
+
 /// What's drawn over a page of a book: underlines, as rules; and strokes
 /// of the pen, each a run of points with the pen's radius there.
 #[derive(Default)]
 struct Decor {
     rules: Vec<Rect>,
-    strokes: Vec<Vec<(f32, f32, f32)>>,
+    strokes: Vec<Stroke>,
 }
+
+/// A stroke of the pen on the screen: points, each with the pen's radius.
+type Stroke = Vec<(f32, f32, f32)>;
 
 /// The pen's radius in pixels at a pressure, 0 to 4095: a fine line,
 /// fuller as it's pressed.
@@ -619,7 +669,7 @@ fn strokes(
     path: &str,
     chapter: usize,
     page_width: u32,
-) -> Vec<Vec<(f32, f32, f32)>> {
+) -> Vec<(String, Stroke)> {
     let numbers = &numbered.on_page[k];
     marks
         .ink_in(path, chapter)
@@ -662,7 +712,7 @@ fn strokes(
                     p.0 += shift;
                 }
             }
-            Some(points)
+            Some((ink.id.clone(), points))
         })
         .collect()
 }
@@ -1212,7 +1262,10 @@ fn read(
                 path,
                 chapter,
                 width,
-            ),
+            )
+            .into_iter()
+            .map(|(_, points)| points)
+            .collect(),
         };
         let mut shown = draw(
             screen,
@@ -1271,11 +1324,79 @@ fn read(
             screen.ink(false);
             let page_now = &t.pages[reader.page];
             if let Gesture::Ink(..) | Gesture::InkUp(..) = gesture {
+                let tool = screen.tool();
+                let up = matches!(gesture, Gesture::InkUp(..));
                 let points: Vec<(f32, f32, f32)> = screen
                     .take_ink()
                     .iter()
-                    .map(|&(x, y, p)| (x as f32, y as f32, pen_radius(p)))
+                    .map(|&(x, y, p)| {
+                        // The highlighter's trail is a guide, finer than ink.
+                        let r = if tool == Tool::Highlighter {
+                            1.0
+                        } else {
+                            pen_radius(p)
+                        };
+                        (x as f32, y as f32, r)
+                    })
                     .collect();
+                if tool == Tool::Eraser {
+                    // What the eraser passes over goes: strokes it comes near,
+                    // and underlines whose words it touches.
+                    let reach = tools.profile.mm(2.5);
+                    let near =
+                        |x: f32, y: f32| points.iter().any(|p| (p.0 - x).hypot(p.1 - y) <= reach);
+                    let mut gone: Vec<String> = Vec::new();
+                    {
+                        let marks = tools.marks.borrow();
+                        for (id, line) in strokes(
+                            page_now,
+                            &numbered,
+                            reader.page,
+                            &marks,
+                            path,
+                            chapter,
+                            width,
+                        ) {
+                            if line.iter().any(|q| near(q.0, q.1)) {
+                                gone.push(id);
+                            }
+                        }
+                        let numbers = &numbered.on_page[reader.page];
+                        for u in marks.in_chapter(path, chapter) {
+                            let Some((s, e)) = numbered.span(u) else {
+                                continue;
+                            };
+                            let touched = page_now.words.iter().zip(numbers).any(|(w, n)| {
+                                (s..=e).contains(n)
+                                    && points.iter().any(|p| {
+                                        p.0 >= w.x0 - reach
+                                            && p.0 <= w.x1 + reach
+                                            && p.1 >= w.y0
+                                            && p.1 <= w.y1 + reach
+                                    })
+                            });
+                            if touched {
+                                gone.push(u.id.clone());
+                            }
+                        }
+                    }
+                    if !gone.is_empty() {
+                        for id in &gone {
+                            if let Err(e) = tools.marks.borrow_mut().remove(id) {
+                                eprintln!("erase: {e}");
+                            }
+                        }
+                        eprintln!("erased {}", gone.len());
+                        shown = draw(
+                            screen,
+                            &mut renderer,
+                            &t.pages[reader.page],
+                            false,
+                            &rules(reader.page),
+                        );
+                    }
+                    continue;
+                }
                 // From the last point drawn, so the line has no gaps.
                 let mut piece: Vec<_> = stroke.last().copied().into_iter().collect();
                 piece.extend(&points);
@@ -1285,7 +1406,45 @@ fn read(
                     screen.draw_fast(&block, w, h, r.x0 as u32, r.y0 as u32);
                 }
                 stroke.extend(points);
-                if matches!(gesture, Gesture::InkUp(..)) && !stroke.is_empty() {
+                if up && !stroke.is_empty() && tool == Tool::Highlighter {
+                    // The words the stroke ran through, or just under:
+                    // underlined, from the first to the last.
+                    let hit: Vec<usize> = page_now
+                        .words
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, w)| {
+                            let below = (w.y1 - w.y0) * 0.5;
+                            stroke.iter().any(|p| {
+                                p.0 >= w.x0 && p.0 <= w.x1 && p.1 >= w.y0 && p.1 <= w.y1 + below
+                            })
+                        })
+                        .map(|(k, _)| k)
+                        .collect();
+                    if let (Some(&a), Some(&b)) = (hit.first(), hit.last()) {
+                        let numbers = &numbered.on_page[reader.page];
+                        let u =
+                            underline_of(&book, path, chapter, page_now, numbers, &numbered, a, b);
+                        match tools.marks.borrow_mut().underline(u) {
+                            Ok(()) => eprintln!(
+                                "underlined words {} to {} with the pen",
+                                numbers[a], numbers[b]
+                            ),
+                            Err(e) => eprintln!("underline: {e}"),
+                        }
+                    }
+                    stroke.clear();
+                    // The trail gone, the underline drawn.
+                    shown = draw(
+                        screen,
+                        &mut renderer,
+                        &t.pages[reader.page],
+                        false,
+                        &rules(reader.page),
+                    );
+                    continue;
+                }
+                if up && !stroke.is_empty() {
                     // Anchored to the word nearest its middle, measured in
                     // that word's line heights.
                     let (sx, sy) = stroke
@@ -1500,39 +1659,9 @@ fn read(
             if let Gesture::Release(..) = gesture {
                 marked_rows = None;
                 if let Some((a, b)) = chosen.take() {
+                    let u = underline_of(&book, path, chapter, page_now, numbers, &numbered, a, b);
                     let (s, e) = (numbers[a.min(b)], numbers[a.max(b)]);
-                    // In verse, a new line is marked as a quotation marks
-                    // it: " / ".
-                    let first = &page_now.words[a.min(b)];
-                    let verse = hoard::is_verse(&book.blocks(chapter), &first.block);
-                    let mut text = String::new();
-                    let mut line = first.y0;
-                    for w in page_now.words.iter().skip(a.min(b)).take(a.abs_diff(b) + 1) {
-                        if !text.is_empty() && !w.continues {
-                            let turned = (w.y0 - line).abs() > 1.0;
-                            text.push_str(if verse && turned { " / " } else { " " });
-                        }
-                        line = w.y0;
-                        text.push_str(&w.text);
-                    }
-                    // The part of the book it's in: the last entry of the
-                    // contents at or before this chapter.
-                    let section = book
-                        .contents()
-                        .into_iter()
-                        .rfind(|c| c.2 <= chapter)
-                        .map(|c| c.0);
-                    let done = tools.marks.borrow_mut().underline(Underline {
-                        id: String::new(),
-                        time: 0,
-                        book: book.title(),
-                        path: path.to_string(),
-                        chapter,
-                        start: numbered.anchors[s].clone(),
-                        end: numbered.anchors[e].clone(),
-                        text,
-                        section,
-                    });
+                    let done = tools.marks.borrow_mut().underline(u);
                     match done {
                         Ok(()) => eprintln!("underlined words {s} to {e}"),
                         Err(e) => eprintln!("underline: {e}"),

@@ -181,6 +181,10 @@ impl Platform for Kobo {
         self.gestures.ink = on;
     }
 
+    fn tool(&self) -> touch::Tool {
+        self.gestures.stroke_tool
+    }
+
     fn take_ink(&mut self) -> Vec<(i32, i32, u16)> {
         std::mem::take(&mut self.gestures.points)
     }
@@ -248,9 +252,7 @@ fn read_ready(inputs: &[Input], pending: &mut std::collections::VecDeque<(usize,
                 break;
             }
             for chunk in buf[..got as usize].chunks_exact(EVENT_SIZE) {
-                let e = Event::parse(chunk.try_into().expect("16 bytes"));
-                probe(k, &e);
-                pending.push_back((k, e));
+                pending.push_back((k, Event::parse(chunk.try_into().expect("16 bytes"))));
             }
         }
     }
@@ -325,44 +327,9 @@ fn next_gesture(
                     break;
                 }
                 for chunk in buf[..got as usize].chunks_exact(EVENT_SIZE) {
-                    let e = Event::parse(chunk.try_into().expect("16 bytes"));
-                    probe(k, &e);
-                    pending.push_back((k, e));
+                    pending.push_back((k, Event::parse(chunk.try_into().expect("16 bytes"))));
                 }
             }
         }
-    }
-}
-
-/// For finding out how the pen's buttons and other end report
-/// themselves: keys, and changes of tool and of contact, to `input.log`
-/// beside the reader. Temporary.
-fn probe(k: usize, e: &Event) {
-    use std::io::Write;
-    use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
-    static WRITTEN: AtomicUsize = AtomicUsize::new(0);
-    static LAST: [AtomicI32; 3] = [AtomicI32::new(-9), AtomicI32::new(-9), AtomicI32::new(-9)];
-    const EV_KEY: u16 = 1;
-    const EV_ABS: u16 = 3;
-    let watched = match (e.kind, e.code) {
-        (EV_KEY, _) => true,
-        (EV_ABS, 0x37) => LAST[0].swap(e.value, Ordering::Relaxed) != e.value,
-        (EV_ABS, 0x3b) => LAST[1].swap(e.value, Ordering::Relaxed) != e.value,
-        (EV_ABS, 0x39) => (LAST[2].swap(e.value, Ordering::Relaxed) != e.value),
-        _ => false,
-    };
-    if !watched || WRITTEN.fetch_add(1, Ordering::Relaxed) > 20_000 {
-        return;
-    }
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/mnt/onboard/.adds/wordhord/input.log")
-    {
-        let _ = writeln!(
-            f,
-            "{:.3} in{k} type {} code {:#x} value {}",
-            e.time, e.kind, e.code, e.value
-        );
     }
 }

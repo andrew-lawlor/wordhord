@@ -301,6 +301,9 @@ fn blit(screen: &mut [u8], stride: u32, grey: &[u8], w: u32, h: u32, x: u32, y: 
     }
 }
 
+/// The pen's points for one step of a script, and the tool it's with.
+type PenStep = (Vec<(i32, i32, u16)>, crate::touch::Tool);
+
 /// Gestures from a script, and every screen drawn saved as a PNG.
 struct Script {
     size: (u32, u32),
@@ -310,8 +313,9 @@ struct Script {
     drawn: usize,
     /// The pen's points for each stroke step, in order, and those of the
     /// step just given.
-    strokes: std::collections::VecDeque<Vec<(i32, i32, u16)>>,
+    strokes: std::collections::VecDeque<PenStep>,
     ink: Vec<(i32, i32, u16)>,
+    tool: crate::touch::Tool,
 }
 
 impl Script {
@@ -340,7 +344,16 @@ impl Script {
                 ),
                 // The pen drawn through points: a stroke, given a few
                 // points at a time as the Kobo does.
-                ["ink", rest @ ..] if rest.len() >= 4 && rest.len() % 2 == 0 => {
+                // The pen; its other end, rubbing out; or with its button
+                // held, underlining.
+                [kind @ ("ink" | "erase" | "mark"), rest @ ..]
+                    if rest.len() >= 4 && rest.len() % 2 == 0 =>
+                {
+                    let tool = match *kind {
+                        "erase" => crate::touch::Tool::Eraser,
+                        "mark" => crate::touch::Tool::Highlighter,
+                        _ => crate::touch::Tool::Pen,
+                    };
                     let n = |v: &str| v.parse::<i32>().map_err(|_| format!("`{step}`"));
                     let mut corners = Vec::new();
                     for pair in rest.chunks(2) {
@@ -359,10 +372,10 @@ impl Script {
                     for chunk in points.chunks(6) {
                         let (x, y, _) = chunk[chunk.len() - 1];
                         gestures.push(Gesture::Ink(x, y));
-                        strokes.push_back(chunk.to_vec());
+                        strokes.push_back((chunk.to_vec(), tool));
                     }
                     // The lift brings no points of its own.
-                    strokes.push_back(Vec::new());
+                    strokes.push_back((Vec::new(), tool));
                     Gesture::InkUp(last.0, last.1)
                 }
                 // Pressed at one place, dragged to another and let go.
@@ -394,6 +407,7 @@ impl Script {
             drawn: 0,
             strokes,
             ink: Vec::new(),
+            tool: crate::touch::Tool::Pen,
         })
     }
 }
@@ -418,10 +432,16 @@ impl Platform for Script {
         std::mem::take(&mut self.ink)
     }
 
+    fn tool(&self) -> crate::touch::Tool {
+        self.tool
+    }
+
     fn next(&mut self) -> Gesture {
         let g = self.gestures.next().unwrap_or(Gesture::Power);
         if let Gesture::Ink(..) | Gesture::InkUp(..) = g {
-            self.ink = self.strokes.pop_front().unwrap_or_default();
+            let (ink, tool) = self.strokes.pop_front().unwrap_or_default();
+            self.ink = ink;
+            self.tool = tool;
         }
         g
     }

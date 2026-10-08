@@ -28,6 +28,11 @@ pub trait Platform {
         Vec::new()
     }
 
+    /// What the pen's stroke does: the tool it was begun with.
+    fn tool(&self) -> crate::touch::Tool {
+        crate::touch::Tool::Pen
+    }
+
     /// Waits for the next gesture.
     fn next(&mut self) -> Gesture;
 }

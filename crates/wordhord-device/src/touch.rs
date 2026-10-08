@@ -22,6 +22,10 @@ const ABS_MT_TOOL_TYPE: u16 = 0x37;
 const ABS_MT_PRESSURE: u16 = 0x3a;
 const ABS_MT_DISTANCE: u16 = 0x3b;
 const BTN_TOUCH: u16 = 330;
+/// The stylus's other end, near the screen: an eraser.
+const BTN_STYLUS: u16 = 0x14b;
+/// The stylus's button, held as it touches: a highlighter.
+const BTN_STYLUS2: u16 = 0x14c;
 const KEY_POWER: u16 = 116;
 
 /// Held this long, a touch is a hold, not a tap.
@@ -128,22 +132,37 @@ pub struct Gestures {
     /// The pen on the screen: where it touched, and the stroke it's
     /// drawing, once it has moved far enough to be one.
     pen: Option<Pen>,
-    /// Whether a pen that moves writes (in a book), or is a finger.
+    /// Whether the pen writes here (in a book). Elsewhere it does nothing.
     pub ink: bool,
+    /// When the pen was last near the screen: fingers are ignored while
+    /// it is, and a little after, so a hand that writes can rest.
+    pen_near: Option<std::time::Instant>,
     /// Points of ink not yet taken: screen position and pressure.
     pub points: Vec<(i32, i32, u16)>,
+    /// The ends and button of the stylus, as last reported; and the tool
+    /// the stroke being drawn was begun with.
+    eraser: bool,
+    button: bool,
+    pub stroke_tool: Tool,
 }
 
 #[derive(Debug)]
 struct Pen {
-    start: (i32, i32),
+    /// Whether it writes: it touched in a book.
     stroke: bool,
-    /// Its points before it was known to be a stroke.
-    before: Vec<(i32, i32, u16)>,
 }
 
-/// A pen that moves this many pixels is writing, not tapping.
-const STROKE: i32 = 6;
+/// What the pen does: writes, rubs out, or underlines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Tool {
+    #[default]
+    Pen,
+    Eraser,
+    Highlighter,
+}
+
+/// Fingers are ignored for this long after the pen was near the screen.
+const PALM_SECONDS: f64 = 1.0;
 
 impl Gestures {
     /// Feeds an event from the touch screen; returns a gesture when a
@@ -171,17 +190,39 @@ impl Gestures {
                 self.distance = e.value;
                 return None;
             }
+            (EV_KEY, BTN_STYLUS) => {
+                self.eraser = e.value != 0;
+                return None;
+            }
+            (EV_KEY, BTN_STYLUS2) => {
+                self.button = e.value != 0;
+                return None;
+            }
             _ => {}
         }
         if self.tool != 0 {
+            self.pen_near = Some(std::time::Instant::now());
             return self.pen(e, panel);
+        }
+        // The pen near, or only just gone: this is the hand that holds it.
+        if self
+            .pen_near
+            .is_some_and(|t| t.elapsed().as_secs_f64() < PALM_SECONDS)
+        {
+            self.down = None;
+            self.start = None;
+            self.landed = None;
+            self.pressed = None;
+            self.dragged = false;
+            self.wandered = false;
+            return None;
         }
         self.finger(e, panel)
     }
 
     /// The pen: touching when it's at no distance and pressing. Hovering is
-    /// nothing. A touch that moves is a stroke, if strokes write here; one
-    /// that doesn't is a tap, as a finger's would be.
+    /// nothing. In a book, every touch is ink, a full stop as much as a
+    /// line; elsewhere the pen does nothing.
     fn pen(&mut self, e: Event, panel: &Panel) -> Option<Gesture> {
         match (e.kind, e.code) {
             (EV_ABS, ABS_MT_POSITION_X | ABS_X) => self.raw.0 = e.value,
@@ -190,58 +231,41 @@ impl Gestures {
                 let at = panel.place(self.raw.0, self.raw.1);
                 let touching = self.distance == 0 && self.pressure > 0;
                 let point = (at.0, at.1, self.pressure.clamp(0, 4095) as u16);
-                match (&mut self.pen, touching) {
+                match (&self.pen, touching) {
                     (None, true) => {
-                        self.pen = Some(Pen {
-                            start: at,
-                            stroke: false,
-                            before: vec![point],
-                        });
-                    }
-                    (Some(p), true) => {
-                        if p.stroke {
+                        self.pen = Some(Pen { stroke: self.ink });
+                        self.stroke_tool = if self.eraser {
+                            Tool::Eraser
+                        } else if self.button {
+                            Tool::Highlighter
+                        } else {
+                            Tool::Pen
+                        };
+                        if self.ink {
                             self.points.push(point);
                             return Some(Gesture::Ink(at.0, at.1));
                         }
-                        p.before.push(point);
-                        let moved = (at.0 - p.start.0).abs().max((at.1 - p.start.1).abs());
-                        if moved >= STROKE && self.ink {
-                            p.stroke = true;
-                            self.points.append(&mut p.before);
-                            return Some(Gesture::Ink(at.0, at.1));
-                        }
                     }
-                    (Some(_), false) => return self.pen_up(at, panel),
-                    (None, false) => {}
+                    (Some(p), true) if p.stroke => {
+                        self.points.push(point);
+                        return Some(Gesture::Ink(at.0, at.1));
+                    }
+                    (Some(_), false) => return self.pen_up(at),
+                    _ => {}
                 }
             }
             (EV_ABS, ABS_MT_TRACKING_ID) if e.value < 0 => {
                 let at = panel.place(self.raw.0, self.raw.1);
-                return self.pen_up(at, panel);
+                return self.pen_up(at);
             }
             _ => {}
         }
         None
     }
 
-    fn pen_up(&mut self, at: (i32, i32), panel: &Panel) -> Option<Gesture> {
+    fn pen_up(&mut self, at: (i32, i32)) -> Option<Gesture> {
         let p = self.pen.take()?;
-        if p.stroke {
-            return Some(Gesture::InkUp(at.0, at.1));
-        }
-        // Not a stroke: as a finger that touched and lifted.
-        let (dx, dy) = (at.0 - p.start.0, at.1 - p.start.1);
-        if dx.abs() >= panel.width as i32 / 8 && dx.abs() > 2 * dy.abs() {
-            return Some(if dx < 0 {
-                Gesture::SwipeLeft
-            } else {
-                Gesture::SwipeRight
-            });
-        }
-        if let Some(g) = slide(p.start, at, panel.height) {
-            return Some(g);
-        }
-        Some(Gesture::Tap(p.start.0, p.start.1))
+        p.stroke.then_some(Gesture::InkUp(at.0, at.1))
     }
 
     fn finger(&mut self, e: Event, panel: &Panel) -> Option<Gesture> {
