@@ -21,6 +21,7 @@ use crate::fsrs;
 use crate::hoard::{self, Hoard, Kept};
 use crate::lexicon::{self, Lexicon};
 use crate::library::{self, Entry, Library};
+use crate::light::Light;
 use crate::platform::Platform;
 use crate::reader::{Effect, Reader};
 use crate::settings::{self, Settings};
@@ -60,6 +61,18 @@ pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), Str
     let library = Library::scan(root, &index);
     let lexicon = Lexicon::open(&app.join("dictionaries"));
     let hoard = RefCell::new(Hoard::load(app));
+    // On the desktop, a stand-in for /sys in the app folder, if made.
+    let light = RefCell::new(if cfg!(target_arch = "arm") {
+        Light::find(
+            Path::new("/sys/class"),
+            Path::new("/mnt/onboard/.kobo/Kobo/Kobo eReader.conf"),
+        )
+    } else {
+        Light::find(&app.join("sys/class"), &app.join("sys/nickel.conf"))
+    });
+    if let Some(l) = light.borrow().as_ref() {
+        eprintln!("light: {} bright, {:?} warm", l.brightness(), l.warmth());
+    }
     eprintln!("ready in {:?}", started.elapsed());
     let mut open = library::recent(app)
         .into_iter()
@@ -72,6 +85,7 @@ pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), Str
         profile: &profile,
         lexicon: &lexicon,
         hoard: &hoard,
+        light: &light,
     };
     loop {
         if let Some(path) = open.take() {
@@ -593,6 +607,7 @@ struct Tools<'a> {
     profile: &'a Profile,
     lexicon: &'a Lexicon,
     hoard: &'a RefCell<Hoard>,
+    light: &'a RefCell<Option<Light>>,
 }
 
 /// Where reading goes from a chapter.
@@ -659,11 +674,44 @@ fn read(
         let mut shown = draw(screen, &mut renderer, &t.pages[reader.page], flash);
         flash = false;
         ahead.reading(&book, chapter);
+        // Where a light gauge is showing, to clear at the next touch.
+        let mut gauge: Option<Rect> = None;
         let step = 'reading: loop {
             let gesture = screen.next();
             let effect = reader.act(gesture);
             eprintln!("{gesture:?}: {effect:?}");
+            if let Some(r) = gauge.take() {
+                // A new page, or another gauge, covers it anyway.
+                if !matches!(effect, Effect::Page { .. } | Effect::Light { .. }) {
+                    let (y0, y1) = (r.y0 as u32, r.y1 as u32);
+                    let rows = &shown[(y0 * width) as usize..(y1 * width) as usize];
+                    screen.draw(rows, width, y1 - y0, 0, y0, false);
+                }
+            }
             match effect {
+                Effect::Light { warm, by } => {
+                    let mut light = tools.light.borrow_mut();
+                    let Some(light) = light.as_mut() else {
+                        continue;
+                    };
+                    if warm && light.warmth().is_none() {
+                        continue;
+                    }
+                    light.slide(warm, by as f32 / 1000.0);
+                    let (name, figure, share) = match light.warmth().filter(|_| warm) {
+                        Some(w) => ("warmth", w, w as f32 / light.max_warmth() as f32),
+                        None => {
+                            let b = light.brightness();
+                            ("light", b, b as f32 / 100.0)
+                        }
+                    };
+                    let (page, r) = ui.gauge(name, &figure.to_string(), share, !warm);
+                    let (w, h) = ((r.x1 - r.x0) as u32, (r.y1 - r.y0) as u32);
+                    let pixels = chrome.page(&page, w, h);
+                    screen.draw(&pixels, w, h, r.x0 as u32, r.y0 as u32, false);
+                    eprintln!("light: {name} {figure}");
+                    gauge = Some(r);
+                }
                 Effect::Nothing => {}
                 Effect::Close => break Step::Leave(Leave::Close),
                 // At the book's first or last page, there's nowhere to go.

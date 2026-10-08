@@ -8,7 +8,9 @@
 //! - With the panel open, a tap in it turns its pages (right half on, left
 //!   half back) or follows a link in it. A tap on another link outside it
 //!   opens that instead. A tap anywhere else closes it.
-//! - A hold, or the power button, closes the reader.
+//! - A hold on a word looks it up. The power button closes the reader.
+//! - A slide up or down sets the light: on the left half how bright, on
+//!   the right how warm.
 
 use std::collections::HashMap;
 
@@ -53,6 +55,12 @@ pub enum Effect {
     Menu,
     /// Look up a word: its place among the page's words.
     Look(usize),
+    /// Brighter or warmer (on the right half), by thousandths of the
+    /// screen's height slid up; dimmer or cooler slid down.
+    Light {
+        warm: bool,
+        by: i32,
+    },
     Close,
 }
 
@@ -87,6 +95,10 @@ impl<'t> Reader<'t> {
             Gesture::Hold(x, y) => word_at(&self.t.pages[self.page], x as f32, y as f32)
                 .map_or(Effect::Nothing, Effect::Look),
             Gesture::Power => Effect::Close,
+            Gesture::Slide(x, dy) => Effect::Light {
+                warm: x as u32 > self.t.width / 2,
+                by: -dy * 1000 / self.t.height as i32,
+            },
             Gesture::SwipeLeft => self.turn(1),
             Gesture::SwipeRight => self.turn(-1),
             Gesture::Tap(x, y) => self.tap(x as f32, y as f32),

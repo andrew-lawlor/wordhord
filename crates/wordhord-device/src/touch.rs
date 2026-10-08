@@ -1,7 +1,7 @@
 //! Touches and keys, from raw input events to gestures.
 //!
 //! A finger that lifts close to where it landed is a tap. One that moved
-//! far sideways is a swipe. One held down for over a second is a hold.
+//! far sideways is a swipe; far up or down, a slide. One held down for over a second is a hold.
 //! The power button is a key.
 
 /// One `struct input_event` as a 32-bit Kobo reads it: seconds and
@@ -53,6 +53,9 @@ pub enum Gesture {
     SwipeRight,
     /// A finger held down a second, where it landed.
     Hold(i32, i32),
+    /// A finger slid up or down: where across it was, and how far down it
+    /// went (negative: up).
+    Slide(i32, i32),
     Power,
 }
 
@@ -128,6 +131,9 @@ impl Gestures {
                         Gesture::SwipeRight
                     });
                 }
+                if let Some(g) = slide(start, end, panel.height) {
+                    return Some(g);
+                }
                 if e.time - landed > HOLD_SECONDS {
                     return Some(Gesture::Hold(start.0, start.1));
                 }
@@ -137,6 +143,13 @@ impl Gestures {
         }
         None
     }
+}
+
+/// A slide crosses a sixteenth of the screen, mostly up or down.
+pub fn slide(start: (i32, i32), end: (i32, i32), height: u32) -> Option<Gesture> {
+    let (dx, dy) = (end.0 - start.0, end.1 - start.1);
+    (dy.abs() >= height as i32 / 16 && dy.abs() > 2 * dx.abs())
+        .then_some(Gesture::Slide(start.0, dy))
 }
 
 /// A key press: the power button.

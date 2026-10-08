@@ -27,7 +27,7 @@ A normal e-reader for stylus Kobos. Smaller and faster than KOReader. Built arou
 
 ## 3. What it does
 
-**Reading.** EPUB 2 and 3, reflowable, DRM-free. Type set on one screen, against a specimen passage with italics, figures and Old English and Norse letters: five faces, each marked with the old languages it can set; sizes by the printers' names (long primer to great primer); the measure in characters to a line; leading; justified or ragged. Kept in `wordhord.toml`. Footnotes open in a panel at the foot of the page. A table of contents. Search within the book. Page turns by swipe or edge tap.
+**Reading.** EPUB 2 and 3, reflowable, DRM-free. Type set on one screen, against a specimen passage with italics, figures and Old English and Norse letters: five faces, each marked with the old languages it can set; sizes by the printers' names (long primer to great primer); the measure in characters to a line; leading; justified or ragged. Kept in `wordhord.toml`. Footnotes open in a panel at the foot of the page. A table of contents. Search within the book. Page turns by swipe or edge tap. The light by a slide up or down: the left half for how bright, the right for how warm, with a hairline gauge at that edge until the next touch.
 
 **Library.** Every EPUB on the device, found by a scan. Sorted by last read, title or author. Shelves are folders. Covers in a grid or a plain list. Nothing is imported or copied: the file on disk is the book.
 
@@ -187,7 +187,7 @@ Everything that touches hardware sits behind one thin layer, so the rest of Word
 
 Three backends:
 
-**Kobo** (first). FBInk draws and refreshes. Input devices are read raw. NickelMenu starts a script that pauses Nickel with SIGSTOP and saves its screen; both come back on exit or crash. Wordhord closes itself after 30 minutes untouched, so Nickel's sleep and power handling return. Nickel holds the power button and the sleep cover, so Wordhord can't grab them; a power press while Wordhord runs reaches Nickel when it resumes. Wordhord closes from the foot of the library's home; it needs, later, its own sleep.
+**Kobo** (first). FBInk draws and refreshes. Input devices are read raw. NickelMenu starts a script that pauses Nickel with SIGSTOP and saves its screen; both come back on exit or crash. Wordhord closes itself after 30 minutes untouched, so Nickel's sleep and power handling return. Nickel holds the power button and the sleep cover, so Wordhord can't grab them; a power press while Wordhord runs reaches Nickel when it resumes. Wordhord closes from the foot of the library's home; it needs, later, its own sleep. With Nickel paused, Wordhord sets the front light itself, through the sysfs files KOReader uses, and puts Nickel's levels back on exit.
 
 **PineNote** (later). The same 10.3" 1404×1872 panel as the Elipsa 2E, so layouts and cached pages carry over unchanged. It runs ordinary Linux, so Wordhord is a normal program there: no host app to pause. The pen is a Wacom digitiser, a standard input device. The work is the display: the `rockchip_ebc` e-ink driver, which is still changing. Check its state before starting.
 

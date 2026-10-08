@@ -388,6 +388,42 @@ impl<'f> Ui<'f> {
         s
     }
 
+    /// A gauge for the light, in a strip of paper down the left edge (how
+    /// bright) or the right (how warm): its name, a hairline filled from
+    /// the foot as far as `share`, and the figure. The page is in the
+    /// strip's own coordinates; the rect is where the strip goes.
+    pub fn gauge(&self, name: &str, figure: &str, share: f32, left: bool) -> (Page, Rect) {
+        let mut page = Page::default();
+        // Whole pixels, so the edge's hairline falls inside the strip.
+        let w = self.mm(17.0).round();
+        let (y0, y1) = ((self.h * 0.2).round(), (self.h * 0.8).round());
+        let h = y1 - y0;
+        let x = if left { 0.0 } else { self.w - w };
+        // The strip's inner edge.
+        self.rule(&mut page, if left { w - 1.0 } else { 0.0 }, 0.0, 1.0, h, 0);
+        let label = Type::new(Face::Regular, self.pt(8.5)).caps(0.12);
+        let lw = self.width(name, label);
+        self.text(&mut page, name, label, (w - lw) / 2.0, self.mm(7.0), w);
+        let t = Type::new(Face::Regular, self.pt(12.0));
+        let fw = self.width(figure, t);
+        self.text(&mut page, figure, t, (w - fw) / 2.0, h - self.mm(4.0), w);
+        let (top, foot) = (self.mm(11.0), h - self.mm(11.0));
+        let cx = (w / 2.0).round();
+        self.rule(&mut page, cx, top, 1.0, foot - top, 170);
+        let fill = (foot - top) * share.clamp(0.0, 1.0);
+        let t = self.mm(0.6).max(3.0);
+        self.rule(&mut page, cx - (t / 2.0).floor(), foot - fill, t, fill, 0);
+        (
+            page,
+            Rect {
+                x0: x,
+                y0,
+                x1: x + w,
+                y1,
+            },
+        )
+    }
+
     /// Where the foot of a card begins: what's above it is the card's.
     pub fn card_foot(&self) -> f32 {
         self.h - self.mm(26.0)

@@ -227,7 +227,7 @@ impl Platform for Desktop {
                 (true, None, Some(at)) => self.down = Some((Instant::now(), at)),
                 (false, Some((when, from)), Some(to)) => {
                     self.down = None;
-                    return gesture(from, to, when.elapsed(), self.size.0);
+                    return gesture(from, to, when.elapsed(), self.size);
                 }
                 _ => {}
             }
@@ -238,8 +238,16 @@ impl Platform for Desktop {
 }
 
 /// A press and release as the touch screen would read them.
-fn gesture(from: (i32, i32), to: (i32, i32), held: Duration, width: u32) -> Gesture {
+fn gesture(
+    from: (i32, i32),
+    to: (i32, i32),
+    held: Duration,
+    (width, height): (u32, u32),
+) -> Gesture {
     let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+    if let Some(g) = crate::touch::slide(from, to, height) {
+        return g;
+    }
     if dx.abs() >= width as i32 / 8 && dx.abs() > 2 * dy.abs() {
         return if dx < 0 {
             Gesture::SwipeLeft
@@ -291,9 +299,13 @@ impl Script {
                     y.parse().map_err(|_| format!("`{step}`"))?,
                 ),
                 ["power"] => Gesture::Power,
+                ["slide", x, dy] => Gesture::Slide(
+                    x.parse().map_err(|_| format!("`{step}`"))?,
+                    dy.parse().map_err(|_| format!("`{step}`"))?,
+                ),
                 _ => {
                     return Err(format!(
-                    "`{step}` isn't a gesture: tap X Y, swipe left, swipe right, hold [X Y], power"
+                    "`{step}` isn't a gesture: tap X Y, swipe left, swipe right, hold [X Y], slide X DY, power"
                 ))
                 }
             });
@@ -338,20 +350,24 @@ mod tests {
     fn the_mouse_makes_the_touch_screens_gestures() {
         let quick = Duration::from_millis(100);
         assert_eq!(
-            gesture((700, 300), (702, 301), quick, 1404),
+            gesture((700, 300), (702, 301), quick, (1404, 1872)),
             Gesture::Tap(700, 300)
         );
         assert_eq!(
-            gesture((1000, 900), (500, 920), quick, 1404),
+            gesture((1000, 900), (500, 920), quick, (1404, 1872)),
             Gesture::SwipeLeft
         );
         assert_eq!(
-            gesture((500, 900), (1000, 900), quick, 1404),
+            gesture((500, 900), (1000, 900), quick, (1404, 1872)),
             Gesture::SwipeRight
         );
         assert_eq!(
-            gesture((700, 300), (700, 300), Duration::from_secs(2), 1404),
+            gesture((700, 300), (700, 300), Duration::from_secs(2), (1404, 1872)),
             Gesture::Hold(700, 300)
+        );
+        assert_eq!(
+            gesture((300, 1200), (310, 900), quick, (1404, 1872)),
+            Gesture::Slide(300, -300)
         );
     }
 }

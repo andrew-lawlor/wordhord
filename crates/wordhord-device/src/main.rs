@@ -21,6 +21,7 @@ mod hoard;
 mod kobo;
 mod lexicon;
 mod library;
+mod light;
 mod platform;
 mod reader;
 mod settings;
