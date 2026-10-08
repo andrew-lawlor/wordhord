@@ -38,7 +38,10 @@ pub struct Kept {
 #[serde(tag = "kind", rename_all = "lowercase")]
 enum Record {
     Keep(Box<Kept>),
-    Drop { id: String, time: u64 },
+    Drop {
+        id: String,
+        time: u64,
+    },
     /// A word unlocked: graded 1 to 4, again to easy.
     Review(Review),
 }
@@ -196,7 +199,10 @@ impl Hoard {
         old.sort_by_key(|o| o.0);
         old.into_iter()
             .map(|(_, h, l)| (h, l))
-            .chain(new.into_iter().take(NEW_A_DAY.saturating_sub(started_today)))
+            .chain(
+                new.into_iter()
+                    .take(NEW_A_DAY.saturating_sub(started_today)),
+            )
             .collect()
     }
 

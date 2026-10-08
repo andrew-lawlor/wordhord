@@ -79,6 +79,9 @@ pub struct Screen {
     pub hits: Vec<(Rect, Action)>,
     /// How many pages the list has.
     pub pages: usize,
+    /// Words to mark grey, as a word looked up is: a hoarded word in its
+    /// sentence.
+    pub marks: Vec<Rect>,
 }
 
 impl Screen {
@@ -378,6 +381,7 @@ impl<'f> Ui<'f> {
         let mut s = Screen {
             page: content,
             hits: Vec::new(),
+            marks: Vec::new(),
             pages,
         };
         self.header(&mut s, title, true, page);
@@ -397,6 +401,7 @@ impl<'f> Ui<'f> {
         let mut s = Screen {
             page: content,
             hits: Vec::new(),
+            marks: Vec::new(),
             pages: 1,
         };
         let top = self.header(&mut s, "unlocking", true, 0);
@@ -462,6 +467,7 @@ impl<'f> Ui<'f> {
         let mut s = Screen {
             page: Page::default(),
             hits: Vec::new(),
+            marks: Vec::new(),
             pages: 1,
         };
         self.header(&mut s, title, true, 0);
@@ -536,6 +542,7 @@ impl<'f> Ui<'f> {
         let mut s = Screen {
             page: Page::default(),
             hits: Vec::new(),
+            marks: Vec::new(),
             pages: 1,
         };
         let m = self.margin();
@@ -666,6 +673,7 @@ impl<'f> Ui<'f> {
         let mut s = Screen {
             page: Page::default(),
             hits: Vec::new(),
+            marks: Vec::new(),
             pages,
         };
         let m = self.margin();
@@ -777,6 +785,7 @@ impl<'f> Ui<'f> {
         let mut s = Screen {
             page: Page::default(),
             hits: Vec::new(),
+            marks: Vec::new(),
             pages: 1,
         };
         let m = self.margin();
@@ -900,6 +909,7 @@ impl<'f> Ui<'f> {
         let mut s = Screen {
             page: Page::default(),
             hits: Vec::new(),
+            marks: Vec::new(),
             pages: 1,
         };
         let m = self.margin();

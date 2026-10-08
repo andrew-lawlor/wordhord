@@ -273,10 +273,15 @@ fn block(kind: wordhord_book::model::BlockKind) -> wordhord_book::model::Block {
 }
 
 /// A sentence a word was kept from, the word in italic where it was met,
-/// with the book's title under it.
-fn kept_quote(kept: &Kept) -> wordhord_book::model::Block {
-    use wordhord_book::model::{BlockKind, Inline};
+/// with the book's title under it. The sentence's words carry `id`, so the
+/// word can be found on the page and marked.
+fn kept_quote(kept: &Kept, id: &str) -> wordhord_book::model::Block {
+    use wordhord_book::model::{Block, BlockKind, Inline};
     let para = |inlines| block(BlockKind::Paragraph(inlines));
+    let with_id = |b: Block| Block {
+        id: Some(id.to_string()),
+        ..b
+    };
     let chars: Vec<char> = kept.sentence.chars().collect();
     let len = kept.word.chars().count();
     let end = kept.at + len;
@@ -293,13 +298,52 @@ fn kept_quote(kept: &Kept) -> wordhord_book::model::Block {
     } else {
         vec![Inline::Text(kept.sentence.clone())]
     };
-    block(BlockKind::Quote(vec![
-        para(sentence),
+    with_id(block(BlockKind::Quote(vec![
+        with_id(para(sentence)),
         para(vec![
             Inline::Text("— ".into()),
             Inline::Emphasis(vec![Inline::Text(kept.book.clone())]),
         ]),
-    ]))
+    ])))
+}
+
+/// Where the kept words are on a page set from `kept_quote`s: the `k`th
+/// quote has the id `kept-k`. Their letters, to mark grey.
+fn kept_marks(page: &Page, kept: &[&Kept]) -> Vec<Rect> {
+    let mut boxes = Vec::new();
+    for (k, kept) in kept.iter().enumerate() {
+        let id = format!("kept-{k}");
+        // The word's place in the sentence, counted as the page counts.
+        let before: String = kept.sentence.chars().take(kept.at).collect();
+        let nth = before.split_whitespace().count();
+        let words: Vec<_> = page.words.iter().filter(|w| w.block == id).collect();
+        let Some(start) = words
+            .iter()
+            .enumerate()
+            .filter(|(_, w)| !w.continues)
+            .nth(nth)
+            .map(|(i, _)| i)
+        else {
+            continue;
+        };
+        // With the rest of it, if it's hyphenated across lines.
+        let parts = std::iter::once(words[start]).chain(
+            words[start + 1..]
+                .iter()
+                .copied()
+                .take_while(|w| w.continues),
+        );
+        for w in parts {
+            let (x0, x1) = w.letters.unwrap_or((w.x0, w.x1));
+            boxes.push(Rect {
+                x0,
+                y0: w.y0,
+                x1,
+                y1: w.y1,
+            });
+        }
+    }
+    boxes
 }
 
 /// Blocks set as a book page is, between the header and `bottom`.
@@ -321,7 +365,12 @@ fn word_page(tools: &Tools, k: usize, page: usize) -> Screen {
     let Some(w) = words.get(k) else {
         return ui.list("The hoard", &[], 0, true);
     };
-    let mut blocks: Vec<_> = w.kept.iter().map(|k| kept_quote(k)).collect();
+    let mut blocks: Vec<_> = w
+        .kept
+        .iter()
+        .enumerate()
+        .map(|(k, kept)| kept_quote(kept, &format!("kept-{k}")))
+        .collect();
     if let Some(entry) = entry_of(tools, w.head, w.lang) {
         blocks.push(block(BlockKind::SceneBreak));
         blocks.extend(entry);
@@ -330,7 +379,10 @@ fn word_page(tools: &Tools, k: usize, page: usize) -> Screen {
     let pages = set.len().max(1);
     let page = page.min(pages - 1);
     let content = set.into_iter().nth(page).unwrap_or_default();
-    ui.titled(w.head, content, page, pages)
+    let marks = kept_marks(&content, &w.kept);
+    let mut s = ui.titled(w.head, content, page, pages);
+    s.marks = marks;
+    s
 }
 
 /// A word of the hoard's dictionary entry: only its own readings, not
@@ -368,7 +420,7 @@ fn unlock(screen: &mut dyn Platform, renderer: &mut Renderer, tools: &Tools) -> 
         tools.hoard.borrow().due(hoard::now()).into();
     let mut done = 0;
     while let Some((head, lang)) = queue.pop_front() {
-        let (front, back, state) = {
+        let (front, back, state, kept) = {
             let hoard = tools.hoard.borrow();
             let words = hoard.words();
             let Some(w) = words.iter().find(|w| w.head == head && w.lang == lang) else {
@@ -376,10 +428,10 @@ fn unlock(screen: &mut dyn Platform, renderer: &mut Renderer, tools: &Tools) -> 
             };
             // Another of its sentences each time, where there are several.
             let kept = w.kept[hoard.reviewed(&head, &lang) % w.kept.len()];
-            let quote = kept_quote(kept);
+            let quote = kept_quote(kept, "kept-0");
             let mut back = vec![quote.clone(), block(BlockKind::SceneBreak)];
             back.extend(entry_of(tools, &head, &lang).unwrap_or_default());
-            (vec![quote], back, hoard.state(&head, &lang))
+            (vec![quote], back, hoard.state(&head, &lang), kept.clone())
         };
         let now = hoard::now();
         // Again comes round today; the rest, as FSRS has it.
@@ -397,8 +449,14 @@ fn unlock(screen: &mut dyn Platform, renderer: &mut Renderer, tools: &Tools) -> 
                 .into_iter()
                 .next()
                 .unwrap_or_default();
+            let marks = kept_marks(&content, &[&kept]);
             let s = ui.card(content, queue.len() + 1, shown.then(|| when.clone()));
-            let pixels = renderer.page(&s.page, width, height);
+            let pixels = highlight(
+                &renderer.page(&s.page, width, height),
+                width,
+                height,
+                &marks,
+            );
             // A new card flashes the screen clean; the entry comes quietly.
             screen.draw(&pixels, width, height, 0, 0, !shown);
             let action = loop {
@@ -475,7 +533,12 @@ fn browse(
         let recent = library::recent(app);
         let s = browser.screen(tools, library, &recent);
         let started = Instant::now();
-        let pixels = renderer.page(&s.page, width, height);
+        let pixels = highlight(
+            &renderer.page(&s.page, width, height),
+            width,
+            height,
+            &s.marks,
+        );
         screen.draw(&pixels, width, height, 0, 0, flash);
         eprintln!(
             "library: {:?} drawn in {:?}",
