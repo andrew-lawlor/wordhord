@@ -14,7 +14,7 @@ A normal e-reader for stylus Kobos. Smaller and faster than KOReader. Built arou
 2. **Words.** Tap a word, even an inflected one, and get its full Wiktionary entry, offline. Keep it with the sentence you found it in. Review it later.
 3. **Your data.** No account, no cloud, no telemetry. Everything Wordhord knows is a file you can open, copy, diff and delete.
 
-**Target:** stylus Kobos (Elipsa 2E, Libra Colour), stock firmware. Kobos without a pen work too; they just lack ink. Launched from NickelMenu. Nickel pauses while Wordhord runs and resumes when it exits. Nickel stays in charge of the store, Wi-Fi setup, updates and USB.
+**Target:** stylus Kobos (Elipsa 2E, Libra Colour), stock firmware. The app folder carries a profile for each, and Wordhord takes the one for the screen it finds; the Libra Colour's page-turn buttons turn pages. Kobos without a pen work too; they just lack ink. Launched from NickelMenu. Nickel pauses while Wordhord runs and resumes when it exits. Nickel stays in charge of the store, Wi-Fi setup, updates and USB.
 
 ## 2. Principles
 

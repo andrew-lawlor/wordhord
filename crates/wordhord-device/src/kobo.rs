@@ -23,6 +23,11 @@ extern "C" {
 const INPUT_TOUCHSCREEN: u32 = 1 << 3;
 const INPUT_TABLET: u32 = 1 << 5;
 const INPUT_POWER_BUTTON: u32 = 1 << 16;
+const INPUT_PAGINATION_BUTTONS: u32 = 1 << 18;
+/// The page-turn buttons some Kobos have (the Libra Colour), as KOReader
+/// reads them: back, and on.
+const KEY_PAGE_BACK: usize = 193;
+const KEY_PAGE_ON: usize = 194;
 /// `EVIOCGKEY(96)`: which keys are down now. Nickel holds the power
 /// button's events, but anyone may ask whether it's pressed.
 const EVIOCGKEY: libc::c_ulong = 0x8060_4518;
@@ -125,6 +130,12 @@ fn run(library: &Path, app: &Path, screen: &str) -> ExitCode {
         .iter()
         .find(|i| i.types & INPUT_POWER_BUTTON != 0)
         .map(|i| i.fd);
+    // Page-turn buttons, if this Kobo has them: asked after as the power
+    // button is, as Nickel may hold them too.
+    let buttons = inputs
+        .iter()
+        .find(|i| i.types & INPUT_PAGINATION_BUTTONS != 0)
+        .map(|i| i.fd);
     let mut kobo = Kobo {
         fd,
         panel,
@@ -133,6 +144,7 @@ fn run(library: &Path, app: &Path, screen: &str) -> ExitCode {
         pending: std::collections::VecDeque::new(),
         held: None,
         power,
+        buttons,
         app: app.to_path_buf(),
     };
     let result = app::run(&mut kobo, library, app);
@@ -171,6 +183,8 @@ struct Kobo {
     held: Option<Gesture>,
     /// The power button's input, to ask whether it's pressed.
     power: Option<c_int>,
+    /// The page-turn buttons' input, if any.
+    buttons: Option<c_int>,
     /// The app folder, where the sleep screen is.
     app: std::path::PathBuf,
 }
@@ -337,7 +351,13 @@ impl Kobo {
         let (width, height) = self.size();
         let awake = CString::new("/tmp/wordhord-awake.dump").expect("no NUL");
         let saved = unsafe { wh_save(self.fd, awake.as_ptr()) } == 0;
-        match sleep_screen(&self.app.join("sleep.png"), width, height) {
+        let sized = self.app.join(format!("sleep-{width}x{height}.png"));
+        let path = if sized.exists() {
+            sized
+        } else {
+            self.app.join("sleep.png")
+        };
+        match sleep_screen(&path, width, height) {
             Some(pixels) => self.draw(&pixels, width, height, 0, 0, true),
             None => self.draw(
                 &vec![255; (width * height) as usize],
@@ -435,6 +455,7 @@ impl Platform for Kobo {
                 &mut self.gestures,
                 &mut self.pending,
                 self.power,
+                self.buttons,
             ) {
                 Gesture::Power if self.power.is_some() => self.sleep(),
                 g => break g,
@@ -508,10 +529,18 @@ fn next_gesture(
     gestures: &mut Gestures,
     pending: &mut std::collections::VecDeque<(usize, Event)>,
     power: Option<c_int>,
+    buttons: Option<c_int>,
 ) -> Gesture {
     let idle_since = std::time::Instant::now();
-    // The power button as it was: a press is its going down.
+    // The power button and page buttons as they were: a press is a key's
+    // going down.
     let mut power_was = power.is_some_and(|fd| key_down(fd, KEY_POWER));
+    let turns = |fd: Option<c_int>| {
+        fd.map_or((false, false), |fd| {
+            (key_down(fd, KEY_PAGE_BACK), key_down(fd, KEY_PAGE_ON))
+        })
+    };
+    let mut turns_were = turns(buttons);
     let fingers = fingers(inputs);
     let mut polls: Vec<libc::pollfd> = inputs
         .iter()
@@ -555,13 +584,13 @@ fn next_gesture(
             .flatten()
             .min();
         // Waking often enough to see the power button pressed.
-        let wait = press
-            .map_or(POWER_MS, |d| d.as_millis() as c_int + 1)
-            .min(if power.is_some() {
+        let wait = press.map_or(POWER_MS, |d| d.as_millis() as c_int + 1).min(
+            if power.is_some() || buttons.is_some() {
                 POWER_MS
             } else {
                 c_int::MAX
-            });
+            },
+        );
         let n = unsafe { libc::poll(polls.as_mut_ptr(), polls.len() as _, wait) };
         let power_now = power.is_some_and(|fd| key_down(fd, KEY_POWER));
         if power_now && !power_was {
@@ -569,6 +598,14 @@ fn next_gesture(
             return Gesture::Power;
         }
         power_was = power_now;
+        let turns_now = turns(buttons);
+        if turns_now.1 && !turns_were.1 {
+            return Gesture::SwipeLeft;
+        }
+        if turns_now.0 && !turns_were.0 {
+            return Gesture::SwipeRight;
+        }
+        turns_were = turns_now;
         if n == 0 {
             if press.is_some() {
                 if let Some(g) = gestures.tick() {

@@ -39,6 +39,7 @@ pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), Str
     let fonts_dir = app.join("fonts");
     let (width, height) = screen.size();
     let started = Instant::now();
+    fit_profile(app, width, height);
     let setup = Profile::load(&app.join("profile.toml"))
         .and_then(|p| Fonts::load(&p.dir, &p.fonts).map(|f| (p, f)));
     let (profile, fonts) = match setup {
@@ -112,6 +113,51 @@ pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), Str
             None => return Ok(()),
         }
     }
+}
+
+/// The profile for this screen made the app folder's own: the app folder
+/// carries one for each Kobo Wordhord knows, in `profiles/`, and the one
+/// whose screen is this one's takes the place of `profile.toml`.
+fn fit_profile(app: &Path, width: u32, height: u32) {
+    let size = |text: &str| {
+        let field = |key: &str| {
+            text.lines().find_map(|l| {
+                l.trim()
+                    .strip_prefix(key)?
+                    .trim()
+                    .strip_prefix('=')?
+                    .trim()
+                    .parse::<u32>()
+                    .ok()
+            })
+        };
+        (field("width"), field("height"))
+    };
+    let current = std::fs::read_to_string(app.join("profile.toml")).unwrap_or_default();
+    if size(&current) == (Some(width), Some(height)) {
+        return;
+    }
+    let Ok(dir) = std::fs::read_dir(app.join("profiles")) else {
+        return;
+    };
+    for e in dir.flatten() {
+        let Ok(text) = std::fs::read_to_string(e.path()) else {
+            continue;
+        };
+        if size(&text) == (Some(width), Some(height)) {
+            // Its fonts are beside it there; here, in the app folder.
+            let text = text.replace("\"../fonts/", "\"fonts/");
+            match std::fs::write(app.join("profile.toml"), text) {
+                Ok(()) => eprintln!(
+                    "profile: {} for this {width}×{height} screen",
+                    e.path().display()
+                ),
+                Err(e) => eprintln!("profile: {e}"),
+            }
+            return;
+        }
+    }
+    eprintln!("profile: none for a {width}×{height} screen");
 }
 
 // ---- the library -----------------------------------------------------------

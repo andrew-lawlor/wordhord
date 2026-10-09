@@ -4,7 +4,7 @@ norske sagatid* (1850), the warden on the sea-cliff, cropped to the
 screen, with WORDHORD over the sky. Dithered to the sixteen greys of
 e-ink and written as an 8-bit grey PNG.
 
-    scripts/sleep-screen.py art/baade-sagatid.jpg <out.png> [WIDTH HEIGHT]
+    scripts/sleep-screen.py art/baade-sagatid.jpg <out.png> [WIDTH HEIGHT [PPI]]
 """
 
 import sys
@@ -13,7 +13,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 src, out = sys.argv[1], sys.argv[2]
 W, H = (int(sys.argv[3]), int(sys.argv[4])) if len(sys.argv) > 4 else (1404, 1872)
-PPI = 227
+PPI = int(sys.argv[5]) if len(sys.argv) > 5 else 227
 pt = lambda p: round(p * PPI / 72)
 FONTS = "fonts/junicode/"
 

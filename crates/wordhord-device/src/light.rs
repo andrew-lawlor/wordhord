@@ -3,14 +3,16 @@
 //! files in /sys KOReader writes to. On exit it puts the light back as
 //! Nickel left it, so Nickel's own setting stays true.
 //!
-//! The paths are the Elipsa 2E's. A Kobo without them has no light here.
+//! The paths are the Elipsa 2E's and the Libra Colour's. A Kobo without them has
+//! no light here.
 
 use std::path::{Path, PathBuf};
 
 /// Brightness, 0 to 100.
 const WHITE: &str = "backlight/mxc_msp430.0/brightness";
-/// The warm/cool mixer, 0 to 10, with 10 the coolest.
-const MIXER: &str = "leds/aw99703-bl_FL1/color";
+/// The warm/cool mixer, 0 to 10, with 10 the coolest: the Elipsa 2E's,
+/// then the Libra Colour's, as KOReader has them.
+const MIXERS: [&str; 2] = ["leds/aw99703-bl_FL1/color", "backlight/lm3630a_led/color"];
 const MIXER_MAX: i32 = 10;
 /// Nickel's colour setting runs in kelvin, warmest to coolest.
 const KELVIN: (i32, i32) = (1500, 6400);
@@ -55,7 +57,7 @@ impl Light {
             .or_else(|| nickel(&conf, "FrontLightLevel"))
             .unwrap_or(0)
             .clamp(0, 100);
-        let mixer = Some(class.join(MIXER)).filter(|m| m.exists());
+        let mixer = MIXERS.iter().map(|m| class.join(m)).find(|m| m.exists());
         let warmth = mixer.as_ref().map(|m| {
             read(m)
                 .map(|v| MIXER_MAX - v)
@@ -143,7 +145,7 @@ mod tests {
         std::fs::create_dir_all(class.join("backlight/mxc_msp430.0")).unwrap();
         std::fs::create_dir_all(class.join("leds/aw99703-bl_FL1")).unwrap();
         std::fs::write(class.join(WHITE), "19\n").unwrap();
-        std::fs::write(class.join(MIXER), "").unwrap();
+        std::fs::write(class.join(MIXERS[0]), "").unwrap();
         // The mixer can't be read back: Nickel's 6400 K is the coolest.
         std::fs::write(dir.join("conf"), "[PowerOptions]\nColorSetting=6400\n").unwrap();
         {
@@ -152,12 +154,12 @@ mod tests {
             l.slide(false, 0.25);
             l.slide(true, 0.02);
             assert_eq!(read(&class.join(WHITE)), Some(44));
-            assert_eq!(read(&class.join(MIXER)), Some(9));
+            assert_eq!(read(&class.join(MIXERS[0])), Some(9));
             l.slide(false, -2.0);
             assert_eq!(l.brightness(), 0);
         }
         assert_eq!(read(&class.join(WHITE)), Some(19));
-        assert_eq!(read(&class.join(MIXER)), Some(10));
+        assert_eq!(read(&class.join(MIXERS[0])), Some(10));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
