@@ -904,34 +904,54 @@ impl<'f> Ui<'f> {
             pages: 1,
         };
         let m = self.margin();
-        let mut y = self.mm(11.0) + self.pt(22.0);
+        // A short screen (the Libra Colour's) has a smaller masthead, without
+        // its fleuron, so the shelves keep their room.
+        let short = self.h * 25.4 / self.ppi < 170.0;
+        let title = if short { 18.0 } else { 22.0 };
+        let mut y = self.mm(if short { 8.0 } else { 11.0 }) + self.pt(title);
         self.centred(
             &mut s.page,
             "wordhord",
-            Type::new(Face::Regular, self.pt(22.0)).caps(0.18),
+            Type::new(Face::Regular, self.pt(title)).caps(0.18),
             y,
         );
-        y += self.pt(15.0);
+        y += self.pt(if short { 13.0 } else { 15.0 });
         self.centred(
             &mut s.page,
             "wordhord onleac",
             Type::new(Face::Italic, self.pt(10.5)),
             y,
         );
-        y += self.pt(20.0);
-        self.centred(&mut s.page, "❧", Type::new(Face::Regular, self.pt(14.0)), y);
-        y += self.mm(8.0);
+        if short {
+            y += self.mm(9.0);
+        } else {
+            y += self.pt(20.0);
+            self.centred(&mut s.page, "❧", Type::new(Face::Regular, self.pt(14.0)), y);
+            y += self.mm(8.0);
+        }
         let label = Type::new(Face::Regular, self.pt(10.0)).caps(0.14);
         if !recent.is_empty() {
             self.centred(&mut s.page, "continue reading", label, y);
             y += self.mm(4.0);
             let gap = self.mm(5.0);
-            let cw = (self.w - 2.0 * m - 3.0 * gap) / 4.0;
-            let ch = cw * 1.5;
             let small = Type::new(Face::Italic, self.pt(9.0));
-            // Fewer than four sit in the middle.
+            // The covers take what room the shelves leave them, each shelf
+            // a comfortable row: on a small screen they're smaller, not
+            // the shelves closer.
+            let shelves_count = shelves.iter().filter(|s| s.1 > 0).count()
+                + [hoard, due, underlines].iter().filter(|&&n| n > 0).count();
+            let after = self.mm(if short { 7.0 } else { 12.0 });
+            let below = self.mm(2.0) + small.size * 2.0 + after + self.mm(4.0);
+            let shelves_h = shelves_count as f32 * self.mm(13.0);
+            let close_top = self.h - self.mm(21.0);
+            let room = close_top - self.mm(3.0) - shelves_h - below - y;
+            let full = (self.w - 2.0 * m - 3.0 * gap) / 4.0;
+            let ch = (full * 1.5).min(room).max(self.mm(18.0));
+            let cw = ch / 1.5;
+            // Fewer than four, or narrower, sit in the middle.
             let shown = recent.len().min(4);
-            let left = m + (4 - shown) as f32 * (cw + gap) / 2.0;
+            let span = shown as f32 * cw + (shown as f32 - 1.0) * gap;
+            let left = (self.w - span) / 2.0;
             for (k, r) in recent.iter().take(4).enumerate() {
                 let x = left + k as f32 * (cw + gap);
                 self.cover(&mut s.page, &r.path, r.cover, x, y, cw, ch);
@@ -954,7 +974,7 @@ impl<'f> Ui<'f> {
                     Action::Open(r.path.clone()),
                 ));
             }
-            y += ch + self.mm(2.0) + small.size * 2.0 + self.mm(12.0);
+            y += ch + self.mm(2.0) + small.size * 2.0 + after;
         }
         self.centred(&mut s.page, "the shelves", label, y);
         // Search, at the right of the shelves' heading: what it searches.
@@ -1170,30 +1190,69 @@ impl<'f> Ui<'f> {
             marks: Vec::new(),
             pages: 1,
         };
-        let m = self.margin();
-        let mut y = self.header(&mut s, "Type", true, 0);
+        let top = self.header(&mut s, "Type", true, 0);
+        // The choices first, measured, closer set on a small screen; the
+        // specimen takes the height they leave, two to five centimetres.
+        let fits = |tight: bool| {
+            let mut scratch = Screen {
+                page: Page::default(),
+                hits: Vec::new(),
+                marks: Vec::new(),
+                pages: 1,
+            };
+            let mut names = Vec::new();
+            let end = self.type_choices(&mut scratch, &mut names, 0.0, rows, chosen, faces, tight);
+            self.h - self.mm(4.0) - top - end
+        };
+        let tight = fits(false) < self.mm(30.0);
+        let room = fits(tight);
+        let specimen_h = room.clamp(self.mm(20.0), self.mm(50.0));
         let specimen = Rect {
             x0: 0.0,
-            y0: y,
+            y0: top,
             x1: self.w,
-            y1: y + self.mm(50.0),
+            y1: top + specimen_h,
         };
-        y = specimen.y1;
+        let y = specimen.y1;
         self.hairline(&mut s.page, y, 0);
-        y += self.mm(2.0);
         if let Some(note) = note {
             let t = Type::new(Face::Italic, self.pt(9.0));
-            self.centred(&mut s.page, note, t, y + t.size);
+            self.centred(&mut s.page, note, t, y + self.mm(2.0) + t.size);
         }
-        y += self.mm(7.0);
-        let label = Type::new(Face::Regular, self.pt(9.0)).caps(0.14);
         let mut names = Vec::new();
+        self.type_choices(&mut s, &mut names, y, rows, chosen, faces, tight);
+        TypeScreen {
+            screen: s,
+            specimen,
+            names,
+        }
+    }
+
+    /// The type screen's choices, from `y`, where the specimen ends: the
+    /// faces, each with the old languages it can set, then a row of names
+    /// for each other choice, wrapping as the screen needs. `tight` sets
+    /// them closer. Where they end.
+    #[allow(clippy::too_many_arguments)]
+    fn type_choices(
+        &self,
+        s: &mut Screen,
+        names: &mut Vec<(f32, f32, f32)>,
+        mut y: f32,
+        rows: &[(Choice, &str, Vec<&str>)],
+        chosen: &[usize],
+        faces: &[Vec<&str>],
+        tight: bool,
+    ) -> f32 {
+        let m = self.margin();
+        let k = if tight { 0.8 } else { 1.0 };
+        y += self.mm(9.0 * k);
+        let label = Type::new(Face::Regular, self.pt(9.0)).caps(0.14);
         let face_choice = chosen.first().copied().unwrap_or(0);
         self.text(&mut s.page, "face", label, m, y, self.w);
         y += self.mm(2.0);
-        let row = self.mm(9.0);
+        let row = self.mm(9.0 * k);
         let small = Type::new(Face::Regular, self.pt(8.5)).caps(0.06);
-        for (k, languages) in faces.iter().enumerate() {
+        for (n, languages) in faces.iter().enumerate() {
             let baseline = y + row * 0.68;
             names.push((m, baseline, self.pt(13.0)));
             let list = languages.join(" · ");
@@ -1206,7 +1265,7 @@ impl<'f> Ui<'f> {
                 baseline,
                 lw + 1.0,
             );
-            if k == face_choice {
+            if n == face_choice {
                 let t = Type::new(Face::Regular, self.pt(10.5));
                 let w = self.width("❧", t);
                 self.text(&mut s.page, "❧", t, m - w - self.mm(2.5), baseline, w + 1.0);
@@ -1218,49 +1277,54 @@ impl<'f> Ui<'f> {
                     x1: self.w,
                     y1: y + row,
                 },
-                Action::Choose(Choice::Face, k),
+                Action::Choose(Choice::Face, n),
             ));
             y += row;
         }
-        y += self.mm(5.0);
+        y += self.mm(5.0 * k);
         let word = Type::new(Face::Regular, self.pt(12.0));
+        let sep = "  ·  ";
+        let sep_w = self.width(sep, word);
         for (n, (choice, name, options)) in rows.iter().enumerate() {
             self.text(&mut s.page, name, label, m, y, self.w);
-            let baseline = y + self.mm(7.5);
+            let mut baseline = y + self.mm(7.5 * k);
             let mut x = m;
             let now = chosen.get(n + 1).copied().unwrap_or(0);
-            for (k, option) in options.iter().enumerate() {
-                if k > 0 {
-                    x += self.text(&mut s.page, "  ·  ", word, x, baseline, self.w);
-                }
-                let t = if k == now {
+            for (o, option) in options.iter().enumerate() {
+                let t = if o == now {
                     Type::new(Face::Italic, word.size)
                 } else {
                     word
                 };
-                let w = self.text(&mut s.page, option, t, x, baseline, self.w);
-                if k == now {
+                let w = self.width(option, t);
+                if o > 0 {
+                    // Too wide for the line: the next one.
+                    if x + sep_w + w > self.w - m {
+                        baseline += self.mm(7.0 * k);
+                        x = m;
+                    } else {
+                        x += self.text(&mut s.page, sep, word, x, baseline, self.w);
+                    }
+                }
+                self.text(&mut s.page, option, t, x, baseline, self.w);
+                if o == now {
                     self.rule(&mut s.page, x, baseline + word.size * 0.25, w, 1.0, 0);
                 }
                 // Generous to tap: up to halfway to the next word.
                 s.hits.push((
                     Rect {
                         x0: x - self.mm(2.0),
-                        y0: y - label.size,
+                        y0: baseline - word.size - self.mm(1.5),
                         x1: x + w + self.mm(2.0),
-                        y1: baseline + self.mm(4.0),
+                        y1: baseline + self.mm(3.0),
                     },
-                    Action::Choose(*choice, k),
+                    Action::Choose(*choice, o),
                 ));
                 x += w;
             }
-            y = baseline + self.mm(9.0);
+            y = baseline + self.mm(9.0 * k);
         }
-        TypeScreen {
-            screen: s,
-            specimen,
-            names,
-        }
+        y
     }
 
     /// A label in spaced small caps, or italic, ending at `right` on a
@@ -1285,8 +1349,10 @@ impl<'f> Ui<'f> {
         (page, hit)
     }
 
-    /// The bar over the top of a page while reading: back to the library,
-    /// the book's title, the type, and the contents.
+    /// The bar over the top of a page while reading, in two lines: the way
+    /// back to the library, the type and the contents along the top, in
+    /// small caps; the book's title under them, in italic, across the whole
+    /// width, so even a narrow screen has room for it.
     pub fn reading_bar(&self, title: &str) -> (Screen, u32) {
         let mut s = Screen {
             page: Page::default(),
@@ -1296,8 +1362,9 @@ impl<'f> Ui<'f> {
         };
         let m = self.margin();
         let size = self.pt(11.0);
-        let height = self.mm(16.0);
-        let baseline = (height + size * 0.6) / 2.0;
+        let controls = self.mm(13.0);
+        let height = (controls + self.mm(11.0)).round();
+        let baseline = (controls + size * 0.6) / 2.0;
         let label = Type::new(Face::Regular, size).caps(0.12);
         let lw = self.text(&mut s.page, "‹ library", label, m, baseline, self.w / 3.0);
         let cw = self.width("contents", label);
@@ -1307,53 +1374,52 @@ impl<'f> Ui<'f> {
             label,
             self.w - m - cw,
             baseline,
-            self.w / 3.0,
+            cw + 1.0,
         );
         let yw = self.width("type", label);
         let yx = self.w - m - cw - self.mm(8.0) - yw;
         self.text(&mut s.page, "type", label, yx, baseline, yw + 1.0);
         s.hits.push((
             Rect {
-                x0: yx - self.mm(4.0),
-                y0: 0.0,
-                x1: yx + yw + self.mm(4.0),
-                y1: height,
-            },
-            Action::Type,
-        ));
-        let t = Type::new(Face::Italic, size);
-        // The title sits between, centred on the page if it can be.
-        let right = self.w - yx + self.mm(4.0);
-        let tw = self
-            .width(title, t)
-            .min(self.w - 2.0 * right.max(m + lw + m));
-        self.text(
-            &mut s.page,
-            title,
-            t,
-            (self.w - tw) / 2.0,
-            baseline,
-            tw.max(1.0),
-        );
-        self.rule(&mut s.page, 0.0, height - 2.0, self.w, 2.0, 0);
-        s.hits.push((
-            Rect {
                 x0: 0.0,
                 y0: 0.0,
                 x1: m + lw + m,
-                y1: height,
+                y1: controls,
             },
             Action::Library,
+        ));
+        s.hits.push((
+            Rect {
+                x0: yx - self.mm(4.0),
+                y0: 0.0,
+                x1: yx + yw + self.mm(4.0),
+                y1: controls,
+            },
+            Action::Type,
         ));
         s.hits.push((
             Rect {
                 x0: self.w - m - cw - self.mm(4.0),
                 y0: 0.0,
                 x1: self.w,
-                y1: height,
+                y1: controls,
             },
             Action::Contents,
         ));
+        // A hairline between, then the title, centred.
+        self.hairline(&mut s.page, controls.round(), 204);
+        let t = Type::new(Face::Italic, self.pt(11.5));
+        let room = self.w - 2.0 * m;
+        let tw = self.width(title, t).min(room);
+        self.text(
+            &mut s.page,
+            title,
+            t,
+            (self.w - tw) / 2.0,
+            controls + (height - controls + t.size * 0.6) / 2.0,
+            room,
+        );
+        self.rule(&mut s.page, 0.0, height - 2.0, self.w, 2.0, 0);
         (s, height as u32)
     }
 }

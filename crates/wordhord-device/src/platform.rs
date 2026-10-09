@@ -18,6 +18,12 @@ pub trait Platform {
         self.draw(grey, w, h, x, y, false);
     }
 
+    /// As `draw_fast`, faster still, for ink as it's written: black on
+    /// white only, and greys it touches go black or white until next drawn.
+    fn draw_ink(&mut self, grey: &[u8], w: u32, h: u32, x: u32, y: u32) {
+        self.draw_fast(grey, w, h, x, y);
+    }
+
     /// Whether a pen that moves writes, from here on: in a book it does;
     /// elsewhere it's a finger.
     fn ink(&mut self, _on: bool) {}

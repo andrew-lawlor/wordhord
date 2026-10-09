@@ -1556,7 +1556,48 @@ fn read(
                 if let Some(r) = ink_into(&mut shown, width, height, &piece) {
                     let block = cut(&shown, width, &r);
                     let (w, h) = ((r.x1 - r.x0) as u32, (r.y1 - r.y0) as u32);
-                    screen.draw_fast(&block, w, h, r.x0 as u32, r.y0 as u32);
+                    screen.draw_ink(&block, w, h, r.x0 as u32, r.y0 as u32);
+                }
+                // The pen lifted: the stroke's ground drawn again as it
+                // should be, the greys of the letters it crossed back.
+                if up && tool == Tool::Pen {
+                    let all: Vec<_> = stroke.iter().chain(&points).copied().collect();
+                    let x0 = all
+                        .iter()
+                        .map(|p| p.0 - p.2)
+                        .fold(f32::MAX, f32::min)
+                        .floor()
+                        .max(0.0);
+                    let y0 = all
+                        .iter()
+                        .map(|p| p.1 - p.2)
+                        .fold(f32::MAX, f32::min)
+                        .floor()
+                        .max(0.0);
+                    let x1 = all
+                        .iter()
+                        .map(|p| p.0 + p.2)
+                        .fold(0.0, f32::max)
+                        .ceil()
+                        .min(width as f32);
+                    let y1 = all
+                        .iter()
+                        .map(|p| p.1 + p.2)
+                        .fold(0.0, f32::max)
+                        .ceil()
+                        .min(height as f32);
+                    if x1 > x0 && y1 > y0 {
+                        let r = Rect { x0, y0, x1, y1 };
+                        let block = cut(&shown, width, &r);
+                        screen.draw(
+                            &block,
+                            (x1 - x0) as u32,
+                            (y1 - y0) as u32,
+                            x0 as u32,
+                            y0 as u32,
+                            false,
+                        );
+                    }
                 }
                 stroke.extend(points);
                 if up && !stroke.is_empty() && tool == Tool::Highlighter {

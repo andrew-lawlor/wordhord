@@ -423,6 +423,13 @@ impl Platform for Kobo {
         }
     }
 
+    fn draw_ink(&mut self, grey: &[u8], w: u32, h: u32, x: u32, y: u32) {
+        let rc = unsafe { wh_draw(self.fd, grey.as_ptr(), w, h, x, y, 3) };
+        if rc < 0 {
+            eprintln!("drawing failed: {rc}");
+        }
+    }
+
     fn draw_fast(&mut self, grey: &[u8], w: u32, h: u32, x: u32, y: u32) {
         let rc = unsafe { wh_draw(self.fd, grey.as_ptr(), w, h, x, y, 2) };
         if rc < 0 {
