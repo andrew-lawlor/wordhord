@@ -18,7 +18,7 @@ It runs beside Kobo's own software. You open it from NickelMenu. Nickel pauses w
 
 **Looks up any word you tap.** The dictionary is Wiktionary, offline, and it knows inflected forms: tap *mǫgu* and get *mǫgr*. English, Old English and Old Norse so far. Etymologies lead on: from *hate*, tap Old English *hatian* and it opens too.
 
-**Keeps the words you hoard.** One tap keeps a word with the sentence you found it in. *Unlock the hoard* brings them back as cards, spaced out the way Anki spaces them, so they stay. A word you've kept has a faint dotted line under it wherever you meet it again, and its entry says where you first did.
+**Keeps the words you hoard.** One tap keeps a word with the sentence you found it in. *Unlock the hoard* brings them back as cards, spaced out the way Anki spaces them, so they stay. A word you're still learning has a faint dotted line under it wherever you meet it again, and its entry says where you first did.
 
 **Underlines.** Hold a word until it turns grey, drag, and lift. A loupe above your finger shows the word your fingertip hides. Every underline goes into a commonplace book, by book and by day, and you can search it.
 

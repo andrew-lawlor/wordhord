@@ -62,6 +62,9 @@ pub struct Word<'a> {
     pub kept: Vec<&'a Kept>,
 }
 
+/// A word's stability, in days, from which it's learned.
+pub const LEARNED_DAYS: f32 = 21.0;
+
 /// Words to unlock today, at most this many new.
 pub const NEW_A_DAY: usize = 10;
 
@@ -71,8 +74,8 @@ pub struct Hoard {
     kept: Vec<Kept>,
     /// Every review, oldest first.
     reviews: Vec<Review>,
-    /// How many words have been kept or let go: so what's built from the
-    /// hoard knows when to build again.
+    /// How many words have been kept, let go or unlocked: so what's built
+    /// from the hoard knows when to build again.
     changes: usize,
 }
 
@@ -146,6 +149,7 @@ impl Hoard {
         };
         self.append(&Record::Review(r.clone()))?;
         self.reviews.push(r);
+        self.changes += 1;
         Ok(())
     }
 
@@ -158,6 +162,14 @@ impl Hoard {
 
     /// How well the word is held, from its reviews; `None` if never
     /// reviewed.
+    /// Whether a word is learned: recalled nine times in ten for three
+    /// weeks or more, as Anki calls a card mature. Forgotten, it isn't
+    /// again.
+    pub fn learned(&self, head: &str, lang: &str) -> bool {
+        self.state(head, lang)
+            .is_some_and(|s| s.stability >= LEARNED_DAYS)
+    }
+
     pub fn state(&self, head: &str, lang: &str) -> Option<fsrs::State> {
         self.reviews_of(head, lang)
             .fold(None, |s, r| Some(fsrs::next(s, r.grade, r.time)))
@@ -357,6 +369,33 @@ mod tests {
             reference: None,
             line: 0,
         }
+    }
+
+    #[test]
+    fn a_word_is_learned_at_three_weeks_and_unlearned_when_forgotten() {
+        let dir = std::env::temp_dir().join(format!("wordhord-learned-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let day = 86_400;
+        let review = |grade: u8, time: u64| {
+            serde_json::to_string(&Record::Review(Review {
+                head: "hate".into(),
+                lang: "eng".into(),
+                grade,
+                time,
+            }))
+            .unwrap()
+        };
+        let log = |lines: &[String]| {
+            std::fs::write(dir.join("hoard.jsonl"), lines.join("\n")).unwrap();
+            Hoard::load(&dir)
+        };
+        let mut lines = vec![review(3, 0)];
+        assert!(!log(&lines).learned("hate", "eng"));
+        lines.extend([review(3, 4 * day), review(4, 20 * day)]);
+        assert!(log(&lines).learned("hate", "eng"));
+        lines.push(review(1, 90 * day));
+        assert!(!log(&lines).learned("hate", "eng"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

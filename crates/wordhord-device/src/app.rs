@@ -1767,8 +1767,9 @@ struct Met {
     keys: Rc<HashSet<String>>,
 }
 
-/// The forms of the hoard's words in the pack `lang`: each reading's
-/// forms, as that part of speech only, and each word as it was printed.
+/// The forms of the hoard's words in the pack `lang` not yet learned:
+/// each reading's forms, as that part of speech only, and each word as it
+/// was printed. A learned word is yours, and needs no mark.
 fn met(tools: &Tools, lang: &str) -> Rc<HashSet<String>> {
     let hoard = tools.hoard.borrow();
     let mut met = tools.met.borrow_mut();
@@ -1776,7 +1777,11 @@ fn met(tools: &Tools, lang: &str) -> Rc<HashSet<String>> {
     if met.built.as_ref() != Some(&now) {
         let started = Instant::now();
         let mut keys = HashSet::new();
-        for word in hoard.words().iter().filter(|w| w.lang == lang) {
+        for word in hoard
+            .words()
+            .iter()
+            .filter(|w| w.lang == lang && !hoard.learned(w.head, w.lang))
+        {
             keys.extend(tools.lexicon.forms(lang, word.head, word.pos));
             keys.extend(word.kept.iter().map(|k| wordhord_dict::key(&k.word)));
         }
