@@ -79,7 +79,18 @@ enum Record {
     Underline(Box<Underline>),
     Ink(Box<Ink>),
     Bookmark(Box<Bookmark>),
-    Remove { id: String, time: u64 },
+    /// A typed note on an underline: the latest for it stands; an empty one
+    /// takes it away.
+    Note {
+        id: String,
+        underline: String,
+        text: String,
+        time: u64,
+    },
+    Remove {
+        id: String,
+        time: u64,
+    },
 }
 
 pub struct Marks {
@@ -90,6 +101,8 @@ pub struct Marks {
     inks: Vec<Ink>,
     /// Ribbons not taken out, oldest first.
     bookmarks: Vec<Bookmark>,
+    /// Notes, by the underline they're on.
+    notes: std::collections::HashMap<String, String>,
 }
 
 impl Marks {
@@ -98,12 +111,22 @@ impl Marks {
         let mut underlines: Vec<Underline> = Vec::new();
         let mut inks: Vec<Ink> = Vec::new();
         let mut bookmarks: Vec<Bookmark> = Vec::new();
+        let mut notes: std::collections::HashMap<String, String> = Default::default();
         for line in std::fs::read_to_string(&path).unwrap_or_default().lines() {
             // A line cut short by a crash is skipped, not fatal.
             match serde_json::from_str::<Record>(line) {
                 Ok(Record::Underline(u)) => underlines.push(*u),
                 Ok(Record::Ink(i)) => inks.push(*i),
                 Ok(Record::Bookmark(b)) => bookmarks.push(*b),
+                Ok(Record::Note {
+                    underline, text, ..
+                }) => {
+                    if text.trim().is_empty() {
+                        notes.remove(&underline);
+                    } else {
+                        notes.insert(underline, text);
+                    }
+                }
                 Ok(Record::Remove { id, .. }) => {
                     underlines.retain(|u| u.id != id);
                     inks.retain(|i| i.id != id);
@@ -117,6 +140,7 @@ impl Marks {
             underlines,
             inks,
             bookmarks,
+            notes,
         }
     }
 
@@ -130,17 +154,42 @@ impl Marks {
         writeln!(file, "{line}").map_err(|e| format!("{}: {e}", self.path.display()))
     }
 
-    pub fn underline(&mut self, mut u: Underline) -> Result<(), String> {
+    /// An underline saved; its id, for a note to go on it.
+    pub fn underline(&mut self, mut u: Underline) -> Result<String, String> {
         (u.time, u.id) = stamp();
         self.append(&Record::Underline(Box::new(u.clone())))?;
+        let id = u.id.clone();
         self.underlines.push(u);
-        Ok(())
+        Ok(id)
     }
 
     pub fn ink(&mut self, mut i: Ink) -> Result<(), String> {
         (i.time, i.id) = stamp();
         self.append(&Record::Ink(Box::new(i.clone())))?;
         self.inks.push(i);
+        Ok(())
+    }
+
+    /// The note on an underline, if it has one.
+    pub fn note(&self, underline: &str) -> Option<&str> {
+        self.notes.get(underline).map(String::as_str)
+    }
+
+    /// A note set on an underline; an empty one takes it away.
+    pub fn set_note(&mut self, underline: &str, text: &str) -> Result<(), String> {
+        let (time, id) = stamp();
+        let text = text.trim().to_string();
+        self.append(&Record::Note {
+            id,
+            underline: underline.to_string(),
+            text: text.clone(),
+            time,
+        })?;
+        if text.is_empty() {
+            self.notes.remove(underline);
+        } else {
+            self.notes.insert(underline.to_string(), text);
+        }
         Ok(())
     }
 
@@ -355,6 +404,21 @@ mod tests {
         let again = Marks::load(&dir);
         assert_eq!(again.in_chapter("b.epub", 2).count(), 0);
         assert_eq!(again.in_chapter("b.epub", 3).count(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn notes_are_the_latest_and_an_empty_one_takes_it_away() {
+        let dir = std::env::temp_dir().join(format!("wordhord-notes-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut m = Marks::load(&dir);
+        m.set_note("u1", "first thought").unwrap();
+        m.set_note("u1", "second thought").unwrap();
+        m.set_note("u2", "gone soon").unwrap();
+        m.set_note("u2", "  ").unwrap();
+        let again = Marks::load(&dir);
+        assert_eq!(again.note("u1"), Some("second thought"));
+        assert_eq!(again.note("u2"), None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

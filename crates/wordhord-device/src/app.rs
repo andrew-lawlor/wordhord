@@ -343,8 +343,9 @@ impl Browser {
             View::FoundPassages => {
                 let q = self.query.as_str();
                 let found = |u: &Underline| {
+                    let note = tools.marks.borrow().note(&u.id).unwrap_or("").to_string();
                     let hay = format!(
-                        "{} {} {}",
+                        "{} {} {} {note}",
                         u.text,
                         u.book,
                         u.section.as_deref().unwrap_or("")
@@ -702,6 +703,11 @@ fn save_underline(
         _ => (a, b, Vec::new()),
     };
     let mut marks = tools.marks.borrow_mut();
+    // The notes of those taken in go with them, together.
+    let notes: Vec<String> = merged
+        .iter()
+        .filter_map(|(id, _)| marks.note(id).map(str::to_string))
+        .collect();
     for (id, _) in &merged {
         if let Err(e) = marks.remove(id) {
             eprintln!("underline: {e}");
@@ -709,7 +715,16 @@ fn save_underline(
     }
     let u = underline_of(book, path, chapter, page, numbers, numbered, from, to);
     match marks.underline(u) {
-        Ok(()) => eprintln!(
+        Ok(id) if !notes.is_empty() => {
+            if let Err(e) = marks.set_note(&id, &notes.join(" / ")) {
+                eprintln!("note: {e}");
+            }
+            eprintln!(
+                "underlined words {} to {}, with its notes",
+                numbers[from], numbers[to]
+            );
+        }
+        Ok(_) => eprintln!(
             "underlined words {} to {}{}",
             numbers[from],
             numbers[to],
@@ -1002,6 +1017,35 @@ fn run_box(page: &Page, (a, b): (usize, usize)) -> Rect {
     }
 }
 
+/// Sidelines: for an underline with a note, a fine rule in the left
+/// margin, `gap` from the text, beside its lines on the page.
+fn sidelines(page: &Page, numbers: &[usize], spans: &[(usize, usize)], gap: f32) -> Vec<Rect> {
+    let left = page.words.iter().map(|w| w.x0).fold(f32::MAX, f32::min);
+    if left == f32::MAX {
+        return Vec::new();
+    }
+    spans
+        .iter()
+        .filter_map(|&(s, e)| {
+            let lines: Vec<&wordhord_typeset::page::Word> = page
+                .words
+                .iter()
+                .zip(numbers)
+                .filter(|(_, n)| (s..=e).contains(*n))
+                .map(|(w, _)| w)
+                .collect();
+            let y0 = lines.iter().map(|w| w.y0).fold(f32::MAX, f32::min);
+            let y1 = lines.iter().map(|w| w.y1).fold(0.0, f32::max);
+            (y1 > y0).then(|| Rect {
+                x0: (left - gap).round(),
+                y0: y0.round(),
+                x1: (left - gap).round() + 2.0,
+                y1: y1.round(),
+            })
+        })
+        .collect()
+}
+
 /// The underlines on a page, as rules under their words.
 fn underlines(
     page: &Page,
@@ -1078,14 +1122,19 @@ fn passages(
         }
         whence.push(&day);
         let whence = whence.join(" · ");
-        blocks.push(with_id(block(BlockKind::Quote(vec![
-            with_id(block(BlockKind::Paragraph(vec![Inline::Text(
-                u.text.clone(),
-            )]))),
-            with_id(block(BlockKind::Paragraph(vec![Inline::Emphasis(vec![
-                Inline::Text(whence),
-            ])]))),
+        let mut quote = vec![with_id(block(BlockKind::Paragraph(vec![Inline::Text(
+            u.text.clone(),
+        )])))];
+        // The note on it, after a pilcrow.
+        if let Some(note) = marks.note(&u.id) {
+            quote.push(with_id(block(BlockKind::Paragraph(vec![Inline::Text(
+                format!("¶ {note}"),
+            )]))));
+        }
+        quote.push(with_id(block(BlockKind::Paragraph(vec![
+            Inline::Emphasis(vec![Inline::Text(whence)]),
         ]))));
+        blocks.push(with_id(block(BlockKind::Quote(quote))));
     }
     let set = set_pages(tools, &blocks, tools.profile.height as f32);
     let pages = set.len().max(1);
@@ -1346,7 +1395,14 @@ fn browse(
                         } else {
                             ("Search the commonplace book", View::FoundPassages)
                         };
-                        match type_in(screen, tools.ui, &mut renderer, title, &mut browser.query) {
+                        match type_in(
+                            screen,
+                            tools.ui,
+                            &mut renderer,
+                            title,
+                            &mut browser.query,
+                            false,
+                        ) {
                             Typed::Done => browser.stack.push((view, 0)),
                             Typed::Back => {}
                             Typed::Close => return None,
@@ -1548,8 +1604,25 @@ fn read(
                 .collect()
         };
         // What's drawn over a page: its underlines and its strokes of ink.
+        // The spans of underlines with notes, for their sidelines.
+        let noted = || -> Vec<(usize, usize)> {
+            let marks = tools.marks.borrow();
+            marks
+                .in_chapter(path, chapter)
+                .filter(|u| marks.note(&u.id).is_some())
+                .filter_map(|u| numbered.span(u))
+                .collect()
+        };
         let rules = |page: usize| Decor {
-            rules: underlines(&t.pages[page], &numbered.on_page[page], &spans(), fonts),
+            rules: underlines(&t.pages[page], &numbered.on_page[page], &spans(), fonts)
+                .into_iter()
+                .chain(sidelines(
+                    &t.pages[page],
+                    &numbered.on_page[page],
+                    &noted(),
+                    tools.profile.mm(3.0),
+                ))
+                .collect(),
             strokes: strokes(
                 &t.pages[page],
                 &numbered,
@@ -2032,7 +2105,14 @@ fn read(
                 let above = boxes.iter().map(|b| b.y0).fold(f32::MAX, f32::min);
                 let below = boxes.iter().map(|b| b.y1).fold(0.0, f32::max);
                 let mut marked = highlight(&shown, width, height, &boxes);
-                let (bp, br, hits) = ui.choices(&["remove underline", "look up"], above, below);
+                let note = tools.marks.borrow().note(&id).map(str::to_string);
+                let first = if note.is_some() { "edit note" } else { "note" };
+                let (bp, br, hits) = ui.note_card(
+                    note.as_deref(),
+                    &[first, "remove underline", "look up"],
+                    above,
+                    below,
+                );
                 let (bw, bh) = ((br.x1 - br.x0) as u32, (br.y1 - br.y0) as u32);
                 let bar = chrome.page(&bp, bw, bh);
                 paste(&mut marked, width, height, &bar, &br);
@@ -2044,6 +2124,29 @@ fn read(
                     _ => None,
                 };
                 if choice == Some(0) {
+                    // The note, on the keyboard; done saves it, and an
+                    // empty one takes it away.
+                    let mut text = note.unwrap_or_default();
+                    match type_in(screen, ui, &mut chrome, "Note", &mut text, true) {
+                        Typed::Done => {
+                            if let Err(e) = tools.marks.borrow_mut().set_note(&id, &text) {
+                                eprintln!("note: {e}");
+                            }
+                            eprintln!("note: {} characters", text.trim().chars().count());
+                        }
+                        Typed::Back => {}
+                        Typed::Close => break Step::Leave(Leave::Close),
+                    }
+                    shown = draw(
+                        screen,
+                        &mut renderer,
+                        &t.pages[reader.page],
+                        true,
+                        &rules(reader.page),
+                    );
+                    continue;
+                }
+                if choice == Some(1) {
                     match tools.marks.borrow_mut().remove(&id) {
                         Ok(()) => eprintln!("underline removed"),
                         Err(e) => eprintln!("underline: {e}"),
@@ -2060,7 +2163,7 @@ fn read(
                 // The page as it was, then the lookup, if that was chosen.
                 let page_rows = &shown[(rows.0 * width) as usize..(rows.1 * width) as usize];
                 screen.draw(page_rows, width, rows.1 - rows.0, 0, rows.0, false);
-                if choice != Some(1) {
+                if choice != Some(2) {
                     continue;
                 }
                 forced = Some(Effect::Look(k));
@@ -2870,21 +2973,23 @@ fn type_in(
     chrome: &mut Renderer,
     title: &str,
     text: &mut String,
+    note: bool,
 ) -> Typed {
     let (width, height) = screen.size();
     let mut shift = false;
+    let mut figures = false;
     // The whole screen at first and when the keys change; else only the
     // line of text.
     let mut whole = true;
     // A key tapped, shown pressed until the screen catches up.
     let mut pressed: Option<Rect> = None;
     loop {
-        let s = ui.typing(title, text, shift);
+        let s = ui.typing(title, text, shift, figures, note);
         let pixels = chrome.page(&s.page, width, height);
         if whole {
             screen.draw(&pixels, width, height, 0, 0, true);
         } else {
-            let (top, bottom) = ui.typing_band();
+            let (top, bottom) = ui.typing_band(note);
             let (top, bottom) = (top as u32, (bottom as u32).min(height));
             let rows = &pixels[(top * width) as usize..(bottom * width) as usize];
             screen.draw(rows, width, bottom - top, 0, top, false);
@@ -2914,7 +3019,10 @@ fn type_in(
             // A key goes down at once, white on black, before the text it
             // types can be drawn: e-ink is slow to show a letter, and space
             // or delete show little.
-            if let Some((r, Action::Key(_) | Action::Delete | Action::Shift | Action::Done)) = &hit
+            if let Some((
+                r,
+                Action::Key(_) | Action::Delete | Action::Shift | Action::Done | Action::Figures,
+            )) = &hit
             {
                 let r = Rect {
                     x0: r.x0.round(),
@@ -2945,6 +3053,11 @@ fn type_in(
                     text.pop();
                 }
                 Some(Action::Clear) => text.clear(),
+                Some(Action::Figures) => {
+                    figures = !figures;
+                    shift = false;
+                    whole = true;
+                }
                 Some(Action::Shift) => {
                     shift = !shift;
                     whole = true;
@@ -2972,7 +3085,7 @@ fn search_book(
     let (width, height) = screen.size();
     let entries = book.contents();
     loop {
-        match type_in(screen, ui, chrome, "Search", query) {
+        match type_in(screen, ui, chrome, "Search", query, false) {
             Typed::Done => {}
             Typed::Back => return None,
             Typed::Close => return Some(Err(Leave::Close)),

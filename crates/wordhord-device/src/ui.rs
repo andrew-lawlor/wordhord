@@ -77,8 +77,10 @@ pub enum Action {
     /// index.
     SearchLibrary,
     SearchNotes,
-    /// On the keyboard: clear what's been typed.
+    /// On the keyboard: clear what's been typed; and change between the
+    /// letters and the figures.
     Clear,
+    Figures,
     /// In the contents: a heading, which does nothing; and a ribbon, by its
     /// place among the book's.
     Heading,
@@ -471,18 +473,70 @@ impl<'f> Ui<'f> {
         )
     }
 
-    /// Where the typing screen's line of text is, top to bottom: what
-    /// changes as a key is tapped.
-    pub fn typing_band(&self) -> (f32, f32) {
+    /// Where the typing screen's text is, top to bottom: what changes as a
+    /// key is tapped. A note has the room down to the keys; a search, a
+    /// line.
+    pub fn typing_band(&self, note: bool) -> (f32, f32) {
         let top = self.header_bottom();
-        (top, top + self.mm(24.0))
+        if note {
+            (top, self.keys_top() - self.mm(3.0))
+        } else {
+            (top, top + self.mm(24.0))
+        }
     }
 
-    /// Typing: the text so far on a ruled line under the header, with a
-    /// cursor; and the keyboard at the foot. Over the alphabet, a row of
-    /// the old letters: þ ð æ ǫ ȝ ƿ œ ø. `shift`: the next letter is a
-    /// capital.
-    pub fn typing(&self, title: &str, text: &str, shift: bool) -> Screen {
+    fn key_height(&self) -> f32 {
+        self.mm(14.0)
+    }
+
+    fn keys_top(&self) -> f32 {
+        self.h - self.mm(5.0) - 5.0 * self.key_height()
+    }
+
+    /// Text broken into lines no wider than `width`, at spaces, or within
+    /// a word too long for a line.
+    fn wrap(&self, text: &str, t: Type, width: f32) -> Vec<String> {
+        let mut lines = vec![String::new()];
+        for (n, word) in text.split(' ').enumerate() {
+            let line = lines.last_mut().expect("a line");
+            let tried = if n == 0 {
+                word.to_string()
+            } else {
+                format!("{line} {word}")
+            };
+            if self.width(&tried, t) <= width || line.is_empty() {
+                *line = tried;
+            } else {
+                lines.push(word.to_string());
+            }
+            // A word longer than a line, broken where it must be.
+            while self.width(lines.last().expect("a line"), t) > width {
+                let last = lines.pop().expect("a line");
+                let chars: Vec<char> = last.chars().collect();
+                let mut cut = chars.len();
+                while cut > 1 && self.width(&chars[..cut].iter().collect::<String>(), t) > width {
+                    cut -= 1;
+                }
+                lines.push(chars[..cut].iter().collect());
+                lines.push(chars[cut..].iter().collect());
+            }
+        }
+        lines
+    }
+
+    /// Typing: the text so far under the header, with a cursor; and the
+    /// keyboard at the foot. Over the alphabet, a row of the old letters:
+    /// þ ð æ ǫ ȝ ƿ œ ø, there on both layers. `shift`: the next letter is a
+    /// capital. `figures`: the figures and stops, not the alphabet. A
+    /// `note` is set on ruled lines that wrap, and is done, not searched.
+    pub fn typing(
+        &self,
+        title: &str,
+        text: &str,
+        shift: bool,
+        figures: bool,
+        note: bool,
+    ) -> Screen {
         let mut s = Screen {
             page: Page::default(),
             hits: Vec::new(),
@@ -491,58 +545,96 @@ impl<'f> Ui<'f> {
         };
         self.header(&mut s, title, true, 0);
         let m = self.margin();
-        let (_, band_bottom) = self.typing_band();
-        let field = Type::new(Face::Regular, self.pt(18.0));
-        let baseline = band_bottom - self.mm(8.0);
-        // Clear, at the end of the line, once there's something to clear.
+        let (band_top, band_bottom) = self.typing_band(note);
         let label = Type::new(Face::Regular, self.pt(10.0)).caps(0.14);
         let cw = self.width("clear", label);
+        let field = Type::new(Face::Regular, self.pt(if note { 14.0 } else { 18.0 }));
+        // Clear, at the end of the first line, once there's something to
+        // clear.
+        let first_base = if note {
+            band_top + self.mm(10.0)
+        } else {
+            band_bottom - self.mm(8.0)
+        };
         if !text.is_empty() {
             self.text(
                 &mut s.page,
                 "clear",
                 label,
                 self.w - m - cw,
-                baseline,
+                first_base,
                 cw + 1.0,
             );
             s.hits.push((
                 Rect {
                     x0: self.w - m - cw - self.mm(8.0),
-                    y0: baseline - self.mm(12.0),
+                    y0: first_base - self.mm(12.0),
                     x1: self.w,
-                    y1: baseline + self.mm(6.0),
+                    y1: first_base + self.mm(6.0),
                 },
                 Action::Clear,
             ));
         }
         let room = self.w - 2.0 * m - cw - self.mm(8.0);
-        let tw = self.text(&mut s.page, text, field, m, baseline, room);
-        let tw = if text.is_empty() { 0.0 } else { tw };
-        self.rule(
-            &mut s.page,
-            (m + tw + self.mm(0.8)).round(),
-            (baseline - field.size * 0.78).round(),
-            2.0,
-            (field.size * 0.98).round(),
-            0,
-        );
-        self.hairline(&mut s.page, baseline + self.mm(3.0), 170);
-        // The keys: four rows of letters and a row for space and search.
-        let kh = self.mm(14.0);
+        let cursor = |s: &mut Screen, x: f32, baseline: f32| {
+            self.rule(
+                &mut s.page,
+                (x + self.mm(0.8)).round(),
+                (baseline - field.size * 0.78).round(),
+                2.0,
+                (field.size * 0.98).round(),
+                0,
+            );
+        };
+        if note {
+            // Ruled lines, as a notebook's, the text on them; the last of
+            // it showing if it's more than they hold.
+            let step = field.size * 1.6;
+            let held = (((band_bottom - first_base) / step).floor() as usize).max(1);
+            let lines = self.wrap(text, field, room);
+            let shown = &lines[lines.len().saturating_sub(held)..];
+            for k in 0..held {
+                let baseline = first_base + k as f32 * step;
+                self.rule(
+                    &mut s.page,
+                    m,
+                    (baseline + self.mm(2.0)).round(),
+                    self.w - 2.0 * m,
+                    1.0,
+                    224,
+                );
+            }
+            let mut end = (m, first_base);
+            for (k, line) in shown.iter().enumerate() {
+                let baseline = first_base + k as f32 * step;
+                let w = self.text(&mut s.page, line, field, m, baseline, room);
+                end = (m + if line.is_empty() { 0.0 } else { w }, baseline);
+            }
+            cursor(&mut s, end.0, end.1);
+        } else {
+            let tw = self.text(&mut s.page, text, field, m, first_base, room);
+            let tw = if text.is_empty() { 0.0 } else { tw };
+            cursor(&mut s, m + tw, first_base);
+            self.hairline(&mut s.page, first_base + self.mm(3.0), 170);
+        }
+        // The keys: four rows, then a row for figures, space and done.
+        let kh = self.key_height();
         let side = self.mm(3.0);
         let kw = (self.w - 2.0 * side) / 10.0;
-        let top = self.h - self.mm(5.0) - 5.0 * kh;
+        let top = self.keys_top();
         let letter = Type::new(Face::Regular, self.pt(16.0));
-        let label = Type::new(Face::Regular, self.pt(10.0)).caps(0.14);
         let up = |c: char| -> char {
-            if shift {
+            if shift && !figures {
                 c.to_uppercase().next().unwrap_or(c)
             } else {
                 c
             }
         };
-        let rows = ["þðæǫȝƿœø", "qwertyuiop", "asdfghjkl", "zxcvbnm"];
+        let rows: [&str; 4] = if figures {
+            ["þðæǫȝƿœø", "1234567890", "-/:;()'\"@", ".,?!–—…"]
+        } else {
+            ["þðæǫȝƿœø", "qwertyuiop", "asdfghjkl", "zxcvbnm"]
+        };
         for (r, row) in rows.iter().enumerate() {
             let y = top + r as f32 * kh;
             self.rule(&mut s.page, side, y.round(), self.w - 2.0 * side, 1.0, 204);
@@ -572,7 +664,8 @@ impl<'f> Ui<'f> {
                     Action::Key(c),
                 ));
             }
-            // Shift and delete flank the last row of letters.
+            // Shift and delete flank the last row: shift only among the
+            // letters.
             if r == 3 {
                 let wide = left - side;
                 let word_at = |s: &mut Screen, word: &str, x: f32, action: Action, on: bool| {
@@ -593,7 +686,9 @@ impl<'f> Ui<'f> {
                         action,
                     ));
                 };
-                word_at(&mut s, "shift", side, Action::Shift, shift);
+                if !figures {
+                    word_at(&mut s, "shift", side, Action::Shift, shift);
+                }
                 word_at(
                     &mut s,
                     "delete",
@@ -603,10 +698,29 @@ impl<'f> Ui<'f> {
                 );
             }
         }
-        // Space, and search, framed: what the typing is for.
+        // Figures or letters, space, and what the typing is for, framed.
         let y = top + 4.0 * kh;
         self.rule(&mut s.page, side, y.round(), self.w - 2.0 * side, 1.0, 204);
         let lb = y + (kh + label.size * 0.55) / 2.0;
+        let layer = if figures { "abc" } else { "123" };
+        let lw = self.width(layer, label);
+        self.text(
+            &mut s.page,
+            layer,
+            label,
+            side + (1.5 * kw - lw) / 2.0,
+            lb,
+            1.5 * kw,
+        );
+        s.hits.push((
+            Rect {
+                x0: 0.0,
+                y0: y,
+                x1: side + 1.5 * kw,
+                y1: y + kh,
+            },
+            Action::Figures,
+        ));
         let (sx0, sx1) = (side + 1.5 * kw, side + 7.0 * kw);
         let sw = self.width("space", label);
         self.text(
@@ -626,8 +740,9 @@ impl<'f> Ui<'f> {
             },
             Action::Key(' '),
         ));
+        let done = if note { "done" } else { "search" };
         let (dx0, dx1) = (side + 7.5 * kw, self.w - side - 0.5 * kw);
-        let dw = self.width("search", label);
+        let dw = self.width(done, label);
         self.frame(
             &mut s.page,
             dx0.round(),
@@ -638,7 +753,7 @@ impl<'f> Ui<'f> {
         );
         self.text(
             &mut s.page,
-            "search",
+            done,
             label,
             (dx0 + dx1 - dw) / 2.0,
             lb,
@@ -654,6 +769,88 @@ impl<'f> Ui<'f> {
             Action::Done,
         ));
         s
+    }
+
+    /// An underline's card, framed by the passage: its note, if it has one,
+    /// in italic across the width, then the choices, as `choices` sets
+    /// them. Above the rows from `above` to `below` if there's room, else
+    /// under them. In the card's own coordinates; then where it goes, and
+    /// where each choice is on the screen.
+    pub fn note_card(
+        &self,
+        note: Option<&str>,
+        names: &[&str],
+        above: f32,
+        below: f32,
+    ) -> (Page, Rect, Vec<Rect>) {
+        let Some(note) = note else {
+            return self.choices(names, above, below);
+        };
+        let m = self.margin();
+        let t = Type::new(Face::Italic, self.pt(11.0));
+        let pad = self.mm(5.0);
+        let w = (self.w - 2.0 * m).round();
+        let mut lines = self.wrap(note, t, w - 2.0 * pad);
+        // A long note shows its start here; it's all in the commonplace
+        // book, and in the keyboard to edit.
+        if lines.len() > 6 {
+            lines.truncate(6);
+            if let Some(last) = lines.last_mut() {
+                last.push('…');
+            }
+        }
+        let step = t.size * 1.5;
+        let (strip_page, strip, hits) = self.choices(names, 0.0, 0.0);
+        let strip_h = strip.y1 - strip.y0;
+        let text_h = pad + lines.len() as f32 * step;
+        let h = (text_h + strip_h).round();
+        let top = if above - self.mm(3.0) - h >= 0.0 {
+            above - self.mm(3.0) - h
+        } else {
+            below + self.mm(3.0)
+        }
+        .round();
+        let left = m.round();
+        let mut page = Page::default();
+        self.frame(&mut page, 0.0, 0.0, w, h, 0);
+        for (k, line) in lines.iter().enumerate() {
+            self.text(
+                &mut page,
+                line,
+                t,
+                pad,
+                pad + t.size * 0.8 + k as f32 * step,
+                w - 2.0 * pad,
+            );
+        }
+        self.rule(&mut page, pad, text_h.round(), w - 2.0 * pad, 1.0, 204);
+        // The choices' strip, centred under the note, its own frame left
+        // out: the card's is enough.
+        let sx = ((w - (strip.x1 - strip.x0)) / 2.0).round();
+        for mut run in strip_page.runs {
+            run.x += sx;
+            run.y += text_h;
+            page.runs.push(run);
+        }
+        let hits = hits
+            .into_iter()
+            .map(|r| Rect {
+                x0: left + sx + (r.x0 - strip.x0),
+                y0: top + text_h,
+                x1: left + sx + (r.x1 - strip.x0),
+                y1: top + h,
+            })
+            .collect();
+        (
+            page,
+            Rect {
+                x0: left,
+                y0: top,
+                x1: left + w,
+                y1: top + h,
+            },
+            hits,
+        )
     }
 
     /// A few choices in a framed strip, as small caps between middle dots:
