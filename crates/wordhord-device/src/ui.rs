@@ -56,6 +56,8 @@ pub enum Action {
     /// A book in the commonplace book, by its place in the index.
     Passages(usize),
     Passage(usize),
+    /// A handwritten note in the commonplace book, by its first stroke.
+    Ink(String),
     /// Unlocking the hoard: begin, show the entry, grade it 1 to 4.
     Unlock,
     Reveal,

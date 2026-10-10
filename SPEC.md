@@ -41,7 +41,7 @@ A normal e-reader for stylus Kobos. Smaller and faster than KOReader. Built arou
 
 **The hoard.** One tap hoards a word, with its sentence, book and place. Unlock it on the device: review. Export anywhere (§8).
 
-**Commonplace book.** Every highlight, note and kept word, across all books, in one place on the device and in one Markdown file on export. First, underlines: a row on the library's home opens an index of the books underlined in, the last first, each with its author and how many passages. A book's page sets its passages as quotations, each with the part of the book it's in and the day, *Book I · 8 October*. A tap on a passage opens the book at it. The index starts with *Search the commonplace book*: passages whose words, book or part start with each word typed, with the book named on each.
+**Commonplace book.** Every highlight, note and kept word, across all books, in one place on the device and in one Markdown file on export. First, underlines: a row on the library's home opens an index of the books underlined in, the last first, each with its author and how many passages. A book's page sets its passages as quotations, each with the part of the book it's in and the day, *Book I · 8 October*. Handwriting is there too, among the passages in reading order: the strokes written within two minutes of each other in one part make one note, drawn to the page's scale under the line it was written by (*by “Expell'd and exil'd, left the Trojan shore.”*), with its part and day. A tap on it opens the book at that line. A tap on a passage opens the book at it. The index starts with *Search the commonplace book*: passages whose words, book or part start with each word typed, with the book named on each.
 
 ## 4. Not goals
 

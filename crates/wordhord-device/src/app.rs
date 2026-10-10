@@ -338,7 +338,7 @@ impl Browser {
                 let Some((path, title, _)) = books.get(k) else {
                     return ui.list("Commonplace book", &[], 0, true);
                 };
-                passages(tools, |u| &u.path == path, title, false, page)
+                passages(tools, |u| &u.path == path, Some(path), title, false, page)
             }
             View::FoundPassages => {
                 let q = self.query.as_str();
@@ -358,7 +358,7 @@ impl Browser {
                 } else {
                     format!("Nothing for “{q}”")
                 };
-                passages(tools, found, &heading, true, page)
+                passages(tools, found, None, &heading, true, page)
             }
             View::FoundBooks => {
                 let q = self.query.as_str();
@@ -535,6 +535,20 @@ fn kept_marks(page: &Page, kept: &[&Kept]) -> Vec<Rect> {
 }
 
 /// Blocks set as a book page is, between the header and `bottom`.
+/// As `set_pages`, with pictures, read by `images`.
+fn set_pages_with(
+    tools: &Tools,
+    blocks: &[wordhord_book::model::Block],
+    bottom: f32,
+    images: &wordhord_typeset::render::ReadImage,
+) -> Vec<Page> {
+    let mut profile = tools.profile.clone();
+    let mm = |px: f32| px * 25.4 / profile.ppi;
+    profile.margins.top = mm(tools.ui.header_bottom());
+    profile.margins.bottom = mm(profile.height as f32 - bottom);
+    wordhord_typeset::reference_pages_with_images(blocks, "en", &profile, tools.fonts, images)
+}
+
 fn set_pages(tools: &Tools, blocks: &[wordhord_book::model::Block], bottom: f32) -> Vec<Page> {
     let mut profile = tools.profile.clone();
     let mm = |px: f32| px * 25.4 / profile.ppi;
@@ -1090,10 +1104,13 @@ fn nearest_word(page: &Page, x: f32, y: f32) -> Option<usize> {
 /// Passages of the commonplace book that `select` picks, under `heading`:
 /// set as quotations, each with the part of the book it's in and the day
 /// it was underlined; and with the book, if `with_book`, where they may
-/// come from several. A tap on one opens the book there.
+/// come from several. With `ink_of`, a book's handwritten notes too, each
+/// drawn under the line it was written by, in reading order with the
+/// passages. A tap on one opens the book there.
 fn passages(
     tools: &Tools,
     select: impl Fn(&Underline) -> bool,
+    ink_of: Option<&str>,
     heading: &str,
     with_book: bool,
     page: usize,
@@ -1102,70 +1119,196 @@ fn passages(
     let ui = tools.ui;
     let marks = tools.marks.borrow();
     let all = marks.by_book();
+    // The passages and the notes in ink, by chapter, then as made.
+    enum Entry<'a> {
+        Passage(usize, &'a Underline),
+        Ink(Vec<&'a Ink>),
+    }
+    let mut entries: Vec<(usize, u64, Entry)> = all
+        .iter()
+        .enumerate()
+        .filter(|(_, u)| select(u))
+        .map(|(n, u)| (u.chapter, u.time, Entry::Passage(n, u)))
+        .collect();
+    if let Some(path) = ink_of {
+        for note in marks.ink_notes(path) {
+            entries.push((note[0].chapter, note[0].time, Entry::Ink(note)));
+        }
+        entries.sort_by_key(|e| (e.0, e.1));
+    }
+    // A picture's width as a share of the measure, for it to keep its size.
+    let measure = tools.profile.width as f32
+        - tools
+            .profile
+            .mm(tools.profile.margins.left + tools.profile.margins.right);
     let mut blocks = Vec::new();
-    for (n, u) in all.iter().enumerate().filter(|(_, u)| select(u)) {
-        let id = format!("passage-{n}");
+    for (_, _, entry) in &entries {
+        let (id, day, section) = match entry {
+            Entry::Passage(n, u) => (format!("passage-{n}"), u.time, u.section.as_deref()),
+            Entry::Ink(note) => (
+                format!("ink-{}", note[0].id),
+                note[0].time,
+                note[0].section.as_deref(),
+            ),
+        };
         let with_id = |b: Block| Block {
             id: Some(id.clone()),
             ..b
         };
-        let day = crate::marks::day(u.time);
+        let day = crate::marks::day(day);
         let mut whence: Vec<&str> = Vec::new();
+        let book_title = match entry {
+            Entry::Passage(_, u) => u.book.as_str(),
+            Entry::Ink(note) => note[0].book.as_str(),
+        };
         if with_book {
-            whence.push(&u.book);
+            whence.push(book_title);
         }
-        if let Some(s) = &u.section {
+        if let Some(s) = section {
             whence.push(s);
         }
         whence.push(&day);
         let whence = whence.join(" · ");
-        let mut quote = vec![with_id(block(BlockKind::Paragraph(vec![Inline::Text(
-            u.text.clone(),
-        )])))];
-        // The note on it, after a pilcrow.
-        if let Some(note) = marks.note(&u.id) {
-            quote.push(with_id(block(BlockKind::Paragraph(vec![Inline::Text(
-                format!("¶ {note}"),
-            )]))));
+        let mut quote = Vec::new();
+        match entry {
+            Entry::Passage(_, u) => {
+                quote.push(with_id(block(BlockKind::Paragraph(vec![Inline::Text(
+                    u.text.clone(),
+                )]))));
+                // The note on it, after a pilcrow.
+                if let Some(note) = marks.note(&u.id) {
+                    quote.push(with_id(block(BlockKind::Paragraph(vec![Inline::Text(
+                        format!("¶ {note}"),
+                    )]))));
+                }
+            }
+            Entry::Ink(note) => {
+                // The line it was written by, then the note as written.
+                if let Some(line) = note.iter().find_map(|i| i.context.as_deref()) {
+                    quote.push(with_id(block(BlockKind::Paragraph(vec![Inline::Text(
+                        format!("by “{line}”"),
+                    )]))));
+                }
+                let width = ink_picture_width(note);
+                quote.push(with_id(block(BlockKind::Paragraph(vec![Inline::Image {
+                    src: format!("ink:{}", note[0].id),
+                    alt: Vec::new(),
+                    width: Some((width / measure).min(1.0)),
+                    height: None,
+                }]))));
+            }
         }
         quote.push(with_id(block(BlockKind::Paragraph(vec![
             Inline::Emphasis(vec![Inline::Text(whence)]),
         ]))));
         blocks.push(with_id(block(BlockKind::Quote(quote))));
     }
-    let set = set_pages(tools, &blocks, tools.profile.height as f32);
+    drop(marks);
+    let read = |src: &str| ink_picture(&tools.marks.borrow(), src.strip_prefix("ink:")?);
+    let set = set_pages_with(tools, &blocks, tools.profile.height as f32, &read);
     let pages = set.len().max(1);
     let page = page.min(pages - 1);
     let content = set.into_iter().nth(page).unwrap_or_default();
-    // Each passage, wherever its words are on the page, is a place to tap.
+    // Each entry, wherever its words or its picture are on the page, is a
+    // place to tap.
     let mut hits: Vec<(Rect, Action)> = Vec::new();
-    for w in &content.words {
-        let Some(n) = w
-            .block
-            .strip_prefix("passage-")
-            .and_then(|n| n.parse::<usize>().ok())
-        else {
-            continue;
-        };
-        match hits.iter_mut().find(|(_, a)| *a == Action::Passage(n)) {
+    let mut place =
+        |action: Action, y0: f32, y1: f32| match hits.iter_mut().find(|(_, a)| *a == action) {
             Some((r, _)) => {
-                r.y0 = r.y0.min(w.y0);
-                r.y1 = r.y1.max(w.y1);
+                r.y0 = r.y0.min(y0);
+                r.y1 = r.y1.max(y1);
             }
             None => hits.push((
                 Rect {
                     x0: 0.0,
-                    y0: w.y0,
+                    y0,
                     x1: tools.profile.width as f32,
-                    y1: w.y1,
+                    y1,
                 },
-                Action::Passage(n),
+                action,
             )),
+        };
+    for w in &content.words {
+        if let Some(n) = w
+            .block
+            .strip_prefix("passage-")
+            .and_then(|n| n.parse::<usize>().ok())
+        {
+            place(Action::Passage(n), w.y0, w.y1);
+        } else if let Some(id) = w.block.strip_prefix("ink-") {
+            place(Action::Ink(id.to_string()), w.y0, w.y1);
+        }
+    }
+    for image in &content.images {
+        if let Some(id) = image.src.strip_prefix("ink:") {
+            place(Action::Ink(id.to_string()), image.y, image.y + image.height);
         }
     }
     let mut s = ui.titled(heading, content, page, pages);
     s.hits.extend(hits);
     s
+}
+
+/// A handwritten note's strokes as they lay on their page, in pixels:
+/// from where they were drawn, or for strokes saved before that was kept,
+/// from their words' line heights at a common size.
+fn ink_strokes(note: &[&Ink]) -> Vec<Stroke> {
+    note.iter()
+        .map(|i| {
+            if i.drawn.is_empty() {
+                i.points
+                    .iter()
+                    .map(|[u, v, r]| (u * 40.0, v * 40.0, r * 40.0))
+                    .collect()
+            } else {
+                i.drawn.iter().map(|[x, y, r]| (*x, *y, *r)).collect()
+            }
+        })
+        .collect()
+}
+
+/// How wide a note's picture is, in pixels, with its margin.
+fn ink_picture_width(note: &[&Ink]) -> f32 {
+    let strokes = ink_strokes(note);
+    let points = strokes.iter().flatten();
+    let x0 = points.clone().map(|p| p.0 - p.2).fold(f32::MAX, f32::min);
+    let x1 = points.map(|p| p.0 + p.2).fold(f32::MIN, f32::max);
+    (x1 - x0).max(1.0) + 24.0
+}
+
+/// A handwritten note drawn as a grey PNG, at the size it was written,
+/// on white, with a margin: for the commonplace book. The note is named by
+/// its first stroke's id.
+fn ink_picture(marks: &Marks, id: &str) -> Option<Vec<u8>> {
+    let note = marks.ink_note(id)?;
+    let strokes = ink_strokes(&note);
+    let points: Vec<&(f32, f32, f32)> = strokes.iter().flatten().collect();
+    let pad = 12.0;
+    let x0 = points.iter().map(|p| p.0 - p.2).fold(f32::MAX, f32::min) - pad;
+    let y0 = points.iter().map(|p| p.1 - p.2).fold(f32::MAX, f32::min) - pad;
+    let x1 = points.iter().map(|p| p.0 + p.2).fold(f32::MIN, f32::max) + pad;
+    let y1 = points.iter().map(|p| p.1 + p.2).fold(f32::MIN, f32::max) + pad;
+    let (w, h) = (
+        (x1 - x0).ceil().max(1.0) as u32,
+        (y1 - y0).ceil().max(1.0) as u32,
+    );
+    let mut pixels = vec![255u8; (w * h) as usize];
+    for stroke in &strokes {
+        let moved: Stroke = stroke
+            .iter()
+            .map(|(x, y, r)| (x - x0, y - y0, *r))
+            .collect();
+        ink_into(&mut pixels, w, h, &moved);
+    }
+    let mut out = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut out, w, h);
+        encoder.set_color(png::ColorType::Grayscale);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().ok()?;
+        writer.write_image_data(&pixels).ok()?;
+    }
+    Some(out)
 }
 
 /// When a word graded so would come back, in words.
@@ -1322,6 +1465,10 @@ fn browse(
     let fonts = tools.fonts;
     let (width, height) = screen.size();
     let read = |src: &str| {
+        // Handwritten notes, drawn for the commonplace book.
+        if let Some(id) = src.strip_prefix("ink:") {
+            return ink_picture(&tools.marks.borrow(), id);
+        }
         let path = src.strip_prefix(COVER)?;
         library
             .books
@@ -1386,6 +1533,12 @@ fn browse(
                 }
                 Gesture::Tap(x, y) => match s.hit(x as f32, y as f32) {
                     Some(Action::Open(path)) => return Some((path.clone(), None)),
+                    Some(Action::Ink(id)) => {
+                        let marks = tools.marks.borrow();
+                        if let Some(i) = marks.stroke(id) {
+                            return Some((i.path.clone(), Some((i.chapter, i.anchor.clone()))));
+                        }
+                    }
                     Some(a @ (Action::SearchLibrary | Action::SearchNotes)) => {
                         let (title, view) = if *a == Action::SearchLibrary {
                             ("Search the library", View::FoundBooks)
@@ -1972,6 +2125,21 @@ fn read(
                             anchor: numbered.anchors[numbered.on_page[reader.page][k]].clone(),
                             margin: margin.map(|m| m.0.to_string()),
                             points,
+                            // As it lay on this page, and the line it's by.
+                            drawn: stroke
+                                .iter()
+                                .map(|(x, y, r)| [x.round(), y.round(), (r * 10.0).round() / 10.0])
+                                .collect(),
+                            context: {
+                                let line: Vec<&str> = page_now
+                                    .words
+                                    .iter()
+                                    .filter(|o| (o.y0 - w.y0).abs() < 1.0)
+                                    .map(|o| o.text.as_str())
+                                    .collect();
+                                Some(line.join(" ")).filter(|l| !l.is_empty())
+                            },
+                            section: Some(section_of(&book, chapter)),
                         });
                         match done {
                             Ok(()) => eprintln!("ink: {} points by {:?}", stroke.len(), w.text),
@@ -2936,12 +3104,10 @@ fn contents(
                             None => break,
                         }
                     }
-                    Some(Action::Commonplace) => {
-                        match passages_here_screen(screen, tools, chrome, path) {
-                            Some(found) => return Some(found),
-                            None => break,
-                        }
-                    }
+                    Some(Action::Commonplace) => match passages_here_screen(screen, tools, path) {
+                        Some(found) => return Some(found),
+                        None => break,
+                    },
                     _ => {}
                 },
                 _ => {}
@@ -2956,14 +3122,22 @@ fn contents(
 fn passages_here_screen(
     screen: &mut dyn Platform,
     tools: &Tools,
-    chrome: &mut Renderer,
     path: &str,
 ) -> Option<Result<(usize, Arrival), Leave>> {
     let (width, height) = screen.size();
     let mut page = 0;
     loop {
-        let s = passages(tools, |u| u.path == path, "Commonplace book", false, page);
-        let pixels = chrome.page(&s.page, width, height);
+        let s = passages(
+            tools,
+            |u| u.path == path,
+            Some(path),
+            "Commonplace book",
+            false,
+            page,
+        );
+        let read = |src: &str| ink_picture(&tools.marks.borrow(), src.strip_prefix("ink:")?);
+        let mut drawer = Renderer::new(tools.fonts).with_images(&read);
+        let pixels = drawer.page(&s.page, width, height);
         screen.draw(&pixels, width, height, 0, 0, true);
         loop {
             match screen.next() {
@@ -2984,6 +3158,11 @@ fn passages_here_screen(
                             .get(*n)
                             .map(|u| (u.chapter, u.start.clone()))?;
                         return Some(Ok((u.0, Some((u.1, Vec::new())))));
+                    }
+                    Some(Action::Ink(id)) => {
+                        let marks = tools.marks.borrow();
+                        let i = marks.stroke(id).map(|i| (i.chapter, i.anchor.clone()))?;
+                        return Some(Ok((i.0, Some((i.1, Vec::new())))));
                     }
                     Some(Action::Back) => return None,
                     _ => {}

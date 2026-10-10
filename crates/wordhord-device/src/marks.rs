@@ -55,6 +55,16 @@ pub struct Ink {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub margin: Option<String>,
     pub points: Vec<[f32; 3]>,
+    /// The stroke as it lay on the page it was written on, in pixels: so
+    /// the strokes of one note keep their places together, to be shown
+    /// elsewhere.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drawn: Vec<[f32; 3]>,
+    /// The line of text it was written beside, and the part of the book.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<String>,
 }
 
 /// A ribbon put in a page: anchored to the page's first word, so it marks
@@ -217,6 +227,39 @@ impl Marks {
         let mut out: Vec<&Bookmark> = self.bookmarks.iter().filter(|b| b.path == path).collect();
         out.sort_by_key(|b| (b.chapter, b.time));
         out
+    }
+
+    /// A book's handwritten notes: its strokes, in the order of its
+    /// chapters and as written, gathered into notes where they were written
+    /// in one chapter with no more than two minutes between them.
+    pub fn ink_notes(&self, path: &str) -> Vec<Vec<&Ink>> {
+        let mut inks: Vec<&Ink> = self.inks.iter().filter(|i| i.path == path).collect();
+        inks.sort_by_key(|i| (i.chapter, i.time));
+        let mut notes: Vec<Vec<&Ink>> = Vec::new();
+        for ink in inks {
+            match notes.last_mut() {
+                Some(note)
+                    if note.last().is_some_and(|l| {
+                        l.chapter == ink.chapter && ink.time.saturating_sub(l.time) <= 120
+                    }) =>
+                {
+                    note.push(ink)
+                }
+                _ => notes.push(vec![ink]),
+            }
+        }
+        notes
+    }
+
+    /// A stroke, by its id.
+    pub fn stroke(&self, id: &str) -> Option<&Ink> {
+        self.inks.iter().find(|i| i.id == id)
+    }
+
+    /// The handwritten note whose first stroke is `id`.
+    pub fn ink_note(&self, id: &str) -> Option<Vec<&Ink>> {
+        let path = &self.inks.iter().find(|i| i.id == id)?.path;
+        self.ink_notes(path).into_iter().find(|n| n[0].id == id)
     }
 
     /// The strokes in a chapter of a book.

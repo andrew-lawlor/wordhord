@@ -150,6 +150,20 @@ pub fn reference_pages(
     layout::Layout::new(fonts, profile, lang).reference_pages(blocks)
 }
 
+/// As `reference_pages`, with images: `images` reads one by its source.
+pub fn reference_pages_with_images(
+    blocks: &[wordhord_book::model::Block],
+    lang: &str,
+    profile: &profile::Profile,
+    fonts: &fonts::Fonts,
+    images: &render::ReadImage,
+) -> Vec<page::Page> {
+    let sizes = |src: &str| images(src).and_then(|b| render::image_size(&b));
+    layout::Layout::new(fonts, profile, lang)
+        .with_images(&sizes)
+        .reference_pages(blocks)
+}
+
 /// Typesets a chapter's blocks as `lay_out` does, into `out/pages.json`,
 /// with the images used copied to `out/images/` and, with `previews`, a PNG
 /// of each page and note.
