@@ -955,8 +955,8 @@ impl<'f> Ui<'f> {
             pages: 1,
         };
         let m = self.margin();
-        // A short screen (the Libra Colour's) has a smaller masthead, without
-        // its fleuron, so the shelves keep their room.
+        // A short screen (the Libra Colour's) has a smaller masthead, set
+        // closer, so the shelves keep their room.
         let short = self.h * 25.4 / self.ppi < 170.0;
         let title = if short { 18.0 } else { 22.0 };
         let mut y = self.mm(if short { 8.0 } else { 11.0 }) + self.pt(title);
@@ -973,8 +973,11 @@ impl<'f> Ui<'f> {
             Type::new(Face::Italic, self.pt(10.5)),
             y,
         );
+        // The fleuron, smaller and closer on a short screen.
         if short {
-            y += self.mm(9.0);
+            y += self.pt(16.0);
+            self.centred(&mut s.page, "❧", Type::new(Face::Regular, self.pt(12.0)), y);
+            y += self.mm(6.0);
         } else {
             y += self.pt(20.0);
             self.centred(&mut s.page, "❧", Type::new(Face::Regular, self.pt(14.0)), y);
