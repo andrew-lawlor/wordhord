@@ -2561,28 +2561,14 @@ fn read(
                             }
                         }
                         Some(Action::Contents) => {
-                            let ribbons: Vec<(String, usize, Anchor)> = tools
-                                .marks
-                                .borrow()
-                                .bookmarks_in(path)
-                                .iter()
-                                .map(|b| {
-                                    let section = b.section.clone().unwrap_or_default();
-                                    (
-                                        format!("{section}: “{}…”", b.text),
-                                        b.chapter,
-                                        b.anchor.clone(),
-                                    )
-                                })
-                                .collect();
                             match contents(
                                 screen,
                                 &book,
-                                ui,
                                 &mut chrome,
                                 chapter,
                                 &search_text,
-                                &ribbons,
+                                tools,
+                                path,
                             ) {
                                 Some(Ok((k, at))) => {
                                     // The way back is to this page.
@@ -2682,13 +2668,37 @@ fn read(
 fn contents(
     screen: &mut dyn Platform,
     book: &Book,
-    ui: &Ui,
     chrome: &mut Renderer,
     current: usize,
     text: &crate::search::Text,
-    ribbons: &[(String, usize, Anchor)],
+    tools: &Tools,
+    path: &str,
 ) -> Option<Result<(usize, Arrival), Leave>> {
+    let ui = tools.ui;
     let (width, height) = screen.size();
+    // The book's ribbons: each by its part and first words.
+    let ribbons: Vec<(String, usize, Anchor)> = tools
+        .marks
+        .borrow()
+        .bookmarks_in(path)
+        .iter()
+        .map(|b| {
+            let section = b.section.clone().unwrap_or_default();
+            (
+                format!("{section}: “{}…”", b.text),
+                b.chapter,
+                b.anchor.clone(),
+            )
+        })
+        .collect();
+    // This book's passages in the commonplace book, if any.
+    let passages_here = tools
+        .marks
+        .borrow()
+        .by_book()
+        .iter()
+        .filter(|u| u.path == path)
+        .count();
     let entries = book.contents();
     // The entry for the chapter being read: the last one at or before it.
     let at = entries
@@ -2718,6 +2728,13 @@ fn contents(
         depth,
     };
     let mut marked: Vec<Row> = Vec::new();
+    if passages_here > 0 {
+        marked.push(row(
+            format!("In the commonplace book · {passages_here}"),
+            Action::Commonplace,
+            0,
+        ));
+    }
     if !ribbons.is_empty() {
         marked.push(row("Bookmarks".into(), Action::Heading, 0));
         for (k, (label, _, _)) in ribbons.iter().enumerate() {
@@ -2780,6 +2797,56 @@ fn contents(
                             None => break,
                         }
                     }
+                    Some(Action::Commonplace) => {
+                        match passages_here_screen(screen, tools, chrome, path) {
+                            Some(found) => return Some(found),
+                            None => break,
+                        }
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+    }
+}
+
+/// From a book, its page of the commonplace book: its passages, as the
+/// library shows them. A passage chosen, `Some(Ok)`, to go to; Wordhord
+/// closed, `Some(Err)`; back to the contents, `None`.
+fn passages_here_screen(
+    screen: &mut dyn Platform,
+    tools: &Tools,
+    chrome: &mut Renderer,
+    path: &str,
+) -> Option<Result<(usize, Arrival), Leave>> {
+    let (width, height) = screen.size();
+    let mut page = 0;
+    loop {
+        let s = passages(tools, |u| u.path == path, "Commonplace book", false, page);
+        let pixels = chrome.page(&s.page, width, height);
+        screen.draw(&pixels, width, height, 0, 0, true);
+        loop {
+            match screen.next() {
+                Gesture::Power => return Some(Err(Leave::Close)),
+                Gesture::SwipeLeft if page + 1 < s.pages => {
+                    page += 1;
+                    break;
+                }
+                Gesture::SwipeRight if page > 0 => {
+                    page -= 1;
+                    break;
+                }
+                Gesture::Tap(x, y) => match s.hit(x as f32, y as f32) {
+                    Some(Action::Passage(n)) => {
+                        let marks = tools.marks.borrow();
+                        let u = marks
+                            .by_book()
+                            .get(*n)
+                            .map(|u| (u.chapter, u.start.clone()))?;
+                        return Some(Ok((u.0, Some((u.1, Vec::new())))));
+                    }
+                    Some(Action::Back) => return None,
                     _ => {}
                 },
                 _ => {}
