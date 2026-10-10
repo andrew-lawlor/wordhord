@@ -789,18 +789,23 @@ impl<'f> Ui<'f> {
     pub fn note_card(
         &self,
         note: Option<&str>,
+        writing: Option<(f32, f32)>,
         names: &[&str],
         above: f32,
         below: f32,
-    ) -> (Page, Rect, Vec<Rect>) {
-        let Some(note) = note else {
-            return self.choices(names, above, below);
-        };
+    ) -> (Page, Rect, Vec<Rect>, Option<Rect>) {
+        if note.is_none() && writing.is_none() {
+            let (page, r, hits) = self.choices(names, above, below);
+            return (page, r, hits, None);
+        }
         let m = self.margin();
         let t = Type::new(Face::Italic, self.pt(11.0));
         let pad = self.mm(5.0);
         let w = (self.w - 2.0 * m).round();
-        let mut lines = self.wrap(note, t, w - 2.0 * pad);
+        let mut lines = match note {
+            Some(note) => self.wrap(note, t, w - 2.0 * pad),
+            None => Vec::new(),
+        };
         // A long note shows its start here; it's all in the commonplace
         // book, and in the keyboard to edit.
         if lines.len() > 6 {
@@ -812,7 +817,16 @@ impl<'f> Ui<'f> {
         let step = t.size * 1.5;
         let (strip_page, strip, hits) = self.choices(names, 0.0, 0.0);
         let strip_h = strip.y1 - strip.y0;
-        let text_h = pad + lines.len() as f32 * step;
+        // The writing under the typed note, if there's any: room for it,
+        // centred, for the caller to draw into.
+        let lines_h = pad + lines.len() as f32 * step;
+        let (ww, wh) = writing.unwrap_or((0.0, 0.0));
+        let written_at = if lines.is_empty() { pad } else { lines_h };
+        let text_h = if writing.is_some() {
+            written_at + wh + pad
+        } else {
+            lines_h
+        };
         let h = (text_h + strip_h).round();
         let top = if above - self.mm(3.0) - h >= 0.0 {
             above - self.mm(3.0) - h
@@ -851,6 +865,16 @@ impl<'f> Ui<'f> {
                 y1: top + h,
             })
             .collect();
+        let written = writing.map(|_| {
+            let x0 = (left + (w - ww) / 2.0).round();
+            let y0 = (top + written_at).round();
+            Rect {
+                x0,
+                y0,
+                x1: x0 + ww,
+                y1: y0 + wh,
+            }
+        });
         (
             page,
             Rect {
@@ -860,7 +884,78 @@ impl<'f> Ui<'f> {
                 y1: top + h,
             },
             hits,
+            written,
         )
+    }
+
+    /// Writing a note on an underline with the pen: the passage under the
+    /// header, in italic, cut to a few lines; then ruled lines to the foot,
+    /// and *clear · done* under them. Where the pen writes.
+    pub fn writing(&self, title: &str, passage: &str) -> (Screen, Rect) {
+        let mut s = Screen {
+            page: Page::default(),
+            hits: Vec::new(),
+            pages: 1,
+            marks: Vec::new(),
+        };
+        let top = self.header(&mut s, title, true, 0);
+        let m = self.margin();
+        let t = Type::new(Face::Italic, self.pt(11.0));
+        let step = t.size * 1.45;
+        let mut lines = self.wrap(passage, t, self.w - 2.0 * m);
+        if lines.len() > 3 {
+            lines.truncate(3);
+            if let Some(last) = lines.last_mut() {
+                last.push('…');
+            }
+        }
+        let mut y = top + self.mm(8.0);
+        for line in &lines {
+            self.text(&mut s.page, line, t, m, y, self.w - 2.0 * m);
+            y += step;
+        }
+        // The choices at the foot, then the ruled lines between.
+        let label = Type::new(Face::Regular, self.pt(10.0)).caps(0.14);
+        let foot = self.h - self.mm(12.0);
+        let sep = "   ·   ";
+        let (cw, sw, dw) = (
+            self.width("clear", label),
+            self.width(sep, label),
+            self.width("done", label),
+        );
+        let x = (self.w - cw - sw - dw) / 2.0;
+        self.text(&mut s.page, "clear", label, x, foot, cw + 1.0);
+        self.text(&mut s.page, sep, label, x + cw, foot, sw + 1.0);
+        self.text(&mut s.page, "done", label, x + cw + sw, foot, dw + 1.0);
+        let reach = self.mm(6.0);
+        for (x0, x1, action) in [
+            (x - reach, x + cw + sw / 2.0, Action::Clear),
+            (x + cw + sw / 2.0, x + cw + sw + dw + reach, Action::Done),
+        ] {
+            s.hits.push((
+                Rect {
+                    x0,
+                    y0: foot - label.size - reach,
+                    x1,
+                    y1: foot + reach,
+                },
+                action,
+            ));
+        }
+        let area = Rect {
+            x0: 0.0,
+            y0: (y + self.mm(2.0)).round(),
+            x1: self.w,
+            y1: (foot - label.size - self.mm(6.0)).round(),
+        };
+        self.hairline(&mut s.page, area.y0, 170);
+        let rule = self.mm(9.0);
+        let mut ry = area.y0 + rule;
+        while ry < area.y1 {
+            self.rule(&mut s.page, m, ry.round(), self.w - 2.0 * m, 1.0, 224);
+            ry += rule;
+        }
+        (s, area)
     }
 
     /// A few choices in a framed strip, as small caps between middle dots:
@@ -1464,7 +1559,16 @@ impl<'f> Ui<'f> {
                 pages: 1,
             };
             let mut names = Vec::new();
-            let end = self.type_choices(&mut scratch, &mut names, 0.0, rows, chosen, faint, faces, tight);
+            let end = self.type_choices(
+                &mut scratch,
+                &mut names,
+                0.0,
+                rows,
+                chosen,
+                faint,
+                faces,
+                tight,
+            );
             self.h - self.mm(4.0) - top - end
         };
         let tight = fits(false) < self.mm(30.0);

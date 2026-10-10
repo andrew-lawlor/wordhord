@@ -22,7 +22,7 @@ It runs beside Kobo's own software. You open it from NickelMenu. Nickel pauses w
 
 **Underlines.** Hold a word until it turns grey, drag, and lift. A loupe above your finger shows the word your fingertip hides. Every underline goes into a commonplace book, by book and by day, and you can search it.
 
-**Writes with the pen.** The pen only writes. A full stop is a full stop, never a page turn. Ink belongs to the words it was written by, so it moves with them when you change the type. The other end of the stylus rubs out. Hold its button and a stroke under a line underlines it. While the pen is near, your hand can rest on the page. A manicule, ☚, tells you so.
+**Writes with the pen.** The pen only writes. A full stop is a full stop, never a page turn. Ink belongs to the words it was written by, so it moves with them when you change the type. The other end of the stylus rubs out. Hold its button and a stroke under a line underlines it. Hold an underline and *write* puts a note in your own hand on it. While the pen is near, your hand can rest on the page. A manicule, ☚, tells you so.
 
 **Searches.** A book, the library, the commonplace book. The keyboard has a row of the old letters: þ ð æ ǫ ȝ ƿ œ ø.
 

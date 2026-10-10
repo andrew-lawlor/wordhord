@@ -33,9 +33,9 @@ A normal e-reader for stylus Kobos. Smaller and faster than KOReader. Built arou
 
 **Library.** Every EPUB on the device, found by a scan. Sorted by last read, title or author. Shelves are folders. Covers in a grid or a plain list. Nothing is imported or copied: the file on disk is the book.
 
-**Pen.** Write anywhere on the page. Ink is drawn as you write, with the fast waveform. Gestures in §6.
+**Pen.** Write anywhere on the page. Ink is drawn as you write, with the fast waveform. The pen only writes (§6).
 
-**Highlights and notes.** A highlight is an underline: a fine rule under the words, as a pencil leaves in a printed book. Hold a word a second: it turns grey, and a loupe above the finger shows the word under it, set large, since the finger hides it. Drag over the passage, the loupe following with the word it ends on, and lift. Dragged on past the last line into the foot, the page turns and the passage carries on over it; and an underline that meets another across a page joins it, as within one. A hold that doesn't move still looks the word up. Tap reads, hold marks: a tap on an underlined word looks it up as any other; a hold on one greys the whole underline and shows its card: its note in italic, if it has one, over *note* (or *edit note*) *· remove underline · look up*. A note is typed on ruled lines that wrap; an underline with one has a sideline, a fine rule in the left margin beside it; the commonplace book sets it under its passage after a pilcrow, and its search finds it. Notes are records of their own in `notes.jsonl`, the latest for an underline standing, an empty one taking it away; underlines that merge keep their notes. The keyboard has a layer of figures and stops (*123*, and *abc* back), the old letters over both. Underlines are anchored by paragraph and word, not page, so they keep to their words through any change of type, and keep their text in the log. Underline with the pen too, later. Add a written note with the pen, or a typed one.
+**Highlights and notes.** A highlight is an underline: a fine rule under the words, as a pencil leaves in a printed book. Hold a word a second: it turns grey, and a loupe above the finger shows the word under it, set large, since the finger hides it. Drag over the passage, the loupe following with the word it ends on, and lift. Dragged on past the last line into the foot, the page turns and the passage carries on over it; and an underline that meets another across a page joins it, as within one. A hold that doesn't move still looks the word up. Tap reads, hold marks: a tap on an underlined word looks it up as any other; a hold on one greys the whole underline and shows its card: its note in italic, if it has one, over *note* (or *edit note*) *· write · remove underline · look up*. *Write* opens ruled lines under the passage, for a note in the pen's own hand: each stroke is kept as it's lifted, marked as the underline's, the eraser end rubs strokes out and *clear* all of them. The card then shows the writing, made to fit. It's a link made on purpose, not guessed from where ink lies; ink in the margin stays the margin's. A note is typed on ruled lines that wrap; an underline with one has a sideline, a fine rule in the left margin beside it; the commonplace book sets it under its passage after a pilcrow, and its search finds it; writing on an underline is drawn there too, under the passage and any typed note. An underline taken away takes its writing with it; underlines that merge stack theirs, in the order of their passages. Notes are records of their own in `notes.jsonl`, the latest for an underline standing, an empty one taking it away; underlines that merge keep their notes. The keyboard has a layer of figures and stops (*123*, and *abc* back), the old letters over both. Underlines are anchored by paragraph and word, not page, so they keep to their words through any change of type, and keep their text in the log. Underline with the pen too, later. Add a written note with the pen, or a typed one.
 
 **Dictionary.** Tap a word. Its Wiktionary entry opens in the panel: dictionary form, the grammar of the form you tapped, senses, etymology. Works on inflected forms (§7).
 
@@ -74,17 +74,7 @@ Wordhord lays out text on the device. The typesetter from draft 1 moves onto the
 
 The Kobo Stylus 2 has a tip, a button and an eraser end. Wordhord reads the pen's input device directly, draws each point from its own loop with the fast waveform, and records every point.
 
-**Gestures**, written with the pen:
-
-| Stroke | Means |
-|---|---|
-| A line under words | Highlight them |
-| A circle round one word | Look it up |
-| A circle, then a tick | Hoard it |
-| A scribble over ink | Erase that ink |
-| Anything else | Ink, as drawn |
-
-Hold the button while writing: always ink, never a gesture. The eraser end: erase.
+**No gestures.** The pen only writes. A circle meant as ink must never open the dictionary, nor a tick hoard a word: guessing what a stroke means is what Wordhord exists not to do. The stylus's own controls do the rest: the eraser end erases, and a stroke with the button held underlines. Kollate can read circles and ticks on the desktop, where a wrong guess costs nothing.
 
 **Ink belongs to the text, not the page.** Each stroke is anchored to the words nearest it, with its offset from them. Change the font size and a note in the margin moves with its paragraph. Ink across the text, like an underline, stays with its words. Ink that can't be anchored, on a blank page or an image, keeps its place for that layout. A stroke is measured from its word in that word's line heights, so it grows with the type; one in a margin starts at the same share of the margin's width and keeps its shape from there. The pen only writes, and only on a book's pages: a touch of its tip is ink, a full stop as much as a line. Fingers do the rest, and are ignored while the pen is near the screen and for a second after, so the hand that writes can rest on it; meanwhile a manicule, ☛, the hand readers drew in their margins, points in at the page from the top left (the top right is the ribbon's), and fingers count again the moment it goes. An underline that overlaps or touches others takes them into it. The stylus's other end rubs out ink and underlines it passes over; a stroke with its button held underlines the words it runs under.
 
@@ -108,7 +98,7 @@ Hold the button while writing: always ink, never a gesture. The eraser end: eras
 
 The vocab builder is *the hoard*. You *hoard* a word; reviewing is *unlocking* it, after *wordhord onleac*.
 
-**Hoarding a word** records the word as written, its dictionary form, the sense you were shown, the sentence, the book, the anchor and the time. From the *hoard* mark at the end of each reading's headline in the dictionary panel, or the pen's circle and tick. One reading is kept for each place a word is met: another reading's mark moves it there, and the kept reading's own mark, *in the hoard*, lets it go.
+**Hoarding a word** records the word as written, its dictionary form, the sense you were shown, the sentence, the book, the anchor and the time. From the *hoard* mark at the end of each reading's headline in the dictionary panel. One reading is kept for each place a word is met: another reading's mark moves it there, and the kept reading's own mark, *in the hoard*, lets it go.
 
 **Unlocking, on the device.** *Unlock the hoard* on the library's home, with how many words are due. One card at a time. The front shows a sentence the word was kept from, the word in italic; another of its sentences each time, if it has several. A tap shows the entry: the word's own readings only. Then four grades: *again*, *hard*, *good*, *easy*, each saying when the word comes back. *Again* brings it round once more before the end. At most ten new words a day. Scheduled with FSRS 4.5 and its default weights, at nine in ten recalled. Reviews are appended to the log, never edited, so the schedule is always recomputed from history.
 
@@ -220,6 +210,6 @@ Each ends in a go or no-go.
 1. **Any EPUB, one chapter.** Laid out on the desktop backend, then on the Kobo. Test set: *Children of Ash and Elm* (Basic Books), *The Prose Edda* and Michael Alexander's *Beowulf* (Penguin), Emily Wilson's *Odyssey* (Norton), Davidson's *Gods and Myths of Northern Europe* (Penguin), Crawford's *Poetic Edda* (Hackett, with image drop caps), *The Hammer and the Cross* (Tor), *Learning Go* (O'Reilly), and Standard Ebooks' *Moby-Dick* and *Canterbury Tales* as controls. Go: you'd read them, and page turns meet budget.
 2. **Library and position.** Scan, list, open, resume. Go: launch to last page in under a second.
 3. **Dictionary.** English and Old Norse packs; tap a word, see the entry, inflected forms included. Go: four taps in five find the right entry.
-4. **Pen.** Ink, gestures, anchors, the log. Go: under 5 ms per point, and ink follows its paragraph through a font change.
+4. **Pen.** Ink, anchors, the log. Go: under 5 ms per point, and ink follows its paragraph through a font change.
 5. **The hoard.** Hoard and unlock. Go: you use it for a week.
 6. **Kollate reads it all** (in progress). Notes, ink and words on the desktop, and on to Anki. Go: a round trip with nothing lost.

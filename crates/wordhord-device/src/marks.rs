@@ -65,6 +65,11 @@ pub struct Ink {
     pub context: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub section: Option<String>,
+    /// The underline it was written on, as a note, if it was: then it's
+    /// not on the page but on the underline's card, and `drawn` is where
+    /// on the card's ruled lines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub underline: Option<String>,
 }
 
 /// A ribbon put in a page: anchored to the page's first word, so it marks
@@ -210,16 +215,32 @@ impl Marks {
         Ok(())
     }
 
-    /// An underline, a stroke or a ribbon taken away.
+    /// An underline, a stroke or a ribbon taken away; an underline with
+    /// what was written on it.
     pub fn remove(&mut self, id: &str) -> Result<(), String> {
-        self.append(&Record::Remove {
-            id: id.to_string(),
-            time: now(),
-        })?;
+        let written: Vec<String> = self.written(id).iter().map(|i| i.id.clone()).collect();
+        for gone in written.iter().map(String::as_str).chain([id]) {
+            self.append(&Record::Remove {
+                id: gone.to_string(),
+                time: now(),
+            })?;
+        }
         self.underlines.retain(|u| u.id != id);
-        self.inks.retain(|i| i.id != id);
+        self.inks
+            .retain(|i| i.id != id && i.underline.as_deref() != Some(id));
         self.bookmarks.retain(|b| b.id != id);
         Ok(())
+    }
+
+    /// The strokes written on an underline, as a note, as written.
+    pub fn written(&self, underline: &str) -> Vec<&Ink> {
+        let mut out: Vec<&Ink> = self
+            .inks
+            .iter()
+            .filter(|i| i.underline.as_deref() == Some(underline))
+            .collect();
+        out.sort_by_key(|i| i.time);
+        out
     }
 
     /// A book's ribbons, in the order of its chapters, then as put in.
@@ -233,7 +254,11 @@ impl Marks {
     /// chapters and as written, gathered into notes where they were written
     /// in one chapter with no more than two minutes between them.
     pub fn ink_notes(&self, path: &str) -> Vec<Vec<&Ink>> {
-        let mut inks: Vec<&Ink> = self.inks.iter().filter(|i| i.path == path).collect();
+        let mut inks: Vec<&Ink> = self
+            .inks
+            .iter()
+            .filter(|i| i.path == path && i.underline.is_none())
+            .collect();
         inks.sort_by_key(|i| (i.chapter, i.time));
         let mut notes: Vec<Vec<&Ink>> = Vec::new();
         for ink in inks {
@@ -266,7 +291,7 @@ impl Marks {
     pub fn ink_in<'a>(&'a self, path: &'a str, chapter: usize) -> impl Iterator<Item = &'a Ink> {
         self.inks
             .iter()
-            .filter(move |i| i.path == path && i.chapter == chapter)
+            .filter(move |i| i.path == path && i.chapter == chapter && i.underline.is_none())
     }
 
     /// Every underline, for the commonplace book: by book, the book
@@ -447,6 +472,59 @@ mod tests {
         let again = Marks::load(&dir);
         assert_eq!(again.in_chapter("b.epub", 2).count(), 0);
         assert_eq!(again.in_chapter("b.epub", 3).count(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn writing_on_an_underline_is_off_the_page_and_goes_with_it() {
+        let dir = std::env::temp_dir().join(format!("wordhord-written-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut m = Marks::load(&dir);
+        let at = Anchor {
+            block: "b7".into(),
+            word: 3,
+        };
+        let id = m
+            .underline(Underline {
+                id: String::new(),
+                time: 0,
+                book: "Beowulf".into(),
+                path: "b.epub".into(),
+                chapter: 2,
+                start: at.clone(),
+                end: at.clone(),
+                text: "onleac".into(),
+                section: None,
+            })
+            .unwrap();
+        let ink = Ink {
+            id: String::new(),
+            time: 0,
+            book: "Beowulf".into(),
+            path: "b.epub".into(),
+            chapter: 2,
+            anchor: at,
+            margin: None,
+            points: vec![[1.0, 2.0, 0.1]],
+            drawn: vec![[10.0, 20.0, 1.5]],
+            context: None,
+            section: None,
+            underline: None,
+        };
+        m.ink(ink.clone()).unwrap();
+        m.ink(Ink {
+            underline: Some(id.clone()),
+            ..ink
+        })
+        .unwrap();
+        // The page's stroke on the page; the note's on the card only.
+        assert_eq!(m.ink_in("b.epub", 2).count(), 1);
+        assert_eq!(m.ink_notes("b.epub").len(), 1);
+        assert_eq!(Marks::load(&dir).written(&id).len(), 1);
+        m.remove(&id).unwrap();
+        let again = Marks::load(&dir);
+        assert!(again.written(&id).is_empty());
+        assert_eq!(again.ink_in("b.epub", 2).count(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

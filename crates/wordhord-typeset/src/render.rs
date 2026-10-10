@@ -134,8 +134,7 @@ impl<'a> Renderer<'a> {
                         }
                         let alpha = image.data[(row * p.width as i32 + col) as usize] as u32;
                         let i = (py * w + px) as usize;
-                        pixels[i] = ((pixels[i] as u32 * (255 - alpha)
-                            + run.grey as u32 * alpha)
+                        pixels[i] = ((pixels[i] as u32 * (255 - alpha) + run.grey as u32 * alpha)
                             / 255) as u8;
                     }
                 }

@@ -724,13 +724,48 @@ fn save_underline(
         .iter()
         .filter_map(|(id, _)| marks.note(id).map(str::to_string))
         .collect();
+    // And what was written on them, in the order of their passages.
+    let mut by_place = merged.clone();
+    by_place.sort_by_key(|m| m.1);
+    let writing: Vec<Vec<Ink>> = by_place
+        .iter()
+        .map(|(id, _)| marks.written(id).into_iter().cloned().collect::<Vec<Ink>>())
+        .filter(|w| !w.is_empty())
+        .collect();
     for (id, _) in &merged {
         if let Err(e) = marks.remove(id) {
             eprintln!("underline: {e}");
         }
     }
     let u = underline_of(book, path, chapter, pages, numbered, s, e);
-    match marks.underline(u) {
+    let start = u.start.clone();
+    let saved = marks.underline(u);
+    if let Ok(id) = &saved {
+        // Each written note under the one before.
+        let mut below: Option<f32> = None;
+        for note in &writing {
+            let top = note
+                .iter()
+                .flat_map(|i| &i.drawn)
+                .map(|p| p[1] - p[2])
+                .fold(f32::MAX, f32::min);
+            let shift = below.map_or(0.0, |b| b + 30.0 - top);
+            for ink in note {
+                let mut ink = ink.clone();
+                for p in ink.drawn.iter_mut().chain(ink.points.iter_mut()) {
+                    p[1] += shift;
+                }
+                let bottom = ink.drawn.iter().map(|p| p[1] + p[2]).fold(0.0, f32::max);
+                below = Some(below.unwrap_or(0.0).max(bottom));
+                ink.underline = Some(id.clone());
+                ink.anchor = start.clone();
+                if let Err(e) = marks.ink(ink) {
+                    eprintln!("note: {e}");
+                }
+            }
+        }
+    }
+    match saved {
         Ok(id) if !notes.is_empty() => {
             if let Err(e) = marks.set_note(&id, &notes.join(" / ")) {
                 eprintln!("note: {e}");
@@ -1175,11 +1210,23 @@ fn passages(
                 quote.push(with_id(block(BlockKind::Paragraph(vec![Inline::Text(
                     u.text.clone(),
                 )]))));
-                // The note on it, after a pilcrow.
-                if let Some(note) = marks.note(&u.id) {
+                // The note on it, after a pilcrow; what's written on it
+                // under that.
+                let typed = marks.note(&u.id);
+                if let Some(note) = typed {
                     quote.push(with_id(block(BlockKind::Paragraph(vec![Inline::Text(
                         format!("¶ {note}"),
                     )]))));
+                }
+                let written = marks.written(&u.id);
+                if !written.is_empty() {
+                    let width = ink_picture_width(&written);
+                    quote.push(with_id(block(BlockKind::Paragraph(vec![Inline::Image {
+                        src: format!("ink:on-{}", u.id),
+                        alt: Vec::new(),
+                        width: Some((width / measure).min(1.0)),
+                        height: None,
+                    }]))));
                 }
             }
             Entry::Ink(note) => {
@@ -1240,7 +1287,12 @@ fn passages(
         }
     }
     for image in &content.images {
-        if let Some(id) = image.src.strip_prefix("ink:") {
+        // A passage's own writing is within its words' reach already.
+        if let Some(id) = image
+            .src
+            .strip_prefix("ink:")
+            .filter(|id| !id.starts_with("on-"))
+        {
             place(Action::Ink(id.to_string()), image.y, image.y + image.height);
         }
     }
@@ -1280,7 +1332,11 @@ fn ink_picture_width(note: &[&Ink]) -> f32 {
 /// on white, with a margin: for the commonplace book. The note is named by
 /// its first stroke's id.
 fn ink_picture(marks: &Marks, id: &str) -> Option<Vec<u8>> {
-    let note = marks.ink_note(id)?;
+    // `on-` and an underline's id: what's written on it.
+    let note = match id.strip_prefix("on-") {
+        Some(u) => Some(marks.written(u)).filter(|w| !w.is_empty())?,
+        None => marks.ink_note(id)?,
+    };
     let strokes = ink_strokes(&note);
     let points: Vec<&(f32, f32, f32)> = strokes.iter().flatten().collect();
     let pad = 12.0;
@@ -1759,7 +1815,7 @@ fn read(
             let marks = tools.marks.borrow();
             marks
                 .in_chapter(path, chapter)
-                .filter(|u| marks.note(&u.id).is_some())
+                .filter(|u| marks.note(&u.id).is_some() || !marks.written(&u.id).is_empty())
                 .filter_map(|u| numbered.span(u))
                 .collect()
         };
@@ -2140,6 +2196,7 @@ fn read(
                                 Some(line.join(" ")).filter(|l| !l.is_empty())
                             },
                             section: Some(section_of(&book, chapter)),
+                            underline: None,
                         });
                         match done {
                             Ok(()) => eprintln!("ink: {} points by {:?}", stroke.len(), w.text),
@@ -2310,15 +2367,50 @@ fn read(
                 let mut marked = highlight(&shown, width, height, &boxes);
                 let note = tools.marks.borrow().note(&id).map(str::to_string);
                 let first = if note.is_some() { "edit note" } else { "note" };
-                let (bp, br, hits) = ui.note_card(
+                // What's written on it, made to fit the card: as written,
+                // or smaller, never larger.
+                let written = {
+                    let marks = tools.marks.borrow();
+                    ink_strokes(&marks.written(&id))
+                };
+                let fit = (!written.is_empty()).then(|| {
+                    let all = written.iter().flatten();
+                    let x0 = all.clone().map(|p| p.0 - p.2).fold(f32::MAX, f32::min);
+                    let y0 = all.clone().map(|p| p.1 - p.2).fold(f32::MAX, f32::min);
+                    let x1 = all.clone().map(|p| p.0 + p.2).fold(f32::MIN, f32::max);
+                    let y1 = all.map(|p| p.1 + p.2).fold(f32::MIN, f32::max);
+                    let room = (
+                        width as f32 - 2.0 * ui.margin_px() - tools.profile.mm(10.0),
+                        tools.profile.mm(35.0),
+                    );
+                    let scale = (room.0 / (x1 - x0)).min(room.1 / (y1 - y0)).min(1.0);
+                    (x0, y0, scale, ((x1 - x0) * scale, (y1 - y0) * scale))
+                });
+                let (bp, br, hits, at) = ui.note_card(
                     note.as_deref(),
-                    &[first, "remove underline", "look up"],
+                    fit.map(|f| f.3),
+                    &[first, "write", "remove underline", "look up"],
                     above,
                     below,
                 );
                 let (bw, bh) = ((br.x1 - br.x0) as u32, (br.y1 - br.y0) as u32);
                 let bar = chrome.page(&bp, bw, bh);
                 paste(&mut marked, width, height, &bar, &br);
+                if let (Some((x0, y0, scale, _)), Some(at)) = (fit, at) {
+                    for line in &written {
+                        let line: Stroke = line
+                            .iter()
+                            .map(|(x, y, r)| {
+                                (
+                                    (x - x0) * scale + at.x0,
+                                    (y - y0) * scale + at.y0,
+                                    (r * scale).max(0.8),
+                                )
+                            })
+                            .collect();
+                        ink_into(&mut marked, width, height, &line);
+                    }
+                }
                 boxes.push(br);
                 let rows = redraw_rows(screen, &marked, &boxes);
                 let choice = match screen.next() {
@@ -2350,6 +2442,27 @@ fn read(
                     continue;
                 }
                 if choice == Some(1) {
+                    let u = tools
+                        .marks
+                        .borrow()
+                        .in_chapter(path, chapter)
+                        .find(|u| u.id == id)
+                        .cloned();
+                    if let Some(u) = u {
+                        if let Typed::Close = write_note(screen, ui, &mut chrome, tools, &u) {
+                            break Step::Leave(Leave::Close);
+                        }
+                    }
+                    shown = draw(
+                        screen,
+                        &mut renderer,
+                        &t.pages[reader.page],
+                        true,
+                        &rules(reader.page),
+                    );
+                    continue;
+                }
+                if choice == Some(2) {
                     match tools.marks.borrow_mut().remove(&id) {
                         Ok(()) => eprintln!("underline removed"),
                         Err(e) => eprintln!("underline: {e}"),
@@ -2366,7 +2479,7 @@ fn read(
                 // The page as it was, then the lookup, if that was chosen.
                 let page_rows = &shown[(rows.0 * width) as usize..(rows.1 * width) as usize];
                 screen.draw(page_rows, width, rows.1 - rows.0, 0, rows.0, false);
-                if choice != Some(2) {
+                if choice != Some(3) {
                     continue;
                 }
                 forced = Some(Effect::Look(k));
@@ -3282,6 +3395,172 @@ fn type_in(
                 _ => continue,
             }
             break;
+        }
+    }
+}
+
+/// Writing a note on an underline `u` with the pen, on ruled lines under
+/// its passage. Each stroke is saved as it's lifted, marked as the
+/// underline's; the eraser end rubs strokes out, *clear* all of them. Done
+/// or back, what's written stays.
+fn write_note(
+    screen: &mut dyn Platform,
+    ui: &Ui,
+    chrome: &mut Renderer,
+    tools: &Tools,
+    u: &Underline,
+) -> Typed {
+    let (width, height) = screen.size();
+    let (s, area) = ui.writing("Note", &u.text);
+    let ground = chrome.page(&s.page, width, height);
+    // The note's strokes, on the screen.
+    let placed = |tools: &Tools| -> Vec<(String, Stroke)> {
+        tools
+            .marks
+            .borrow()
+            .written(&u.id)
+            .iter()
+            .map(|i| {
+                let line = i
+                    .drawn
+                    .iter()
+                    .map(|[x, y, r]| (x + area.x0, y + area.y0, *r))
+                    .collect();
+                (i.id.clone(), line)
+            })
+            .collect()
+    };
+    let paint = |tools: &Tools| {
+        let mut pixels = ground.clone();
+        for (_, line) in placed(tools) {
+            ink_into(&mut pixels, width, height, &line);
+        }
+        pixels
+    };
+    let mut shown = paint(tools);
+    screen.draw(&shown, width, height, 0, 0, true);
+    let mut stroke: Stroke = Vec::new();
+    let mut dirty: Option<Rect> = None;
+    let mut last: Option<Instant> = None;
+    loop {
+        screen.ink(true);
+        let gesture = screen.next();
+        screen.ink(false);
+        match gesture {
+            Gesture::Power => return Typed::Close,
+            Gesture::Tap(x, y) => {
+                match s.hits.iter().find(|(r, _)| r.contains(x as f32, y as f32)) {
+                    Some((_, Action::Done)) => return Typed::Done,
+                    Some((_, Action::Back)) => return Typed::Back,
+                    Some((_, Action::Clear)) => {
+                        let ids: Vec<String> = placed(tools).into_iter().map(|p| p.0).collect();
+                        for id in &ids {
+                            if let Err(e) = tools.marks.borrow_mut().remove(id) {
+                                eprintln!("note: {e}");
+                            }
+                        }
+                        eprintln!("note: {} strokes cleared", ids.len());
+                        shown = paint(tools);
+                        screen.draw(&shown, width, height, 0, 0, false);
+                    }
+                    _ => {}
+                }
+            }
+            Gesture::Ink(..) | Gesture::InkUp(..) => {
+                let tool = screen.tool();
+                let up = matches!(gesture, Gesture::InkUp(..));
+                let points: Vec<(f32, f32, f32)> = screen
+                    .take_ink()
+                    .iter()
+                    .map(|&(x, y, p)| (x as f32, y as f32, pen_radius(p)))
+                    .filter(|p| area.contains(p.0, p.1))
+                    .collect();
+                if tool == Tool::Eraser {
+                    let reach = tools.profile.mm(2.5);
+                    let gone: Vec<String> = placed(tools)
+                        .into_iter()
+                        .filter(|(_, line)| {
+                            line.iter().any(|q| {
+                                points.iter().any(|p| (p.0 - q.0).hypot(p.1 - q.1) <= reach)
+                            })
+                        })
+                        .map(|p| p.0)
+                        .collect();
+                    if !gone.is_empty() {
+                        for id in &gone {
+                            if let Err(e) = tools.marks.borrow_mut().remove(id) {
+                                eprintln!("erase: {e}");
+                            }
+                        }
+                        eprintln!("note: erased {}", gone.len());
+                        shown = paint(tools);
+                        screen.draw(&shown, width, height, 0, 0, false);
+                    }
+                    continue;
+                }
+                // As on the page: into the pixels at once, onto the screen
+                // at most every INK_MS.
+                let mut piece: Vec<_> = stroke.last().copied().into_iter().collect();
+                piece.extend(&points);
+                if let Some(r) = ink_into(&mut shown, width, height, &piece) {
+                    dirty = Some(match dirty {
+                        Some(d) => Rect {
+                            x0: d.x0.min(r.x0),
+                            y0: d.y0.min(r.y0),
+                            x1: d.x1.max(r.x1),
+                            y1: d.y1.max(r.y1),
+                        },
+                        None => r,
+                    });
+                }
+                let due = last.is_none_or(|t| t.elapsed().as_millis() >= INK_MS);
+                if let Some(r) = dirty.filter(|_| due || up) {
+                    let block = cut(&shown, width, &r);
+                    let (w, h) = ((r.x1 - r.x0) as u32, (r.y1 - r.y0) as u32);
+                    screen.draw_ink(&block, w, h, r.x0 as u32, r.y0 as u32);
+                    dirty = None;
+                    last = Some(Instant::now());
+                }
+                stroke.extend(points);
+                if !up {
+                    continue;
+                }
+                last = None;
+                if stroke.is_empty() {
+                    continue;
+                }
+                // Kept as it lay on the ruled lines, from their top left.
+                let drawn: Vec<[f32; 3]> = stroke
+                    .iter()
+                    .map(|(x, y, r)| {
+                        [
+                            (x - area.x0).round(),
+                            (y - area.y0).round(),
+                            (r * 10.0).round() / 10.0,
+                        ]
+                    })
+                    .collect();
+                let done = tools.marks.borrow_mut().ink(Ink {
+                    id: String::new(),
+                    time: 0,
+                    book: u.book.clone(),
+                    path: u.path.clone(),
+                    chapter: u.chapter,
+                    anchor: u.start.clone(),
+                    margin: None,
+                    points: drawn.clone(),
+                    drawn,
+                    context: None,
+                    section: u.section.clone(),
+                    underline: Some(u.id.clone()),
+                });
+                match done {
+                    Ok(()) => eprintln!("note: a stroke of {} points", stroke.len()),
+                    Err(e) => eprintln!("note: {e}"),
+                }
+                stroke.clear();
+            }
+            _ => {}
         }
     }
 }
