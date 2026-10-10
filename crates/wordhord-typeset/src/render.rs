@@ -271,7 +271,9 @@ fn svg_grey(tree: &resvg::usvg::Tree, w: u32, h: u32) -> Option<Vec<f32>> {
     Some(
         pixmap
             .data()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|p| {
                 let (r, g, b, a) = (p[0] as f32, p[1] as f32, p[2] as f32, p[3] as f32);
                 0.299 * r + 0.587 * g + 0.114 * b + (255.0 - a)
