@@ -2601,7 +2601,9 @@ fn read(
                 let (bw, bh) = ((br.x1 - br.x0) as u32, (br.y1 - br.y0) as u32);
                 let bar = chrome.page(&bp, bw, bh);
                 paste(&mut marked, width, height, &bar, &br);
-                if let (Some((x0, y0, scale, _)), Some(at)) = (fit, at) {
+                if let (Some((x0, y0, scale, (fw, _))), Some(at)) = (fit, at) {
+                    // As the card made room: smaller still, if it had to.
+                    let scale = scale * (at.x1 - at.x0) / fw.max(1.0);
                     for line in &written {
                         let line: Stroke = line
                             .iter()
@@ -3098,6 +3100,21 @@ fn read(
                                 }
                             }
                         }
+                        // Which page of how many, at the foot, if more than
+                        // one: so the rest, the etymology often, is found.
+                        if pages.len() > 1 {
+                            let baseline = h as f32 - tools.profile.mm(3.0);
+                            let (folio, _) = ui.label(
+                                &format!("{} of {}", at + 1, pages.len()),
+                                true,
+                                right,
+                                baseline,
+                            );
+                            let over = chrome.page(&folio, w_px, h);
+                            for (p, o) in pixels.iter_mut().zip(&over) {
+                                *p = (*p).min(*o);
+                            }
+                        }
                         if above {
                             // The rule goes on the panel's lower edge.
                             let rule = (w * 3) as usize;
@@ -3209,6 +3226,28 @@ fn read(
                                         break at - 1;
                                     }
                                 }
+                                // A swipe or a slide pages the panel, on or
+                                // back, as a book's pages; at either end it
+                                // stays.
+                                Gesture::SwipeLeft if at + 1 < pages.len() => break at + 1,
+                                Gesture::SwipeRight if at > 0 => break at - 1,
+                                Gesture::Slide(_, dy) if dy < 0 && at + 1 < pages.len() => {
+                                    break at + 1
+                                }
+                                Gesture::Slide(_, dy) if dy > 0 && at > 0 => break at - 1,
+                                Gesture::SwipeLeft | Gesture::SwipeRight | Gesture::Slide(..) => {}
+                                // A finger that lingers or wanders in the
+                                // panel, or the pen coming near, isn't a
+                                // wish to close it.
+                                Gesture::Hold(_, y)
+                                | Gesture::Press(_, y)
+                                | Gesture::Drag(_, y)
+                                | Gesture::Release(_, y)
+                                    if inside(y) => {}
+                                Gesture::PenNear
+                                | Gesture::PenAway
+                                | Gesture::Ink(..)
+                                | Gesture::InkUp(..) => {}
                                 Gesture::Power => break 'reading Step::Leave(Leave::Close),
                                 _ => break usize::MAX,
                             }

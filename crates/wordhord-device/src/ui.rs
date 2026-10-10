@@ -801,7 +801,13 @@ impl<'f> Ui<'f> {
         let m = self.margin();
         let t = Type::new(Face::Italic, self.pt(11.0));
         let pad = self.mm(5.0);
-        let w = (self.w - 2.0 * m).round();
+        let (strip_page, strip, hits) = self.choices(names, 0.0, 0.0);
+        // The text's width, or the choices' if they need more, as on a
+        // small screen.
+        let w = (self.w - 2.0 * m)
+            .max(strip.x1 - strip.x0)
+            .min(self.w)
+            .round();
         let mut lines = match note {
             Some(note) => self.wrap(note, t, w - 2.0 * pad),
             None => Vec::new(),
@@ -815,26 +821,36 @@ impl<'f> Ui<'f> {
             }
         }
         let step = t.size * 1.5;
-        let (strip_page, strip, hits) = self.choices(names, 0.0, 0.0);
         let strip_h = strip.y1 - strip.y0;
         // The writing under the typed note, if there's any: room for it,
-        // centred, for the caller to draw into.
+        // centred, for the caller to draw into; smaller if the card would
+        // otherwise not fit on the side of the underline with more room.
         let lines_h = pad + lines.len() as f32 * step;
-        let (ww, wh) = writing.unwrap_or((0.0, 0.0));
         let written_at = if lines.is_empty() { pad } else { lines_h };
+        let gap = self.mm(3.0);
+        let room = (above - gap).max(self.h - below - gap);
+        let (ww, wh) = writing.map_or((0.0, 0.0), |(ww, wh)| {
+            let fixed = written_at + pad + strip_h;
+            let s = ((room - fixed) / wh.max(1.0)).clamp(0.2, 1.0);
+            ((ww * s).round(), (wh * s).round())
+        });
         let text_h = if writing.is_some() {
             written_at + wh + pad
         } else {
             lines_h
         };
         let h = (text_h + strip_h).round();
-        let top = if above - self.mm(3.0) - h >= 0.0 {
-            above - self.mm(3.0) - h
+        // Above, or below; or, if neither has room, as near as the screen
+        // allows.
+        let top = if above - gap - h >= 0.0 {
+            above - gap - h
+        } else if below + gap + h <= self.h {
+            below + gap
         } else {
-            below + self.mm(3.0)
+            (self.h - h).max(0.0)
         }
         .round();
-        let left = m.round();
+        let left = ((self.w - w) / 2.0).round();
         let mut page = Page::default();
         self.frame(&mut page, 0.0, 0.0, w, h, 0);
         for (k, line) in lines.iter().enumerate() {
