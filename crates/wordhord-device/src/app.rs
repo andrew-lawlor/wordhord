@@ -392,7 +392,25 @@ impl Browser {
                 ui.list(&title, &rows, page, true)
             }
             View::Shelf(Shelf::All) => {
-                let rows: Vec<Row> = library.books.iter().map(row).collect();
+                let mut rows: Vec<Row> = library.books.iter().map(row).collect();
+                // Books Wordhord can't open, said once, at the end.
+                if library.locked > 0 {
+                    let n = library.locked;
+                    rows.push(Row {
+                        title: format!(
+                            "Not shown: {n} {} from the Kobo store, which {} only in Kobo's own reader.",
+                            if n == 1 { "book" } else { "books" },
+                            if n == 1 { "opens" } else { "open" },
+                        ),
+                        detail: Vec::new(),
+                        cover: None,
+                        progress: None,
+                        count: None,
+                        mark: false,
+                        action: Action::Heading,
+                        depth: 0,
+                    });
+                }
                 ui.list(Shelf::All.name(), &rows, page, true)
             }
             View::Shelf(shelf) => {

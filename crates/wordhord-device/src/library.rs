@@ -43,6 +43,10 @@ pub struct Entry {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Library {
     pub books: Vec<Entry>,
+    /// Books here that Wordhord can't open: bought from the Kobo store, or
+    /// otherwise locked by DRM. Counted, to say so.
+    #[serde(default)]
+    pub locked: usize,
 }
 
 impl Library {
@@ -59,6 +63,7 @@ impl Library {
         let mut files = Vec::new();
         find(root, root, &mut files);
         let (mut read, mut kept) = (0, 0);
+        let mut locked = 0;
         let mut books = Vec::new();
         for (path, size, modified) in files {
             let entry = match old.get(&path) {
@@ -79,16 +84,22 @@ impl Library {
                     }
                 }
             };
-            if !entry.drm {
+            if entry.drm {
+                locked += 1;
+            } else {
                 books.push(entry);
             }
         }
+        // The Kobo store's books, kept where Nickel keeps them, locked.
+        locked += std::fs::read_dir(root.join(".kobo/kepub"))
+            .map(|d| d.flatten().filter(|e| e.path().is_file()).count())
+            .unwrap_or(0);
         books.sort_by(|a, b| {
             a.title_sort
                 .to_lowercase()
                 .cmp(&b.title_sort.to_lowercase())
         });
-        let library = Library { books };
+        let library = Library { books, locked };
         if let Some(dir) = index.parent() {
             let _ = std::fs::create_dir_all(dir);
         }

@@ -41,7 +41,7 @@ No store, no account, no cloud. No copy and paste, since a Kobo has no clipboard
 
 ## Status
 
-Early, and in daily use on a Kobo Elipsa 2E, the only device it has been tested on. Other Kobos with a pen should work but haven't been tried. EPUB only. [SPEC.md](SPEC.md) says what's done, what's next, and why.
+Early, and in daily use on a Kobo Elipsa 2E, the only device it has been tested on. Other Kobos with a pen should work but haven't been tried. EPUB only, and DRM-free: books bought from the Kobo store are locked to Kobo's own reader, and stay there. Wordhord counts them at the foot of *All books*, so you know they weren't lost. [SPEC.md](SPEC.md) says what's done, what's next, and why.
 
 ## Install
 
