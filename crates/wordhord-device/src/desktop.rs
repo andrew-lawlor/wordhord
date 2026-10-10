@@ -340,6 +340,14 @@ impl Script {
                 ["power"] => Gesture::Power,
                 ["near"] => Gesture::PenNear,
                 ["away"] => Gesture::PenAway,
+                ["move", x, y] => Gesture::Drag(
+                    x.parse().map_err(|_| format!("`{step}`"))?,
+                    y.parse().map_err(|_| format!("`{step}`"))?,
+                ),
+                ["release", x, y] => Gesture::Release(
+                    x.parse().map_err(|_| format!("`{step}`"))?,
+                    y.parse().map_err(|_| format!("`{step}`"))?,
+                ),
                 ["press", x, y] => Gesture::Press(
                     x.parse().map_err(|_| format!("`{step}`"))?,
                     y.parse().map_err(|_| format!("`{step}`"))?,

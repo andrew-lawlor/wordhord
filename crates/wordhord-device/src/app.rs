@@ -634,72 +634,64 @@ fn show_pen(screen: &mut dyn Platform, ui: &Ui, chrome: &mut Renderer, shown: &[
     screen.draw_fast(&block, w, h, r.x0 as u32, r.y0 as u32);
 }
 
-/// An underline of the words `a` to `b` of a page, either way round: its
-/// anchors, its text (lines of verse marked " / "), and the part of the
-/// book it's in.
-#[allow(clippy::too_many_arguments)]
+/// An underline of the chapter's words `s` to `e`, by their numbers: its
+/// anchors, its text (lines of verse marked " / ", across pages too), and
+/// the part of the book it's in.
 fn underline_of(
     book: &Book,
     path: &str,
     chapter: usize,
-    page: &Page,
-    numbers: &[usize],
+    pages: &[Page],
     numbered: &Words,
-    a: usize,
-    b: usize,
+    s: usize,
+    e: usize,
 ) -> Underline {
-    let (a, b) = (a.min(b), a.max(b));
-    let first = &page.words[a];
-    let verse = hoard::is_verse(&book.blocks(chapter), &first.block);
+    let verse = hoard::is_verse(&book.blocks(chapter), &numbered.anchors[s].block);
     let mut text = String::new();
-    let mut line = first.y0;
-    for w in page.words.iter().skip(a).take(b - a + 1) {
-        if !text.is_empty() && !w.continues {
-            let turned = (w.y0 - line).abs() > 1.0;
-            text.push_str(if verse && turned { " / " } else { " " });
+    let mut line: Option<(usize, f32)> = None;
+    for (p, page) in pages.iter().enumerate() {
+        for (w, &n) in page.words.iter().zip(&numbered.on_page[p]) {
+            if !(s..=e).contains(&n) {
+                continue;
+            }
+            if !text.is_empty() && !w.continues {
+                let turned = line.is_some_and(|(lp, ly)| lp != p || (w.y0 - ly).abs() > 1.0);
+                text.push_str(if verse && turned { " / " } else { " " });
+            }
+            line = Some((p, w.y0));
+            text.push_str(&w.text);
         }
-        line = w.y0;
-        text.push_str(&w.text);
     }
-    // The part of the book it's in: the last entry of the contents at or
-    // before this chapter.
-    let section = book
-        .contents()
-        .into_iter()
-        .rfind(|c| c.2 <= chapter)
-        .map(|c| c.0);
     Underline {
         id: String::new(),
         time: 0,
         book: book.title(),
         path: path.to_string(),
         chapter,
-        start: numbered.anchors[numbers[a]].clone(),
-        end: numbered.anchors[numbers[b]].clone(),
+        start: numbered.anchors[s].clone(),
+        end: numbered.anchors[e].clone(),
         text,
-        section,
+        section: Some(section_of(book, chapter)),
     }
 }
 
-/// Underlines the words `a` to `b` of a page. Underlines it overlaps or
-/// touches are taken into it, so going over a passage again, or along from
-/// it, makes one underline, not several; unless together they'd reach off
-/// this page, when the new one stands alone.
+/// Underlines the chapter's words `s` to `e`, by their numbers, on
+/// whatever pages they fall. Underlines it overlaps or touches are taken
+/// into it, so going over a passage again, or along from it, or on across
+/// a page, makes one underline, not several.
 #[allow(clippy::too_many_arguments)]
 fn save_underline(
     tools: &Tools,
     book: &Book,
     path: &str,
     chapter: usize,
-    page: &Page,
-    numbers: &[usize],
+    pages: &[Page],
     numbered: &Words,
-    a: usize,
-    b: usize,
+    s: usize,
+    e: usize,
 ) {
-    let (a, b) = (a.min(b), a.max(b));
-    let (mut s, mut e) = (numbers[a], numbers[b]);
-    let touching: Vec<(String, (usize, usize))> = tools
+    let (mut s, mut e) = (s.min(e), s.max(e));
+    let merged: Vec<(String, (usize, usize))> = tools
         .marks
         .borrow()
         .in_chapter(path, chapter)
@@ -708,18 +700,10 @@ fn save_underline(
             (span.0 <= e + 1 && span.1 + 1 >= s).then(|| (u.id.clone(), span))
         })
         .collect();
-    for (_, (us, ue)) in &touching {
+    for (_, (us, ue)) in &merged {
         s = s.min(*us);
         e = e.max(*ue);
     }
-    let whole = (
-        numbers.iter().position(|&n| n == s),
-        numbers.iter().rposition(|&n| n == e),
-    );
-    let (from, to, merged) = match whole {
-        (Some(from), Some(to)) => (from, to, touching),
-        _ => (a, b, Vec::new()),
-    };
     let mut marks = tools.marks.borrow_mut();
     // The notes of those taken in go with them, together.
     let notes: Vec<String> = merged
@@ -731,21 +715,16 @@ fn save_underline(
             eprintln!("underline: {e}");
         }
     }
-    let u = underline_of(book, path, chapter, page, numbers, numbered, from, to);
+    let u = underline_of(book, path, chapter, pages, numbered, s, e);
     match marks.underline(u) {
         Ok(id) if !notes.is_empty() => {
             if let Err(e) = marks.set_note(&id, &notes.join(" / ")) {
                 eprintln!("note: {e}");
             }
-            eprintln!(
-                "underlined words {} to {}, with its notes",
-                numbers[from], numbers[to]
-            );
+            eprintln!("underlined words {s} to {e}, with its notes");
         }
         Ok(_) => eprintln!(
-            "underlined words {} to {}{}",
-            numbers[from],
-            numbers[to],
+            "underlined words {s} to {e}{}",
             if merged.is_empty() {
                 String::new()
             } else {
@@ -1712,6 +1691,11 @@ fn read(
         // A passage being chosen to underline: its first and last words,
         // by their place on the page; and the rows last drawn marked.
         let mut chosen: Option<(usize, usize)> = None;
+        // Where a passage being chosen began, by its word's number, once
+        // dragged on past a page; and whether the finger is in the foot,
+        // having turned the page already.
+        let mut carried: Option<usize> = None;
+        let mut foot_turned = false;
         let mut marked_rows: Option<(u32, u32)> = None;
         // Pressed on an underline already there: its id, and the word.
         let mut editing: Option<(String, usize)> = None;
@@ -1928,9 +1912,8 @@ fn read(
                         .collect();
                     if let (Some(&a), Some(&b)) = (hit.first(), hit.last()) {
                         let numbers = &numbered.on_page[reader.page];
-                        save_underline(
-                            tools, &book, path, chapter, page_now, numbers, &numbered, a, b,
-                        );
+                        let (s, e) = (numbers[a], numbers[b]);
+                        save_underline(tools, &book, path, chapter, &t.pages, &numbered, s, e);
                     }
                     stroke.clear();
                     // The trail gone, the underline drawn.
@@ -2038,6 +2021,8 @@ fn read(
                     editing = None;
                     loupe_at = None;
                     drawn_end = None;
+                    carried = None;
+                    foot_turned = false;
                     // Pressed on an underline: the whole of it, to take
                     // away, rather than a new one.
                     if let Some(k) = k {
@@ -2060,9 +2045,41 @@ fn read(
                     }
                 }
                 Gesture::Drag(x, y) if editing.is_none() => {
-                    if let (Some(c), Some(k)) = (chosen, nearest_word(page_now, x as f32, y as f32))
-                    {
-                        chosen = Some((c.0, k));
+                    // Dragged past the last line into the foot: on to the
+                    // next page, the passage carried over.
+                    let foot = page_now.words.iter().map(|w| w.y1).fold(0.0, f32::max)
+                        + tools.profile.mm(3.0);
+                    let next = reader.page + 1 < t.pages.len();
+                    match chosen {
+                        Some(c) if (y as f32) > foot && next => {
+                            if !foot_turned {
+                                carried = Some(carried.unwrap_or(numbers[c.0.min(c.1)]));
+                                foot_turned = true;
+                                reader.page += 1;
+                                reader.open = None;
+                                book.remember(chapter, reader.page);
+                                marked_rows = None;
+                                loupe_at = None;
+                                drawn_end = None;
+                                chosen = Some((0, 0));
+                                shown = draw(
+                                    screen,
+                                    &mut renderer,
+                                    &t.pages[reader.page],
+                                    false,
+                                    &rules(reader.page),
+                                );
+                                eprintln!("underline carried on to page {}", reader.page + 1);
+                                continue;
+                            }
+                        }
+                        Some(c) => {
+                            foot_turned = false;
+                            if let Some(k) = nearest_word(page_now, x as f32, y as f32) {
+                                chosen = Some((c.0, k));
+                            }
+                        }
+                        None => {}
                     }
                 }
                 _ => {}
@@ -2189,9 +2206,10 @@ fn read(
             if let Gesture::Release(..) = gesture {
                 marked_rows = None;
                 if let Some((a, b)) = chosen.take() {
-                    save_underline(
-                        tools, &book, path, chapter, page_now, numbers, &numbered, a, b,
-                    );
+                    // From where it began, maybe on a page before.
+                    let start = carried.take().unwrap_or(numbers[a.min(b)]);
+                    let end = numbers[a.max(b)];
+                    save_underline(tools, &book, path, chapter, &t.pages, &numbered, start, end);
                 }
                 shown = draw(
                     screen,
