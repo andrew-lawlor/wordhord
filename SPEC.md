@@ -39,9 +39,9 @@ A normal e-reader for stylus Kobos. Smaller and faster than KOReader. Built arou
 
 **Dictionary.** Tap a word. Its Wiktionary entry opens in the panel: dictionary form, the grammar of the form you tapped, senses, etymology. Works on inflected forms (§7).
 
-**The hoard.** One tap hoards a word, with its sentence, book and place. Unlock it on the device: review. Export anywhere (§8).
+**The hoard.** One tap hoards a word, with its sentence, book and place. Unlock it on the device: review. Kollate takes it to Anki (§8, §11).
 
-**Commonplace book.** Every highlight, note and kept word, across all books, in one place on the device and in one Markdown file on export. First, underlines: a row on the library's home opens an index of the books underlined in, the last first, each with its author and how many passages. A book's page sets its passages as quotations, each with the part of the book it's in and the day, *Book I · 8 October*. Handwriting is there too, among the passages in reading order: the strokes written within two minutes of each other in one part make one note, drawn to the page's scale under the line it was written by (*by “Expell'd and exil'd, left the Trojan shore.”*), with its part and day. A tap on it opens the book at that line. A tap on a passage opens the book at it. The index starts with *Search the commonplace book*: passages whose words, book or part start with each word typed, with the book named on each.
+**Commonplace book.** Every highlight, note and kept word, across all books, in one place on the device. Kollate makes the Markdown. First, underlines: a row on the library's home opens an index of the books underlined in, the last first, each with its author and how many passages. A book's page sets its passages as quotations, each with the part of the book it's in and the day, *Book I · 8 October*. Handwriting is there too, among the passages in reading order: the strokes written within two minutes of each other in one part make one note, drawn to the page's scale under the line it was written by (*by “Expell'd and exil'd, left the Trojan shore.”*), with its part and day. A tap on it opens the book at that line. A tap on a passage opens the book at it. The index starts with *Search the commonplace book*: passages whose words, book or part start with each word typed, with the book named on each.
 
 ## 4. Not goals
 
@@ -114,7 +114,7 @@ The vocab builder is *the hoard*. You *hoard* a word; reviewing is *unlocking* i
 
 **The hoard.** A screen with every word you've kept: by book, by language, by date, or by how well you know it. Tap one to see every sentence you met it in.
 
-**Export.** Anki, CSV and Markdown. Kollate already builds Anki decks from Kobo vocab, with the sentence as the cue. It reads Wordhord's the same way.
+**No export on the device.** Kollate already builds Anki decks from Kobo vocab, with the sentence as the cue, and Markdown from notes. It reads Wordhord's the same way. Wordhord keeps the logs; Kollate turns them into other things.
 
 ## 9. Data on the device
 
@@ -147,7 +147,7 @@ Points are `[x, y, pressure, ms]`, relative to the anchor's first word.
 
 **Anchors** follow the W3C Web Annotation model: the exact text quoted, with a little before and after. They survive re-layout, a new edition and fixed typos. A chapter path and character offset make lookup fast; the quote makes it safe.
 
-**Export** writes, for each book, Markdown (quotes, notes, and ink as SVG beside them) and W3C Web Annotation JSON-LD for tools that speak it. One more Markdown file holds the whole commonplace book.
+**Export** is Kollate's: Markdown, ink as SVG, Anki. The logs are plain JSON Lines, so any other tool can read them too.
 
 ## 10. Local-first sync
 
@@ -161,7 +161,7 @@ Books come by USB, by that same folder, or from an OPDS catalogue such as calibr
 
 ## 11. Kollate
 
-Kollate is the desktop companion. It reads `.wordhord/` over USB and never writes to it. It shows notes and ink beside the text, transcribes handwriting locally, and builds Anki decks. Today it reads Nickel's database and KOReader's sidecars. Wordhord's logs become a third source, and the simplest.
+Kollate is the desktop companion. It reads `.wordhord/` over USB and never writes to it. It shows notes and ink beside the text, transcribes handwriting locally, and builds Anki decks. Today it reads Nickel's database and KOReader's sidecars. Wordhord's logs become a third source, and the simplest. In progress.
 
 ## 12. Budgets
 
@@ -202,7 +202,6 @@ Small things that make it Wordhord's:
 - **The hoard grows.** The home screen's one number is how many words you've kept. No streaks, no nagging.
 - **Words met before.** A faint mark under words you've kept, wherever they turn up again, in any book. Tap one to see where you first met it.
 - **Etymology trail** (§7). Tap your way to Proto-Indo-European.
-- **Quote cards.** Any highlight, set as a clean page in the book's own type, exported as an image to share.
 - **Margin index.** One screen with every page you wrote on, as thumbnails of the ink. Find a note by its shape.
 - **Reading ledger.** Time read, pages turned, words kept. Local, private, exportable.
 - **Editions.** Books in Wordhord's own source format (Djot with a TEI vocabulary, from draft 1, see VOCABULARY.md) still compile on the desktop into fine editions: verse set as verse, line numbers, commentary, and each stanza's translation in the panel. The *Völuspá* reads that way today.
@@ -222,5 +221,5 @@ Each ends in a go or no-go.
 2. **Library and position.** Scan, list, open, resume. Go: launch to last page in under a second.
 3. **Dictionary.** English and Old Norse packs; tap a word, see the entry, inflected forms included. Go: four taps in five find the right entry.
 4. **Pen.** Ink, gestures, anchors, the log. Go: under 5 ms per point, and ink follows its paragraph through a font change.
-5. **The hoard.** Hoard, unlock, export to Anki. Go: you use it for a week.
-6. **Kollate reads it all.** Notes, ink and words on the desktop. Go: a round trip with nothing lost.
+5. **The hoard.** Hoard and unlock. Go: you use it for a week.
+6. **Kollate reads it all** (in progress). Notes, ink and words on the desktop, and on to Anki. Go: a round trip with nothing lost.

@@ -28,7 +28,7 @@ It runs beside Kobo's own software. You open it from NickelMenu. Nickel pauses w
 
 **Sleeps under a painting.** Knud Baade's *Scene from the Era of Norwegian Sagas* (1850): the warden on his cliff.
 
-**Keeps your notes as plain files.** Words kept, underlines and ink go into logs in the app's folder, one record a line. Nothing is ever overwritten. [Kollate](https://github.com/andrew-lawlor/kollate) reads them on the desktop.
+**Keeps your notes as plain files.** Words kept, underlines and ink go into logs in the app's folder, one record a line. Nothing is ever overwritten. Support in [Kollate](https://github.com/andrew-lawlor/kollate), to read them on the desktop, is under way.
 
 <p>
 <img src="docs/unlock.png" width="32%" alt="Unlocking the hoard: the word 'presage' in its line from the Aeneid, its definition, and four grades from again to easy">
