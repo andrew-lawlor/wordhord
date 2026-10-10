@@ -1159,6 +1159,37 @@ fn unlock(screen: &mut dyn Platform, renderer: &mut Renderer, tools: &Tools) -> 
     !matches!(screen.next(), Gesture::Power)
 }
 
+/// The light made brighter or dimmer, warmer or cooler (`warm`), by a share
+/// of the screen's height slid, and its gauge shown at that edge: where
+/// the gauge is, to clear later. Nothing if this Kobo has no such light.
+fn slide_light(
+    screen: &mut dyn Platform,
+    tools: &Tools,
+    renderer: &mut Renderer,
+    warm: bool,
+    by: f32,
+) -> Option<Rect> {
+    let mut light = tools.light.borrow_mut();
+    let light = light.as_mut()?;
+    if warm && light.warmth().is_none() {
+        return None;
+    }
+    light.slide(warm, by);
+    let (name, figure, share) = match light.warmth().filter(|_| warm) {
+        Some(w) => ("warmth", w, w as f32 / light.max_warmth() as f32),
+        None => {
+            let b = light.brightness();
+            ("light", b, b as f32 / 100.0)
+        }
+    };
+    let (page, r) = tools.ui.gauge(name, &figure.to_string(), share, !warm);
+    let (w, h) = ((r.x1 - r.x0) as u32, (r.y1 - r.y0) as u32);
+    let pixels = renderer.page(&page, w, h);
+    screen.draw(&pixels, w, h, r.x0 as u32, r.y0 as u32, false);
+    eprintln!("light: {name} {figure}");
+    Some(r)
+}
+
 /// The library, until a book is chosen (its path) or Wordhord is closed.
 fn browse(
     screen: &mut dyn Platform,
@@ -1199,9 +1230,32 @@ fn browse(
             started.elapsed()
         );
         flash = false;
+        // Where a light gauge is showing, to clear at the next touch.
+        let mut gauge: Option<Rect> = None;
         loop {
-            match screen.next() {
+            let gesture = screen.next();
+            if let Some(r) = gauge.take() {
+                // Another gauge on the same side covers this one; one on
+                // the other side doesn't.
+                let same_side = match gesture {
+                    Gesture::Slide(x, _) => (x as u32 > width / 2) == (r.x0 > 0.0),
+                    _ => false,
+                };
+                if !same_side {
+                    let (y0, y1) = (r.y0 as u32, (r.y1 as u32).min(height));
+                    let rows = &pixels[(y0 * width) as usize..(y1 * width) as usize];
+                    screen.draw(rows, width, y1 - y0, 0, y0, false);
+                }
+            }
+            match gesture {
                 Gesture::Power => return None,
+                // The light, as on a page: the left half how bright, the
+                // right how warm.
+                Gesture::Slide(x, dy) => {
+                    let warm = x as u32 > width / 2;
+                    let by = -dy as f32 / height as f32;
+                    gauge = slide_light(screen, tools, &mut renderer, warm, by);
+                }
                 Gesture::SwipeLeft if browser.current().1 + 1 < s.pages => {
                     browser.turn(1, s.pages);
                     break;
@@ -1870,8 +1924,14 @@ fn read(
             let effect = forced.unwrap_or_else(|| reader.act(gesture));
             eprintln!("{gesture:?}: {effect:?}");
             if let Some(r) = gauge.take() {
-                // A new page, or another gauge, covers it anyway.
-                if !matches!(effect, Effect::Page { .. } | Effect::Light { .. }) {
+                // A new page covers it anyway, and so does another gauge on
+                // the same side; one on the other side doesn't.
+                let covered = match effect {
+                    Effect::Page { .. } => true,
+                    Effect::Light { warm, .. } => warm == (r.x0 > 0.0),
+                    _ => false,
+                };
+                if !covered {
                     let (y0, y1) = (r.y0 as u32, r.y1 as u32);
                     let rows = &shown[(y0 * width) as usize..(y1 * width) as usize];
                     screen.draw(rows, width, y1 - y0, 0, y0, false);
@@ -1879,27 +1939,11 @@ fn read(
             }
             match effect {
                 Effect::Light { warm, by } => {
-                    let mut light = tools.light.borrow_mut();
-                    let Some(light) = light.as_mut() else {
-                        continue;
-                    };
-                    if warm && light.warmth().is_none() {
-                        continue;
+                    if let Some(r) =
+                        slide_light(screen, tools, &mut chrome, warm, by as f32 / 1000.0)
+                    {
+                        gauge = Some(r);
                     }
-                    light.slide(warm, by as f32 / 1000.0);
-                    let (name, figure, share) = match light.warmth().filter(|_| warm) {
-                        Some(w) => ("warmth", w, w as f32 / light.max_warmth() as f32),
-                        None => {
-                            let b = light.brightness();
-                            ("light", b, b as f32 / 100.0)
-                        }
-                    };
-                    let (page, r) = ui.gauge(name, &figure.to_string(), share, !warm);
-                    let (w, h) = ((r.x1 - r.x0) as u32, (r.y1 - r.y0) as u32);
-                    let pixels = chrome.page(&page, w, h);
-                    screen.draw(&pixels, w, h, r.x0 as u32, r.y0 as u32, false);
-                    eprintln!("light: {name} {figure}");
-                    gauge = Some(r);
                 }
                 Effect::Nothing => {}
                 Effect::Close => break Step::Leave(Leave::Close),
