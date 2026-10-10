@@ -1,8 +1,8 @@
 //! The front light: how bright, and how warm. Nickel is paused while
 //! Wordhord runs, so Wordhord sets the light itself, through the same
 //! files in /sys KOReader writes to. It starts from Nickel's levels, and on
-//! exit leaves the light as it was set here and writes that into Nickel's
-//! settings, so the light carries both ways.
+//! exit puts Nickel's back: Nickel can't be told a new level while it runs,
+//! so its own slider stays true.
 //!
 //! The paths are the Elipsa 2E's and the Libra Colour's. A Kobo without them has
 //! no light here.
@@ -26,43 +26,6 @@ pub struct Light {
     warmth: Option<i32>,
     /// As Nickel left it; the warmth none if Nickel sets it by the hour.
     was: (i32, Option<i32>),
-    /// Nickel's settings, to tell it the light as Wordhord leaves it.
-    conf: PathBuf,
-}
-
-/// A setting in Nickel's configuration set to `value`, under
-/// [PowerOptions], where Nickel keeps its light.
-fn tell_nickel(conf: &Path, key: &str, value: &str) {
-    let Ok(text) = std::fs::read_to_string(conf) else {
-        return;
-    };
-    let line = format!("{key}={value}");
-    let mut found = false;
-    let mut out: Vec<String> = text
-        .lines()
-        .map(|l| {
-            if l.trim_start().starts_with(&format!("{key}=")) {
-                found = true;
-                line.clone()
-            } else {
-                l.to_string()
-            }
-        })
-        .collect();
-    if !found {
-        match out.iter().position(|l| l.trim() == "[PowerOptions]") {
-            Some(k) => out.insert(k + 1, line),
-            None => {
-                out.push("[PowerOptions]".into());
-                out.push(line);
-            }
-        }
-    }
-    let mut text = out.join("\n");
-    text.push('\n');
-    if let Err(e) = std::fs::write(conf, text) {
-        eprintln!("light: {}: {e}", conf.display());
-    }
 }
 
 fn read(path: &Path) -> Option<i32> {
@@ -85,8 +48,7 @@ fn nickel(conf: &str, key: &str) -> Option<i32> {
 impl Light {
     /// The light under `class` (/sys/class on a Kobo), reading its levels
     /// from there or, where the files don't say, from Nickel's `conf`.
-    pub fn find(class: &Path, conf_path: &Path) -> Option<Light> {
-        let conf = conf_path;
+    pub fn find(class: &Path, conf: &Path) -> Option<Light> {
         let white = class.join(WHITE);
         if !white.exists() {
             return None;
@@ -123,7 +85,6 @@ impl Light {
             brightness,
             warmth,
             was: (brightness, warmth.filter(|_| !auto)),
-            conf: conf_path.to_path_buf(),
         })
     }
 
@@ -169,20 +130,17 @@ impl Light {
     }
 }
 
-/// On exit the light stays as it was set here, and Nickel is told, so its
-/// own setting agrees: its brightness, and its warmth in kelvin unless it
-/// sets the warmth itself by the hour.
+/// On exit, Nickel's light as Nickel left it: its brightness, and its
+/// warmth unless it sets that itself by the hour.
 impl Drop for Light {
     fn drop(&mut self) {
         let (b, w) = self.was;
         if self.brightness != b {
-            tell_nickel(&self.conf, "FrontLightLevel", &self.brightness.to_string());
+            write(&self.white, b);
         }
-        if let (Some(w), Some(now)) = (w, self.warmth) {
-            if now != w {
-                let share = now as f32 / MIXER_MAX as f32;
-                let k = KELVIN.1 - (share * (KELVIN.1 - KELVIN.0) as f32).round() as i32;
-                tell_nickel(&self.conf, "ColorSetting", &k.to_string());
+        if let (Some(w), Some(m)) = (w, &self.mixer) {
+            if self.warmth != Some(w) {
+                write(m, MIXER_MAX - w);
             }
         }
     }
@@ -209,18 +167,14 @@ mod tests {
             l.slide(false, 0.1);
             l.slide(true, 0.2);
         }
-        // The light as Wordhord left it, and Nickel told its brightness,
-        // but not a warmth: its schedule sets that.
-        assert_eq!(read(&class.join(WHITE)), Some(52));
+        // Nickel's brightness back; the warmth left, for its schedule.
+        assert_eq!(read(&class.join(WHITE)), Some(42));
         assert_eq!(read(&class.join(MIXERS[1])), Some(5));
-        let conf = std::fs::read_to_string(dir.join("conf")).unwrap();
-        assert!(conf.contains("FrontLightLevel=52\n"), "{conf}");
-        assert!(!conf.contains("ColorSetting"), "{conf}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn slides_set_the_files_and_exit_tells_nickel() {
+    fn slides_set_the_files_and_exit_puts_nickels_back() {
         let dir = std::env::temp_dir().join(format!("wordhord-light-{}", std::process::id()));
         let class = dir.join("class");
         std::fs::create_dir_all(class.join("backlight/mxc_msp430.0")).unwrap();
@@ -239,14 +193,9 @@ mod tests {
             l.slide(false, -2.0);
             assert_eq!(l.brightness(), 0);
         }
-        // Left as set, and Nickel told: brightness 0, warmth 1 in kelvin.
-        assert_eq!(read(&class.join(WHITE)), Some(0));
-        assert_eq!(read(&class.join(MIXERS[0])), Some(9));
-        let conf = std::fs::read_to_string(dir.join("conf")).unwrap();
-        assert!(
-            conf.contains("[PowerOptions]\nFrontLightLevel=0\nColorSetting=5910"),
-            "{conf}"
-        );
+        // Nickel's light back as it was.
+        assert_eq!(read(&class.join(WHITE)), Some(19));
+        assert_eq!(read(&class.join(MIXERS[0])), Some(10));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
