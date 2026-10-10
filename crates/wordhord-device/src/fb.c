@@ -12,6 +12,9 @@
 
 static FBInkConfig cfg = { 0 };
 
+// The kernel's GRAYSCALE_8BIT, for fbink_set_fb_info: plain 8-bit grey.
+#define GREY_8BIT 1U
+
 // Opens and sets up the framebuffer. Returns its fd, or -1.
 int wh_open(void)
 {
@@ -44,6 +47,40 @@ void wh_state(uint32_t out[6])
 	out[3] = s.touch_swap_axes;
 	out[4] = s.touch_mirror_x;
 	out[5] = s.touch_mirror_y;
+}
+
+// On a colour panel (the Libra Colour's), the screen in 8-bit grey rather
+// than 32-bit colour: every refresh of a 32-bit screen goes through colour
+// processing, which grey ink and grey pages don't need, and which made the
+// pen lag. Returns the depth it was, to put back, or 0 if left alone.
+int wh_grey(int fd)
+{
+	FBInkState s = { 0 };
+	fbink_get_state(&cfg, &s);
+	if (!s.has_color_panel || s.bpp == 8U) {
+		return 0;
+	}
+	int was = (int) s.bpp;
+	if (fbink_set_fb_info(fd, KEEP_CURRENT_ROTATE, 8U, GREY_8BIT, &cfg) < 0) {
+		return 0;
+	}
+	return was;
+}
+
+// The screen back to `bpp` bits per pixel, if it isn't: as Nickel had it.
+static int set_depth(int fd, uint32_t bpp)
+{
+	FBInkState s = { 0 };
+	fbink_get_state(&cfg, &s);
+	if (bpp == 0U || s.bpp == bpp) {
+		return 0;
+	}
+	return fbink_set_fb_info(fd, KEEP_CURRENT_ROTATE, (uint8_t) bpp, bpp == 8U ? GREY_8BIT : 0U, &cfg);
+}
+
+int wh_depth(int fd, int bpp)
+{
+	return set_depth(fd, (uint32_t) bpp);
 }
 
 // Draws a w×h block of 8-bit grey at (x, y) and refreshes it. A flash
@@ -94,6 +131,10 @@ int wh_restore(int fd, const char* path)
 	if (fread(&dump, sizeof(dump), 1, f) == 1 && dump.size > 0 && dump.size < (64U << 20U)) {
 		dump.data = malloc(dump.size);
 		if (dump.data && fread(dump.data, dump.size, 1, f) == 1) {
+			// A screen saved at another depth (Nickel's, at 32 bits)
+			// goes back at that depth: so the screen is as Nickel left
+			// it, even after a crash.
+			set_depth(fd, dump.bpp);
 			FBInkConfig c = cfg;
 			c.is_flashing = true;
 			rc            = fbink_restore(fd, &c, &dump);

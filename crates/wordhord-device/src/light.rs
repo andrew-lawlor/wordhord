@@ -52,29 +52,38 @@ impl Light {
         if !white.exists() {
             return None;
         }
+        // Nickel's own settings first: the files in /sys can't always be
+        // read back (the Libra Colour's brightness reads 0, lit or not).
         let conf = std::fs::read_to_string(conf).unwrap_or_default();
-        let brightness = read(&white)
-            .or_else(|| nickel(&conf, "FrontLightLevel"))
-            .unwrap_or(0)
-            .clamp(0, 100);
+        let off = conf.lines().any(|l| l.trim() == "FrontLightState=false");
+        let brightness = if off {
+            0
+        } else {
+            nickel(&conf, "FrontLightLevel")
+                .or_else(|| read(&white))
+                .unwrap_or(0)
+                .clamp(0, 100)
+        };
         let mixer = MIXERS.iter().map(|m| class.join(m)).find(|m| m.exists());
         let warmth = mixer.as_ref().map(|m| {
-            read(m)
-                .map(|v| MIXER_MAX - v)
-                .or_else(|| {
-                    let k = nickel(&conf, "ColorSetting")?;
+            nickel(&conf, "ColorSetting")
+                .map(|k| {
                     let share = (KELVIN.1 - k) as f32 / (KELVIN.1 - KELVIN.0) as f32;
-                    Some((share * MIXER_MAX as f32).round() as i32)
+                    (share * MIXER_MAX as f32).round() as i32
                 })
+                .or_else(|| read(m).map(|v| MIXER_MAX - v))
                 .unwrap_or(0)
                 .clamp(0, MIXER_MAX)
         });
+        // Nickel warming the light by the hour itself: its warmth is its
+        // own to put back.
+        let auto = conf.lines().any(|l| l.trim() == "AutoColorEnabled=true");
         Some(Light {
             white,
             mixer,
             brightness,
             warmth,
-            was: (brightness, warmth),
+            was: (brightness, warmth.filter(|_| !auto)),
         })
     }
 
@@ -137,6 +146,29 @@ impl Drop for Light {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nickels_levels_come_first_and_its_own_warmth_is_left_to_it() {
+        let dir = std::env::temp_dir().join(format!("wordhord-light-n-{}", std::process::id()));
+        let class = dir.join("class");
+        std::fs::create_dir_all(class.join("backlight/mxc_msp430.0")).unwrap();
+        std::fs::create_dir_all(class.join("backlight/lm3630a_led")).unwrap();
+        // As on the Libra Colour: the file reads 0 with the light on.
+        std::fs::write(class.join(WHITE), "0").unwrap();
+        std::fs::write(class.join(MIXERS[1]), "7").unwrap();
+        let conf = "[PowerOptions]\nAutoColorEnabled=true\nFrontLightLevel=42\n";
+        std::fs::write(dir.join("conf"), conf).unwrap();
+        {
+            let mut l = Light::find(&class, &dir.join("conf")).unwrap();
+            assert_eq!(l.brightness(), 42);
+            l.slide(false, 0.1);
+            l.slide(true, 0.2);
+        }
+        assert_eq!(read(&class.join(WHITE)), Some(42));
+        // The warmth as Wordhord left it: Nickel's schedule will set it.
+        assert_eq!(read(&class.join(MIXERS[1])), Some(5));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn slides_set_the_files_and_exit_puts_them_back() {

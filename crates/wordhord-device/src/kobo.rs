@@ -17,6 +17,7 @@ extern "C" {
     fn wh_draw(fd: c_int, grey: *const u8, w: u32, h: u32, x: u32, y: u32, flash: c_int) -> c_int;
     fn wh_save(fd: c_int, path: *const c_char) -> c_int;
     fn wh_restore(fd: c_int, path: *const c_char) -> c_int;
+    fn wh_grey(fd: c_int) -> c_int;
     fn wh_inputs(fds: *mut c_int, types: *mut u32, max: c_int) -> c_int;
 }
 
@@ -90,6 +91,12 @@ fn run(library: &Path, app: &Path, screen: &str) -> ExitCode {
         eprintln!("couldn't save the screen to {screen}");
         unsafe { wh_close(fd) };
         return ExitCode::FAILURE;
+    }
+    // A colour panel set to grey for as long as Wordhord runs; the screen
+    // saved above puts back Nickel's depth with Nickel's screen.
+    let was = unsafe { wh_grey(fd) };
+    if was > 0 {
+        eprintln!("screen: 8-bit grey while Wordhord runs (was {was}-bit)");
     }
     let mut state = [0u32; 6];
     unsafe { wh_state(state.as_mut_ptr()) };
