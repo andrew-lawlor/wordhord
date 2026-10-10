@@ -90,7 +90,7 @@ The Kobo Stylus 2 has a tip, a button and an eraser end. Wordhord reads the pen'
 
 **The book's language picks the pack.** It comes from the EPUB's `dc:language`, or from an element's `lang`, so a Latin phrase in an English book opens the Latin pack.
 
-**Etymology trail.** In an entry, ancestor words are links. *word* → Old English *word* → Proto-Germanic *\*wurdą* → Proto-Indo-European *\*wr̥dʰh₁om*. Each opens in the panel, if its language's pack is installed. Tap your way back four thousand years.
+**Etymology trail.** In an entry's etymology, an ancestor in a language with a pack installed is set in italic: the word straight after the language's name, *hate* → Old English *hatian*, Old Norse *hatr*. Not a reconstruction (*\*hataz*), which no pack holds, and not after a longer name: Middle English isn't English. A tap opens its entry from its own pack, in the panel, with *‹ hate* at the top to go back; its etymology may go on. An ancestor isn't hoarded from there: the sentence it would be kept with isn't its.
 
 **Corrections.** A small file per pack, `corrections.toml`, fixes or adds entries. Yours, versioned, merged when the pack is built.
 
@@ -190,7 +190,7 @@ Three backends:
 Small things that make it Wordhord's:
 
 - **The hoard grows.** The home screen's one number is how many words you've kept. No streaks, no nagging.
-- **Words met before.** A faint mark under words you've kept, wherever they turn up again, in any book. Tap one to see where you first met it.
+- **Words met before.** A faint dotted line under words you've kept, wherever they turn up again, in any book, in any of their forms as the part of speech kept (*hate* the noun: hate, hates, hate's): every form of each, from its pack, gathered once and again when the hoard changes, so a page only asks a set. Not where an underline is. Tapped, the entry starts *Met before, in* the book, with the words around where it was first kept; not where it was kept, which says *in the hoard*. Packs index their forms by entry for this.
 - **Etymology trail** (§7). Tap your way to Proto-Indo-European.
 - **Margin index.** One screen with every page you wrote on, as thumbnails of the ink. Find a note by its shape.
 - **Reading ledger.** Time read, pages turned, words kept. Local, private, exportable.

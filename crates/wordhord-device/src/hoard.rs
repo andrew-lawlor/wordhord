@@ -71,6 +71,9 @@ pub struct Hoard {
     kept: Vec<Kept>,
     /// Every review, oldest first.
     reviews: Vec<Review>,
+    /// How many words have been kept or let go: so what's built from the
+    /// hoard knows when to build again.
+    changes: usize,
 }
 
 impl Hoard {
@@ -78,11 +81,18 @@ impl Hoard {
         let path = app.join("hoard.jsonl");
         let mut kept: Vec<Kept> = Vec::new();
         let mut reviews = Vec::new();
+        let mut changes = 0;
         for line in std::fs::read_to_string(&path).unwrap_or_default().lines() {
             // A line cut short by a crash is skipped, not fatal.
             match serde_json::from_str::<Record>(line) {
-                Ok(Record::Keep(k)) => kept.push(*k),
-                Ok(Record::Drop { id, .. }) => kept.retain(|k| k.id != id),
+                Ok(Record::Keep(k)) => {
+                    kept.push(*k);
+                    changes += 1;
+                }
+                Ok(Record::Drop { id, .. }) => {
+                    kept.retain(|k| k.id != id);
+                    changes += 1;
+                }
                 Ok(Record::Review(r)) => reviews.push(r),
                 Err(_) => {}
             }
@@ -93,6 +103,7 @@ impl Hoard {
             path,
             kept,
             reviews,
+            changes,
         }
     }
 
@@ -112,6 +123,7 @@ impl Hoard {
         k.id = format!("{time:x}-{:x}", nanos());
         self.append(&Record::Keep(Box::new(k.clone())))?;
         self.kept.push(k);
+        self.changes += 1;
         Ok(())
     }
 
@@ -121,6 +133,7 @@ impl Hoard {
             time: now(),
         })?;
         self.kept.retain(|k| k.id != id);
+        self.changes += 1;
         Ok(())
     }
 
@@ -201,6 +214,18 @@ impl Hoard {
                     && wordhord_dict::key(&k.word) == key
             })
             .collect()
+    }
+
+    pub fn changes(&self) -> usize {
+        self.changes
+    }
+
+    /// Where a word, as one reading, was first kept.
+    pub fn first_met(&self, head: &str, pos: &str, lang: &str) -> Option<&Kept> {
+        self.kept
+            .iter()
+            .filter(|k| k.head == head && k.pos == pos && k.lang == lang)
+            .min_by_key(|k| k.time)
     }
 
     /// The words, each once, the latest kept first.

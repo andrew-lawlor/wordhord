@@ -298,6 +298,19 @@ impl Dictionary {
         rows.map(|r| r.flatten().collect()).unwrap_or_default()
     }
 
+    /// Every form of `word` as `pos`, as looked-up keys: each way a page
+    /// may print it. *bear* the verb: bear, bears, bore, borne, bearing.
+    pub fn forms(&self, word: &str, pos: &str) -> Vec<String> {
+        let Ok(mut q) = self.db.prepare_cached(
+            "SELECT DISTINCT form.key FROM form
+             WHERE form.entry IN (SELECT id FROM entry WHERE word = ?1 AND pos = ?2)",
+        ) else {
+            return Vec::new();
+        };
+        let rows = q.query_map(params![word, pos], |row| row.get(0));
+        rows.map(|r| r.flatten().collect()).unwrap_or_default()
+    }
+
     /// What the pack says about itself: language, source, licence.
     pub fn about(&self, key: &str) -> Option<String> {
         self.db
@@ -492,7 +505,8 @@ impl Builder {
                 "COMMIT;
                  CREATE INDEX form_key ON form (key);
                  CREATE INDEX form_fold ON form (fold);
-                 CREATE INDEX entry_word ON entry (word);",
+                 CREATE INDEX entry_word ON entry (word);
+                 CREATE INDEX form_entry ON form (entry);",
             )
             .map_err(|e| e.to_string())?;
         for (k, v) in [

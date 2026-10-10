@@ -64,6 +64,31 @@ impl Lexicon {
     }
 }
 
+impl Lexicon {
+    /// The packs installed, by language code.
+    pub fn languages(&self) -> Vec<&str> {
+        self.packs.iter().map(|(l, _)| l.as_str()).collect()
+    }
+
+    /// A word's readings in one pack only: an ancestor in an etymology.
+    pub fn look_up_in(&self, lang: &str, word: &str) -> Vec<Reading> {
+        self.packs
+            .iter()
+            .find(|(l, _)| l == lang)
+            .map(|(_, d)| d.look_up(word))
+            .unwrap_or_default()
+    }
+
+    /// Every form of a word as one part of speech, from its own pack.
+    pub fn forms(&self, lang: &str, word: &str, pos: &str) -> Vec<String> {
+        self.packs
+            .iter()
+            .find(|(l, _)| l == lang)
+            .map(|(_, d)| d.forms(word, pos))
+            .unwrap_or_default()
+    }
+}
+
 /// ISO 639-1 codes, as EPUBs mostly give them, as the 639-3 codes packs are
 /// named by. Codes already three letters long pass through.
 pub fn three_letter(lang: &str) -> String {
@@ -140,7 +165,10 @@ pub const SHOWN: usize = 4;
 
 /// A word's entry, as blocks. Each reading's headline has the id
 /// `reading-k`, so the panel can find it to set its hoard mark.
-pub fn entry_blocks(word: &str, readings: &[Reading]) -> Vec<Block> {
+///
+/// An etymology's ancestors with a pack in `links` are set in italic, for
+/// the panel to follow; its paragraph has the id `etymology`.
+pub fn entry_blocks(word: &str, readings: &[Reading], links: &[&str]) -> Vec<Block> {
     let mut blocks = Vec::new();
     let shown: Vec<&Reading> = readings.iter().take(SHOWN).collect();
     for (k, r) in shown.iter().enumerate() {
@@ -251,16 +279,71 @@ pub fn entry_blocks(word: &str, readings: &[Reading]) -> Vec<Block> {
             } else {
                 ety.to_string()
             };
-            blocks.push(para(vec![
-                small_caps("etymology"),
-                text(format!(". {ety}")),
-            ]));
+            let words: Vec<&str> = ety.split_whitespace().collect();
+            let linked = etymology_links(&words, links);
+            let mut inlines = vec![small_caps("etymology"), text(".")];
+            let mut plain = String::new();
+            for (k, w) in words.iter().enumerate() {
+                plain.push(' ');
+                match linked.iter().find(|l| l.0 == k) {
+                    // The word in italic, its punctuation not.
+                    Some((_, bare, _)) => {
+                        let at = w.find(bare.as_str()).unwrap_or(0);
+                        plain.push_str(&w[..at]);
+                        inlines.push(text(std::mem::take(&mut plain)));
+                        inlines.push(Inline::Emphasis(vec![text(bare)]));
+                        plain.push_str(&w[at + bare.len()..]);
+                    }
+                    None => plain.push_str(w),
+                }
+            }
+            inlines.push(text(plain));
+            blocks.push(Block {
+                id: Some("etymology".into()),
+                ..para(inlines)
+            });
         }
     }
     blocks.push(para(vec![Inline::Emphasis(vec![text(
         "From Wiktionary, CC BY-SA.",
     )])]));
     blocks
+}
+
+/// The words of an etymology, split as the panel's words are, that name
+/// an ancestor in a language with a pack in `packs`: a word straight after
+/// the language's name ("Old English *hatian*"), not a reconstruction
+/// (*\*hataz*), and not after a longer name ("Middle English" isn't
+/// "English"). Each by its place among the words, with the word and the
+/// pack.
+pub fn etymology_links(words: &[&str], packs: &[&str]) -> Vec<(usize, String, String)> {
+    let names: Vec<(Vec<&str>, &str)> = packs
+        .iter()
+        .map(|&p| (language_name(p).split(' ').collect(), p))
+        .filter(|(n, p): &(Vec<&str>, &str)| n.len() > 1 || n[0] != *p)
+        .collect();
+    let mut out = Vec::new();
+    for (i, w) in words.iter().enumerate() {
+        let bare = w.trim_matches(|c: char| !c.is_alphanumeric() && c != '-' && c != '*');
+        if bare.is_empty() || bare.starts_with('*') || bare.starts_with('-') {
+            continue;
+        }
+        let named = names.iter().find(|(name, _)| {
+            let n = name.len();
+            i >= n
+                && words[i - n..i] == name[..]
+                // The name whole, not the end of a longer one.
+                && (i == n
+                    || !words[i - n - 1]
+                        .chars()
+                        .next()
+                        .is_some_and(char::is_uppercase))
+        });
+        if let Some((_, pack)) = named {
+            out.push((i, bare.to_string(), pack.to_string()));
+        }
+    }
+    out
 }
 
 /// What to say when nothing was found.
@@ -279,6 +362,28 @@ pub fn not_found(word: &str, lang: &str, any: bool) -> Vec<Block> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ancestors_with_a_pack_are_found_by_their_language() {
+        let ety =
+            "From Middle English haate, hat, probably from Old English hatian (“to hate”, verb) \
+                   and/or Old Norse hatr (“hate”, noun), from Proto-Germanic *hataz";
+        let words: Vec<&str> = ety.split_whitespace().collect();
+        let found: Vec<(String, String)> = etymology_links(&words, &["ang", "eng", "non"])
+            .into_iter()
+            .map(|(_, w, p)| (w, p))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("hatian".into(), "ang".into()),
+                ("hatr".into(), "non".into())
+            ]
+        );
+        // English alone is a pack's language; Middle English isn't.
+        let words = ["borrowed", "from", "English", "loan,"];
+        assert_eq!(etymology_links(&words, &["eng"])[0].1, "loan");
+    }
 
     #[test]
     fn languages_by_their_three_letter_codes() {

@@ -6,7 +6,9 @@
 //! closes from the foot of the library's home.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
@@ -64,6 +66,7 @@ pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), Str
     let lexicon = Lexicon::open(&app.join("dictionaries"));
     let hoard = RefCell::new(Hoard::load(app));
     let marks = RefCell::new(Marks::load(app));
+    let met = RefCell::new(Met::default());
     // On the desktop, a stand-in for /sys in the app folder, if made.
     let light = RefCell::new(if cfg!(target_arch = "arm") {
         Light::find(
@@ -91,6 +94,7 @@ pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), Str
         hoard: &hoard,
         light: &light,
         marks: &marks,
+        met: &met,
     };
     loop {
         if let Some((path, at)) = open.take() {
@@ -460,6 +464,101 @@ fn block(kind: wordhord_book::model::BlockKind) -> wordhord_book::model::Block {
     }
 }
 
+/// On a page of the dictionary panel: the ancestors its etymology names
+/// that have packs, each with where to tap, the word and the pack; and
+/// the way back to the entry before, if there's one.
+#[allow(clippy::type_complexity)]
+fn trail_hits(
+    pages: &[Page],
+    at: usize,
+    packs: &[&str],
+) -> (Vec<(Rect, String, String)>, Option<Rect>) {
+    let box_of = |w: &wordhord_typeset::page::Word| Rect {
+        x0: w.x0,
+        y0: w.y0,
+        x1: w.x1,
+        y1: w.y1,
+    };
+    // The etymology's words through every page, as one, without the
+    // label; and which are on this page.
+    let mut words: Vec<(usize, &wordhord_typeset::page::Word)> = pages
+        .iter()
+        .enumerate()
+        .flat_map(|(k, p)| p.words.iter().map(move |w| (k, w)))
+        .filter(|(_, w)| w.block == "etymology" && !w.continues)
+        .collect();
+    if words
+        .first()
+        .is_some_and(|(_, w)| w.text.to_lowercase().starts_with("etymology"))
+    {
+        words.remove(0);
+    }
+    let texts: Vec<&str> = words.iter().map(|(_, w)| w.text.as_str()).collect();
+    let links = lexicon::etymology_links(&texts, packs)
+        .into_iter()
+        .filter(|(k, _, _)| words[*k].0 == at)
+        .map(|(k, word, pack)| {
+            let mut r = box_of(words[k].1);
+            // Generous to tap.
+            r.x0 -= 12.0;
+            r.x1 += 12.0;
+            r.y0 -= 8.0;
+            r.y1 += 8.0;
+            (r, word, pack)
+        })
+        .collect();
+    let back = pages
+        .get(at)
+        .map(|p| p.words.iter().filter(|w| w.block == "back"))
+        .and_then(|mut ws| {
+            let first = box_of(ws.next()?);
+            Some(ws.fold(first, |r, w| Rect {
+                x0: r.x0.min(w.x0),
+                y0: r.y0.min(w.y0),
+                x1: r.x1.max(w.x1) + 24.0,
+                y1: r.y1.max(w.y1) + 8.0,
+            }))
+        });
+    (links, back)
+}
+
+/// A few words either side of the word at `at`, in characters, in a
+/// sentence: enough to recall it by.
+fn around(sentence: &str, at: usize) -> String {
+    const EITHER: usize = 5;
+    let mut starts = Vec::new();
+    let mut words = Vec::new();
+    let mut from = None;
+    for (k, c) in sentence.chars().chain([' ']).enumerate() {
+        match (c.is_whitespace(), from) {
+            (false, None) => from = Some(k),
+            (true, Some(f)) => {
+                starts.push(f);
+                words.push(sentence.chars().skip(f).take(k - f).collect::<String>());
+                from = None;
+            }
+            _ => {}
+        }
+    }
+    let n = starts.iter().rposition(|&s| s <= at).unwrap_or(0);
+    let (mut a, mut b) = (n.saturating_sub(EITHER), (n + EITHER + 1).min(words.len()));
+    // Not from or to the slash between lines of verse.
+    while a < n && words[a] == "/" {
+        a += 1;
+    }
+    while b > n + 1 && words[b - 1] == "/" {
+        b -= 1;
+    }
+    let mut out = words[a..b].join(" ");
+    if a > 0 {
+        out.insert_str(0, "… ");
+    }
+    if b < words.len() {
+        out.push_str(" …");
+    }
+    out
+}
+
 /// A sentence a word was kept from, the word in italic where it was met,
 /// with the book's title under it. The sentence's words carry `id`, so the
 /// word can be found on the page and marked.
@@ -607,7 +706,7 @@ fn entry_of(
     } else if readings.iter().any(|r| r.entry.word == head) {
         readings.retain(|r| r.entry.word == head);
     }
-    Some(lexicon::entry_blocks(head, &readings))
+    Some(lexicon::entry_blocks(head, &readings, &[]))
 }
 
 /// The sign that the pen is in hand and fingers are ignored: a manicule,
@@ -803,6 +902,8 @@ const INK_MS: u128 = 40;
 #[derive(Default)]
 struct Decor {
     rules: Vec<Rect>,
+    /// Words met before: dotted lines.
+    met: Vec<Rect>,
     strokes: Vec<Stroke>,
     /// The ribbon, if the page has one: where it hangs.
     ribbon: Option<Rect>,
@@ -1658,6 +1759,103 @@ struct Tools<'a> {
     hoard: &'a RefCell<Hoard>,
     light: &'a RefCell<Option<Light>>,
     marks: &'a RefCell<Marks>,
+    met: &'a RefCell<Met>,
+}
+
+/// Every form of the words in the hoard, in one language: so they're
+/// marked wherever they're met again. Built when a book in that language
+/// opens, and again when the hoard changes.
+#[derive(Default)]
+struct Met {
+    built: Option<(usize, String)>,
+    keys: Rc<HashSet<String>>,
+}
+
+/// The forms of the hoard's words in the pack `lang`: each reading's
+/// forms, as that part of speech only, and each word as it was printed.
+fn met(tools: &Tools, lang: &str) -> Rc<HashSet<String>> {
+    let hoard = tools.hoard.borrow();
+    let mut met = tools.met.borrow_mut();
+    let now = (hoard.changes(), lang.to_string());
+    if met.built.as_ref() != Some(&now) {
+        let started = Instant::now();
+        let mut keys = HashSet::new();
+        for word in hoard.words().iter().filter(|w| w.lang == lang) {
+            keys.extend(tools.lexicon.forms(lang, word.head, word.pos));
+            keys.extend(word.kept.iter().map(|k| wordhord_dict::key(&k.word)));
+        }
+        eprintln!("met: {} forms in {:?}", keys.len(), started.elapsed());
+        met.keys = Rc::new(keys);
+        met.built = Some(now);
+    }
+    met.keys.clone()
+}
+
+/// Words met before, as a dotted line under each: under the letters, as
+/// an underline would be, and not where one is.
+fn met_marks(
+    page: &Page,
+    numbers: &[usize],
+    spans: &[(usize, usize)],
+    keys: &HashSet<String>,
+    fonts: &Fonts,
+) -> Vec<Rect> {
+    if keys.is_empty() {
+        return Vec::new();
+    }
+    let (ascent, descent) = fonts.ascent_descent(1.0);
+    let words = &page.words;
+    let mut out = Vec::new();
+    for (k, w) in words.iter().enumerate() {
+        if w.continues {
+            continue;
+        }
+        // A word hyphenated across lines is one word.
+        let mut parts = vec![k];
+        let mut text = w.text.clone();
+        if let Some(next) = words.get(k + 1).filter(|n| n.continues) {
+            text.push_str(&next.text);
+            parts.push(k + 1);
+        }
+        if !keys.contains(&wordhord_dict::key(&text)) {
+            continue;
+        }
+        for p in parts {
+            let w = &words[p];
+            if spans.iter().any(|&(s, e)| (s..=e).contains(&numbers[p])) {
+                continue;
+            }
+            let (x0, x1) = w.letters.unwrap_or((w.x0, w.x1));
+            let baseline = w.y0 + (w.y1 - w.y0) * ascent / (ascent + descent);
+            let y = (baseline + (w.y1 - baseline) * 0.45).round();
+            let thick = ((w.y1 - w.y0) * 0.03).round().max(2.0);
+            out.push(Rect {
+                x0: x0.round(),
+                y0: y,
+                x1: x1.round(),
+                y1: y + thick,
+            });
+        }
+    }
+    out
+}
+
+/// Dotted lines, in a light grey: a word met before.
+fn dot(pixels: &mut [u8], width: u32, height: u32, lines: &[Rect]) {
+    for r in lines {
+        let dot = (r.y1 - r.y0).max(1.0) as u32;
+        let (x0, x1) = (r.x0.max(0.0) as u32, (r.x1 as u32).min(width));
+        for y in r.y0.max(0.0) as u32..(r.y1 as u32).min(height) {
+            let row = (y * width) as usize;
+            let mut x = x0;
+            while x < x1 {
+                for p in &mut pixels[row + x as usize..row + (x + dot).min(x1) as usize] {
+                    *p = (*p).min(119);
+                }
+                x += dot * 3;
+            }
+        }
+    }
 }
 
 /// Where reading goes from a chapter.
@@ -1829,6 +2027,13 @@ fn read(
                     tools.profile.mm(3.0),
                 ))
                 .collect(),
+            met: met_marks(
+                &t.pages[page],
+                &numbered.on_page[page],
+                &spans(),
+                &met(tools, &lexicon::three_letter(&book.language())),
+                fonts,
+            ),
             strokes: strokes(
                 &t.pages[page],
                 &numbered,
@@ -2745,7 +2950,7 @@ fn read(
                                 .take(lexicon::SHOWN)
                                 .map(|r| (r.entry.word.clone(), r.entry.pos.clone()))
                                 .collect();
-                            lexicon::entry_blocks(&shown_as, &readings)
+                            lexicon::entry_blocks(&shown_as, &readings, &tools.lexicon.languages())
                         }
                         None => lexicon::not_found(&shown_as, &lang, !tools.lexicon.is_empty()),
                     };
@@ -2762,8 +2967,43 @@ fn read(
                         .chain(&words[..parts[0]])
                         .filter(|w| w.block == block && !w.continues)
                         .count();
-                    let (mut area, pages) =
+                    // A word met before: first, where it was kept, unless
+                    // that was here.
+                    let mut blocks = blocks;
+                    let first = {
+                        let hoard = tools.hoard.borrow();
+                        found
+                            .iter()
+                            .filter_map(|(head, pos)| hoard.first_met(head, pos, &pack))
+                            .min_by_key(|k| k.time)
+                            .filter(|k| {
+                                let near = k.path == path
+                                    && k.chapter == chapter
+                                    && k.block == block
+                                    && wordhord_dict::key(&k.word) == word;
+                                !near
+                                    || hoard::sentence(&book.blocks(chapter), &block, nth, &printed)
+                                        != Some((k.sentence.clone(), k.at))
+                            })
+                            .map(|k| (k.book.clone(), around(&k.sentence, k.at)))
+                    };
+                    if let Some((book_title, said)) = first {
+                        use wordhord_book::model::{BlockKind, Inline};
+                        blocks.insert(
+                            0,
+                            self::block(BlockKind::Paragraph(vec![
+                                Inline::Text("Met before, in ".into()),
+                                Inline::Emphasis(vec![Inline::Text(book_title)]),
+                                Inline::Text(format!(": “{said}”")),
+                            ])),
+                        );
+                    }
+                    let (mut area, mut pages) =
                         wordhord_typeset::panel_pages(&blocks, &lang, tools.profile, fonts);
+                    // The entries followed through etymologies: each by its
+                    // word, with its blocks; the word tapped first.
+                    let mut trail: Vec<(String, Vec<wordhord_book::model::Block>)> =
+                        vec![(word.clone(), blocks.clone())];
                     // Under the panel, the word would be hidden: the panel
                     // comes down from the top instead.
                     let above = boxes.iter().any(|b| b.y1 > area.y);
@@ -2827,7 +3067,9 @@ fn read(
                         };
                         let (ascent, descent) = fonts.ascent_descent(1.0);
                         let mut marks: Vec<(Rect, usize)> = Vec::new();
-                        for (n, (head, pos)) in found.iter().enumerate() {
+                        // An ancestor isn't hoarded with this sentence.
+                        let first_entry = trail.len() == 1;
+                        for (n, (head, pos)) in found.iter().enumerate().filter(|_| first_entry) {
                             let id = format!("reading-{n}");
                             let line: Vec<_> =
                                 pages[at].words.iter().filter(|w| w.block == id).collect();
@@ -2864,6 +3106,8 @@ fn read(
                             pixels[n - rule..].fill(0);
                         }
                         screen.draw(&pixels, w, h, area.x as u32, area.y as u32, false);
+                        // Ancestors to follow, and the way back from one.
+                        let (links, back) = trail_hits(&pages, at, &tools.lexicon.languages());
                         // In the panel, the right half pages on and the left
                         // back; anything else closes it.
                         let inside = |y: i32| (area.y..area.y + area.height).contains(&(y as f32));
@@ -2871,6 +3115,53 @@ fn read(
                             match screen.next() {
                                 Gesture::Tap(x, y) if inside(y) => {
                                     let (px, py) = (x as f32, y as f32 - area.y);
+                                    let follow = links
+                                        .iter()
+                                        .find(|(r, _, _)| r.contains(px, py))
+                                        .map(|(_, w, l)| (w.clone(), l.clone()));
+                                    let went_back = back.is_some_and(|r| r.contains(px, py));
+                                    if follow.is_some() || went_back {
+                                        if let Some((ancestor, in_lang)) = follow {
+                                            let readings =
+                                                tools.lexicon.look_up_in(&in_lang, &ancestor);
+                                            let from =
+                                                trail.last().map_or(String::new(), |t| t.0.clone());
+                                            let mut shown = vec![self::block(
+                                                wordhord_book::model::BlockKind::Paragraph(vec![
+                                                    wordhord_book::model::Inline::Text(format!(
+                                                        "‹ {from}"
+                                                    )),
+                                                ]),
+                                            )];
+                                            shown[0].id = Some("back".into());
+                                            shown.extend(if readings.is_empty() {
+                                                lexicon::not_found(&ancestor, &in_lang, true)
+                                            } else {
+                                                lexicon::entry_blocks(
+                                                    &wordhord_dict::key(&ancestor),
+                                                    &readings,
+                                                    &tools.lexicon.languages(),
+                                                )
+                                            });
+                                            eprintln!(
+                                                "etymology: {ancestor:?} in {in_lang}, {} readings",
+                                                readings.len()
+                                            );
+                                            trail.push((wordhord_dict::key(&ancestor), shown));
+                                        } else {
+                                            trail.pop();
+                                        }
+                                        if let Some((_, b)) = trail.last() {
+                                            pages = wordhord_typeset::panel_pages(
+                                                b,
+                                                &lang,
+                                                tools.profile,
+                                                fonts,
+                                            )
+                                            .1;
+                                        }
+                                        break 0;
+                                    }
                                     if let Some(&(_, n)) =
                                         marks.iter().find(|(r, _)| r.contains(px, py))
                                     {
@@ -3773,6 +4064,7 @@ fn draw(
     let started = Instant::now();
     let mut pixels = renderer.page(page, width, height);
     rule(&mut pixels, width, height, &decor.rules);
+    dot(&mut pixels, width, height, &decor.met);
     for stroke in &decor.strokes {
         ink_into(&mut pixels, width, height, stroke);
     }
@@ -4132,4 +4424,21 @@ fn type_settings(
         return None;
     }
     Some(Ok(()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_word_is_recalled_by_the_words_around_it() {
+        let s = "Arms, and the man I sing, who, forc'd by fate, / And haughty Juno's unrelenting hate, / Expell'd and exil'd";
+        let at = s.find("hate,").unwrap();
+        let at = s[..at].chars().count();
+        assert_eq!(
+            around(s, at),
+            "… And haughty Juno's unrelenting hate, / Expell'd and exil'd"
+        );
+        assert_eq!(around("Hate.", 0), "Hate.");
+    }
 }
