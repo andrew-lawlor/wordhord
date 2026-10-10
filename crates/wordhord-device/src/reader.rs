@@ -384,12 +384,14 @@ mod tests {
     }
 
     #[test]
-    fn a_tap_at_the_top_brings_up_the_bar() {
+    fn a_tap_at_the_top_brings_up_the_bar_and_in_its_corner_a_ribbon() {
         let t = book();
         let mut r = Reader::new(&t, 0);
         assert_eq!(r.act(Gesture::Tap(700, 60)), Effect::Menu);
-        // Even near an edge: the top wins over turning the page.
-        assert_eq!(r.act(Gesture::Tap(1380, 60)), Effect::Menu);
+        // Even near the left edge: the top wins over turning the page.
+        assert_eq!(r.act(Gesture::Tap(20, 60)), Effect::Menu);
+        // The top right corner is the ribbon's.
+        assert_eq!(r.act(Gesture::Tap(1380, 60)), Effect::Bookmark);
         assert_eq!(r.page, 0);
     }
 
