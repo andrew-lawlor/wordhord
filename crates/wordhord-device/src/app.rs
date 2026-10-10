@@ -1507,6 +1507,9 @@ fn read(
         let mut editing: Option<(String, usize)> = None;
         // The stroke the pen is drawing: its points, with the pen's radius.
         let mut stroke: Vec<(f32, f32, f32)> = Vec::new();
+        // While a stroke is drawn: when it began, its points, its draws
+        // and the time they took.
+        let mut pen_stats: Option<(Instant, usize, usize, std::time::Duration)> = None;
         // Whether the pen is near, and its sign up in the corner.
         let mut pen_mark = false;
         // The loupe: where it is, the point it was placed from, and the
@@ -1526,12 +1529,14 @@ fn read(
             let page_now = &t.pages[reader.page];
             if let Gesture::PenNear | Gesture::PenAway = gesture {
                 pen_mark = matches!(gesture, Gesture::PenNear);
+                eprintln!("{gesture:?}");
                 show_pen(screen, ui, &mut chrome, &shown, pen_mark);
                 continue;
             }
             if let Gesture::Ink(..) | Gesture::InkUp(..) = gesture {
                 let tool = screen.tool();
                 let up = matches!(gesture, Gesture::InkUp(..));
+                pen_stats.get_or_insert((Instant::now(), 0, 0, std::time::Duration::ZERO));
                 let points: Vec<(f32, f32, f32)> = screen
                     .take_ink()
                     .iter()
@@ -1545,6 +1550,18 @@ fn read(
                         (x as f32, y as f32, r)
                     })
                     .collect();
+                if let Some(st) = pen_stats.as_mut() {
+                    st.1 += points.len();
+                }
+                if up {
+                    // How a stroke went, to find where the pen lags.
+                    if let Some((began, n, draws, drawing)) = pen_stats.take() {
+                        eprintln!(
+                            "pen: {tool:?}, {n} points in {draws} draws taking {drawing:?}, {:?} from touch to lift",
+                            began.elapsed()
+                        );
+                    }
+                }
                 if tool == Tool::Eraser {
                     // What the eraser passes over goes: strokes it comes near,
                     // and underlines whose words it touches.
@@ -1610,7 +1627,12 @@ fn read(
                 if let Some(r) = ink_into(&mut shown, width, height, &piece) {
                     let block = cut(&shown, width, &r);
                     let (w, h) = ((r.x1 - r.x0) as u32, (r.y1 - r.y0) as u32);
+                    let drawn = Instant::now();
                     screen.draw_ink(&block, w, h, r.x0 as u32, r.y0 as u32);
+                    if let Some(st) = pen_stats.as_mut() {
+                        st.2 += 1;
+                        st.3 += drawn.elapsed();
+                    }
                 }
                 // The pen lifted: the stroke's ground drawn again as it
                 // should be, the greys of the letters it crossed back.
