@@ -723,6 +723,10 @@ fn save_underline(
     }
 }
 
+/// The screen is refreshed with new ink at most this often, in
+/// milliseconds: about as fast as an e-ink panel shows it.
+const INK_MS: u128 = 40;
+
 /// What's drawn over a page of a book: underlines, as rules; and strokes
 /// of the pen, each a run of points with the pen's radius there.
 #[derive(Default)]
@@ -1510,6 +1514,10 @@ fn read(
         // While a stroke is drawn: when it began, its points, its draws
         // and the time they took.
         let mut pen_stats: Option<(Instant, usize, usize, std::time::Duration)> = None;
+        // Ink drawn into the page but not yet refreshed on the screen, and
+        // when the screen last was.
+        let mut ink_dirty: Option<Rect> = None;
+        let mut ink_shown: Option<Instant> = None;
         // Whether the pen is near, and its sign up in the corner.
         let mut pen_mark = false;
         // The loupe: where it is, the point it was placed from, and the
@@ -1624,7 +1632,23 @@ fn read(
                 // From the last point drawn, so the line has no gaps.
                 let mut piece: Vec<_> = stroke.last().copied().into_iter().collect();
                 piece.extend(&points);
+                // The ink goes into the page at once, but the screen is
+                // refreshed at most every INK_MS, over all that's new: a
+                // refresh per point (one every 4 ms) piles up faster than the
+                // panel can show them, and the ink comes only at the end.
                 if let Some(r) = ink_into(&mut shown, width, height, &piece) {
+                    ink_dirty = Some(match ink_dirty {
+                        Some(d) => Rect {
+                            x0: d.x0.min(r.x0),
+                            y0: d.y0.min(r.y0),
+                            x1: d.x1.max(r.x1),
+                            y1: d.y1.max(r.y1),
+                        },
+                        None => r,
+                    });
+                }
+                let due = ink_shown.is_none_or(|t| t.elapsed().as_millis() >= INK_MS);
+                if let Some(r) = ink_dirty.filter(|_| due || up) {
                     let block = cut(&shown, width, &r);
                     let (w, h) = ((r.x1 - r.x0) as u32, (r.y1 - r.y0) as u32);
                     let drawn = Instant::now();
@@ -1633,6 +1657,11 @@ fn read(
                         st.2 += 1;
                         st.3 += drawn.elapsed();
                     }
+                    ink_dirty = None;
+                    ink_shown = Some(Instant::now());
+                }
+                if up {
+                    ink_shown = None;
                 }
                 // The pen lifted: the stroke's ground drawn again as it
                 // should be, the greys of the letters it crossed back.
