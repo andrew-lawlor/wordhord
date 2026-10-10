@@ -79,6 +79,10 @@ pub enum Action {
     SearchNotes,
     /// On the keyboard: clear what's been typed.
     Clear,
+    /// In the contents: a heading, which does nothing; and a ribbon, by its
+    /// place among the book's.
+    Heading,
+    Ribbon(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -234,18 +238,18 @@ impl<'f> Ui<'f> {
         self.mm(9.0)
     }
 
-    /// A sign set large in Junicode, ending at `right` on `baseline`: what
-    /// it is, and where.
-    pub fn sign(&self, text: &str, pt: f32, right: f32, baseline: f32) -> (Page, Rect) {
+    /// A sign set large in Junicode, from `left` on `baseline`: what it
+    /// is, and where.
+    pub fn sign(&self, text: &str, pt: f32, left: f32, baseline: f32) -> (Page, Rect) {
         let mut page = Page::default();
         let t = Type::new(Face::Regular, self.pt(pt));
         let w = self.width(text, t);
-        self.text(&mut page, text, t, right - w, baseline, w + 1.0);
+        self.text(&mut page, text, t, left, baseline, w + 1.0);
         let pad = self.mm(1.5);
         let hit = Rect {
-            x0: right - w - pad,
+            x0: left - pad,
             y0: baseline - t.size - pad,
-            x1: right + pad,
+            x1: left + w + pad,
             y1: baseline + t.size * 0.3 + pad,
         };
         (page, hit)
@@ -741,6 +745,39 @@ impl<'f> Ui<'f> {
                 y0: top,
                 x1: left + w,
                 y1: top + h,
+            },
+        )
+    }
+
+    /// The way back after a jump, in the foot of the page at the left, in
+    /// italic: "back to Book II, page 23", then "stay", to put it away.
+    /// The page, and where each of the two is.
+    pub fn back_line(&self, label: &str) -> (Page, Rect, Rect) {
+        let mut page = Page::default();
+        let t = Type::new(Face::Italic, self.pt(9.5));
+        let m = self.margin();
+        let baseline = self.h - self.mm(4.0);
+        let back = format!("back to {label}");
+        let bw = self.text(&mut page, &back, t, m, baseline, self.w / 2.0);
+        let dot = Type::new(Face::Regular, self.pt(9.5));
+        let dx = m + bw + self.mm(2.5);
+        let dw = self.text(&mut page, "·", dot, dx, baseline, self.mm(3.0));
+        let sx = dx + dw + self.mm(2.5);
+        let sw = self.text(&mut page, "stay", t, sx, baseline, self.mm(20.0));
+        let (top, bottom) = (baseline - t.size - self.mm(3.0), self.h);
+        (
+            page,
+            Rect {
+                x0: 0.0,
+                y0: top,
+                x1: dx + dw / 2.0,
+                y1: bottom,
+            },
+            Rect {
+                x0: dx + dw / 2.0,
+                y0: top,
+                x1: sx + sw + self.mm(6.0),
+                y1: bottom,
             },
         )
     }
@@ -1349,11 +1386,18 @@ impl<'f> Ui<'f> {
         (page, hit)
     }
 
-    /// The bar over the top of a page while reading, in two lines: the way
-    /// back to the library, the type and the contents along the top, in
-    /// small caps; the book's title under them, in italic, across the whole
-    /// width, so even a narrow screen has room for it.
-    pub fn reading_bar(&self, title: &str) -> (Screen, u32) {
+    /// The bar over the top of a page while reading: the way back to the
+    /// library, the type and the contents along the top, in small caps;
+    /// under them the book's title in italic, with the time at its left and
+    /// the battery at its right; and under that, where the page is in the
+    /// book (`place`), in small caps.
+    pub fn reading_bar(
+        &self,
+        title: &str,
+        place: &str,
+        time: &str,
+        battery: Option<(u8, bool)>,
+    ) -> (Screen, u32) {
         let mut s = Screen {
             page: Page::default(),
             hits: Vec::new(),
@@ -1363,7 +1407,7 @@ impl<'f> Ui<'f> {
         let m = self.margin();
         let size = self.pt(11.0);
         let controls = self.mm(13.0);
-        let height = (controls + self.mm(11.0)).round();
+        let height = (controls + self.mm(17.0)).round();
         let baseline = (controls + size * 0.6) / 2.0;
         let label = Type::new(Face::Regular, size).caps(0.12);
         let lw = self.text(&mut s.page, "‹ library", label, m, baseline, self.w / 3.0);
@@ -1406,18 +1450,56 @@ impl<'f> Ui<'f> {
             },
             Action::Contents,
         ));
-        // A hairline between, then the title, centred.
+        // A hairline between, then the title, centred, with the time and
+        // the battery at its ends.
         self.hairline(&mut s.page, controls.round(), 204);
         let t = Type::new(Face::Italic, self.pt(11.5));
-        let room = self.w - 2.0 * m;
+        let figures = Type::new(Face::Regular, self.pt(10.0));
+        let baseline = controls + self.mm(7.5);
+        let tw_time = self.text(&mut s.page, time, figures, m, baseline, self.w / 4.0);
+        let mut right_w = 0.0;
+        if let Some((level, charging)) = battery {
+            // The level, and a hairline filled as far as it: as the light's
+            // gauge, and the library's bars, are drawn.
+            let gauge = self.mm(7.0);
+            let x1 = self.w - m;
+            let gx = x1 - gauge;
+            let gy = baseline - figures.size * 0.3;
+            self.rule(&mut s.page, gx, gy.round(), gauge, 1.0, 170);
+            let t2 = self.mm(0.5).max(2.0);
+            let fill = gauge * level.min(100) as f32 / 100.0;
+            self.rule(&mut s.page, gx, (gy - t2 / 2.0).round(), fill, t2, 0);
+            let figure = if charging {
+                format!("+{level}")
+            } else {
+                level.to_string()
+            };
+            let fw = self.width(&figure, figures);
+            self.text(
+                &mut s.page,
+                &figure,
+                figures,
+                gx - self.mm(1.5) - fw,
+                baseline,
+                fw + 1.0,
+            );
+            right_w = gauge + self.mm(1.5) + fw;
+        }
+        // The title has the width the time and battery leave it, centred if
+        // it can be.
+        let side = tw_time.max(right_w) + self.mm(4.0);
+        let room = self.w - 2.0 * (m + side);
         let tw = self.width(title, t).min(room);
+        self.text(&mut s.page, title, t, (self.w - tw) / 2.0, baseline, room);
+        let caps = Type::new(Face::Regular, self.pt(8.5)).caps(0.12);
+        let pw = self.width(place, caps).min(self.w - 2.0 * m);
         self.text(
             &mut s.page,
-            title,
-            t,
-            (self.w - tw) / 2.0,
-            controls + (height - controls + t.size * 0.6) / 2.0,
-            room,
+            place,
+            caps,
+            (self.w - pw) / 2.0,
+            baseline + self.mm(6.0),
+            self.w - 2.0 * m,
         );
         self.rule(&mut s.page, 0.0, height - 2.0, self.w, 2.0, 0);
         (s, height as u32)

@@ -39,6 +39,12 @@ pub trait Platform {
         crate::touch::Tool::Pen
     }
 
+    /// The battery: how full, in per cent, and whether it's charging. None
+    /// where there's no battery to ask (the desktop).
+    fn battery(&self) -> Option<(u8, bool)> {
+        None
+    }
+
     /// Waits for the next gesture.
     fn next(&mut self) -> Gesture;
 }

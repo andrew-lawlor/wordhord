@@ -3,6 +3,8 @@
 //!
 //! - A swipe turns the page. So does a tap near the left or right edge,
 //!   unless it lands on something tappable there, like a stanza number.
+//! - A tap in the top right corner puts a ribbon in the page, or takes it
+//!   out; anywhere else along the top brings up the bar.
 //! - A tap on a note marker, a commentary mark or a stanza number opens it
 //!   in the panel over the foot of the page.
 //! - With the panel open, a tap in it turns its pages (right half on, left
@@ -55,6 +57,13 @@ pub enum Effect {
     Menu,
     /// Look up a word: its place among the page's words.
     Look(usize),
+    /// A ribbon put in this page, or taken out: the top right corner.
+    Bookmark,
+    /// A link followed to another page of the chapter: from which, to come
+    /// back to.
+    Jump {
+        from: usize,
+    },
     /// Brighter or warmer (on the right half), by thousandths of the
     /// screen's height slid up; dimmer or cooler slid down.
     Light {
@@ -154,10 +163,14 @@ impl<'t> Reader<'t> {
         if let Some(l) = link_at(&t.pages[self.page].links, x, y) {
             return self.follow(&l.to);
         }
+        let width = t.width as f32;
         if y < t.height as f32 * TOP {
+            // The corner is the ribbon's; the rest of the top, the bar's.
+            if x > width * (1.0 - EDGE) {
+                return Effect::Bookmark;
+            }
             return Effect::Menu;
         }
-        let width = t.width as f32;
         if x < width * EDGE {
             self.turn(-1)
         } else if x > width * (1.0 - EDGE) {
@@ -177,9 +190,10 @@ impl<'t> Reader<'t> {
                 _ => Effect::Nothing,
             },
             Target::Page { page } if *page < self.t.pages.len() => {
+                let from = self.page;
                 self.page = *page;
                 self.open = None;
-                Effect::Page { flash: false }
+                Effect::Jump { from }
             }
             _ => Effect::Nothing,
         }

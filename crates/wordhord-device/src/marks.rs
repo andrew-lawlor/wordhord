@@ -57,11 +57,28 @@ pub struct Ink {
     pub points: Vec<[f32; 3]>,
 }
 
+/// A ribbon put in a page: anchored to the page's first word, so it marks
+/// the same place whatever the type; with the page's first words and the
+/// part of the book, to list it by.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Bookmark {
+    pub id: String,
+    pub time: u64,
+    pub book: String,
+    pub path: String,
+    pub chapter: usize,
+    pub anchor: Anchor,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 enum Record {
     Underline(Box<Underline>),
     Ink(Box<Ink>),
+    Bookmark(Box<Bookmark>),
     Remove { id: String, time: u64 },
 }
 
@@ -71,6 +88,8 @@ pub struct Marks {
     underlines: Vec<Underline>,
     /// Strokes of the pen not removed, oldest first.
     inks: Vec<Ink>,
+    /// Ribbons not taken out, oldest first.
+    bookmarks: Vec<Bookmark>,
 }
 
 impl Marks {
@@ -78,14 +97,17 @@ impl Marks {
         let path = app.join("notes.jsonl");
         let mut underlines: Vec<Underline> = Vec::new();
         let mut inks: Vec<Ink> = Vec::new();
+        let mut bookmarks: Vec<Bookmark> = Vec::new();
         for line in std::fs::read_to_string(&path).unwrap_or_default().lines() {
             // A line cut short by a crash is skipped, not fatal.
             match serde_json::from_str::<Record>(line) {
                 Ok(Record::Underline(u)) => underlines.push(*u),
                 Ok(Record::Ink(i)) => inks.push(*i),
+                Ok(Record::Bookmark(b)) => bookmarks.push(*b),
                 Ok(Record::Remove { id, .. }) => {
                     underlines.retain(|u| u.id != id);
                     inks.retain(|i| i.id != id);
+                    bookmarks.retain(|b| b.id != id);
                 }
                 Err(_) => {}
             }
@@ -94,6 +116,7 @@ impl Marks {
             path,
             underlines,
             inks,
+            bookmarks,
         }
     }
 
@@ -121,7 +144,14 @@ impl Marks {
         Ok(())
     }
 
-    /// An underline or a stroke taken away.
+    pub fn bookmark(&mut self, mut b: Bookmark) -> Result<(), String> {
+        (b.time, b.id) = stamp();
+        self.append(&Record::Bookmark(Box::new(b.clone())))?;
+        self.bookmarks.push(b);
+        Ok(())
+    }
+
+    /// An underline, a stroke or a ribbon taken away.
     pub fn remove(&mut self, id: &str) -> Result<(), String> {
         self.append(&Record::Remove {
             id: id.to_string(),
@@ -129,7 +159,15 @@ impl Marks {
         })?;
         self.underlines.retain(|u| u.id != id);
         self.inks.retain(|i| i.id != id);
+        self.bookmarks.retain(|b| b.id != id);
         Ok(())
+    }
+
+    /// A book's ribbons, in the order of its chapters, then as put in.
+    pub fn bookmarks_in(&self, path: &str) -> Vec<&Bookmark> {
+        let mut out: Vec<&Bookmark> = self.bookmarks.iter().filter(|b| b.path == path).collect();
+        out.sort_by_key(|b| (b.chapter, b.time));
+        out
     }
 
     /// The strokes in a chapter of a book.

@@ -22,7 +22,7 @@ use crate::hoard::{self, Hoard, Kept};
 use crate::lexicon::{self, Lexicon};
 use crate::library::{self, Entry, Library};
 use crate::light::Light;
-use crate::marks::{Anchor, Ink, Marks, Underline, Words};
+use crate::marks::{Anchor, Bookmark, Ink, Marks, Underline, Words};
 use crate::platform::Platform;
 use crate::reader::{Effect, Reader};
 use crate::settings::{self, Settings};
@@ -579,11 +579,11 @@ fn entry_of(
 
 /// The sign that the pen is in hand and fingers are ignored: a manicule,
 /// the hand readers drew in their margins, pointing in at the page from
-/// the top right. The pixels for where it goes, with it (`on`) or as the
+/// the top left. The pixels for where it goes, with it (`on`) or as the
 /// page is without it, and where.
 fn pen_sign(ui: &Ui, chrome: &mut Renderer, shown: &[u8], width: u32, on: bool) -> (Vec<u8>, Rect) {
-    let right = width as f32 - ui.margin_px() * 0.6;
-    let (mark, hit) = ui.sign("☚", 22.0, right, ui.margin_px() * 1.15);
+    // The top left: the top right is the ribbon's.
+    let (mark, hit) = ui.sign("☛", 22.0, ui.margin_px() * 0.6, ui.margin_px() * 1.15);
     let r = Rect {
         x0: hit.x0.max(0.0).round(),
         y0: hit.y0.max(0.0).round(),
@@ -723,6 +723,16 @@ fn save_underline(
     }
 }
 
+/// The time of day, as the Kobo keeps it: "10:42".
+fn clock() -> String {
+    let now = unsafe { libc::time(std::ptr::null_mut()) };
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_r(&now, &mut tm) }.is_null() {
+        return String::new();
+    }
+    format!("{}:{:02}", tm.tm_hour, tm.tm_min)
+}
+
 /// The screen is refreshed with new ink at most this often, in
 /// milliseconds: about as fast as an e-ink panel shows it.
 const INK_MS: u128 = 40;
@@ -733,6 +743,66 @@ const INK_MS: u128 = 40;
 struct Decor {
     rules: Vec<Rect>,
     strokes: Vec<Stroke>,
+    /// The ribbon, if the page has one: where it hangs.
+    ribbon: Option<Rect>,
+    /// Something drawn over the page as it is: the way back after a jump.
+    overlay: Option<(Vec<u8>, Rect)>,
+}
+
+/// Where a jump left from, to go back to: its chapter, its first word (or
+/// its page, where the words aren't known), how to say it, and how many
+/// pages have been turned since.
+struct Back {
+    chapter: usize,
+    anchor: Option<Anchor>,
+    page: usize,
+    label: String,
+    turns: usize,
+}
+
+/// The way back drawn: its pixels and where they go, then where "back to"
+/// and "stay" are.
+type BackSign = (Vec<u8>, Rect, Rect, Rect);
+
+fn back_sign(ui: &Ui, chrome: &mut Renderer, width: u32, height: u32, label: &str) -> BackSign {
+    let (page, back, stay) = ui.back_line(label);
+    let r = Rect {
+        x0: 0.0,
+        y0: back.y0.max(0.0).round(),
+        x1: stay.x1.min(width as f32).round(),
+        y1: height as f32,
+    };
+    let full = chrome.page(&page, width, height);
+    (cut(&full, width, &r), r, back, stay)
+}
+
+/// The part of the book a chapter is in, as its contents name it.
+fn section_of(book: &Book, chapter: usize) -> String {
+    book.contents()
+        .into_iter()
+        .rfind(|c| c.2 <= chapter)
+        .map(|c| c.0)
+        .unwrap_or_else(|| format!("Chapter {}", chapter + 1))
+}
+
+/// A ribbon hanging from the top edge into the right margin, with a forked
+/// tail, as the silk ribbon sewn into a hardback.
+fn ribbon_into(pixels: &mut [u8], width: u32, height: u32, r: &Rect) {
+    let (x0, x1) = (r.x0.max(0.0) as u32, (r.x1 as u32).min(width));
+    let (y0, y1) = (r.y0.max(0.0) as u32, (r.y1 as u32).min(height));
+    let half = (x1 - x0) as f32 / 2.0;
+    let cx = x0 as f32 + half;
+    let notch = half * 1.2;
+    for y in y0..y1 {
+        // The fork: a V cut up into the tail.
+        let into = y as f32 - (y1 as f32 - notch);
+        let cut = if into > 0.0 { into / notch * half } else { 0.0 };
+        for x in x0..x1 {
+            if (x as f32 + 0.5 - cx).abs() >= cut {
+                pixels[(y * width + x) as usize] = 0;
+            }
+        }
+    }
 }
 
 /// A stroke of the pen on the screen: points, each with the pen's radius.
@@ -1334,6 +1404,8 @@ enum Step {
     Previous,
     /// To a chapter, at a word of it if given.
     Jump(usize, Arrival),
+    /// Back after a jump: to a chapter, at a word of it, or else a page.
+    Return(usize, Option<Anchor>, usize),
     /// The type has changed: lay the book out again, at the page holding
     /// this word of the chapter.
     Retype(usize),
@@ -1370,9 +1442,30 @@ fn read(
     // With it, how many of its words to mark grey on arrival: the words
     // searched for.
     let mut find_anchor: Arrival = None;
+    // The way back after a jump, and how it's drawn.
+    let mut back: Option<Back> = None;
+    let back_drawn: RefCell<Option<BackSign>> = RefCell::new(None);
     if let Some((c, anchor)) = at.filter(|a| a.0 < book.chapters()) {
+        // Opened at a passage: the way back is to where the book was left.
+        back = Some(Back {
+            chapter,
+            anchor: None,
+            page,
+            label: format!("{}, page {}", section_of(&book, chapter), page + 1),
+            turns: 0,
+        });
         chapter = c;
         find_anchor = Some((anchor, Vec::new()));
+    }
+    let mut chrome_for_back = Renderer::new(fonts);
+    if let Some(b) = &back {
+        back_drawn.replace(Some(back_sign(
+            ui,
+            &mut chrome_for_back,
+            width,
+            height,
+            &b.label,
+        )));
     }
     let mut arrive_mark: Option<(usize, usize)> = None;
     let mut flash = true;
@@ -1469,6 +1562,28 @@ fn read(
             .into_iter()
             .map(|(_, points)| points)
             .collect(),
+            ribbon: {
+                let numbers = &numbered.on_page[page];
+                let marked = tools.marks.borrow().bookmarks_in(path).iter().any(|b| {
+                    b.chapter == chapter
+                        && numbered
+                            .anchors
+                            .iter()
+                            .position(|a| *a == b.anchor)
+                            .is_some_and(|n| numbers.contains(&n))
+                });
+                marked.then(|| {
+                    let w = tools.profile.mm(3.5).round();
+                    let cx = width as f32 - tools.profile.mm(tools.profile.margins.right) / 2.0;
+                    Rect {
+                        x0: (cx - w / 2.0).round(),
+                        y0: 0.0,
+                        x1: (cx + w / 2.0).round(),
+                        y1: tools.profile.mm(20.0).round(),
+                    }
+                })
+            },
+            overlay: back_drawn.borrow().as_ref().map(|b| (b.0.clone(), b.1)),
         };
         let mut shown = draw(
             screen,
@@ -1972,6 +2087,48 @@ fn read(
                 redraw_rows(screen, &shown, &[]);
             }
             marked_rows = None;
+            // The way back: "back to" goes there; "stay" puts it away.
+            let hits = back_drawn.borrow().as_ref().map(|b| (b.2, b.3));
+            if let (Gesture::Tap(x, y), Some((go, stay))) = (gesture, hits) {
+                let (x, y) = (x as f32, y as f32);
+                if go.contains(x, y) {
+                    back_drawn.replace(None);
+                    if let Some(b) = back.take() {
+                        if b.chapter != chapter {
+                            break Step::Return(b.chapter, b.anchor, b.page);
+                        }
+                        let n = b
+                            .anchor
+                            .and_then(|a| numbered.anchors.iter().position(|x| *x == a));
+                        reader.page = n
+                            .and_then(|n| numbered.on_page.iter().position(|p| p.contains(&n)))
+                            .unwrap_or(b.page)
+                            .min(t.pages.len() - 1);
+                        reader.open = None;
+                    }
+                    shown = draw(
+                        screen,
+                        &mut renderer,
+                        &t.pages[reader.page],
+                        false,
+                        &rules(reader.page),
+                    );
+                    book.remember(chapter, reader.page);
+                    continue;
+                }
+                if stay.contains(x, y) {
+                    back = None;
+                    back_drawn.replace(None);
+                    shown = draw(
+                        screen,
+                        &mut renderer,
+                        &t.pages[reader.page],
+                        false,
+                        &rules(reader.page),
+                    );
+                    continue;
+                }
+            }
             let effect = forced.unwrap_or_else(|| reader.act(gesture));
             eprintln!("{gesture:?}: {effect:?}");
             if let Some(r) = gauge.take() {
@@ -2005,7 +2162,97 @@ fn read(
                     break if step > 0 { Step::Next } else { Step::Previous };
                 }
                 Effect::Chapter(_) => {}
+                Effect::Jump { from } => {
+                    // A link followed: the way back is to the page it was on.
+                    let anchor = numbered.on_page[from]
+                        .first()
+                        .map(|&n| numbered.anchors[n].clone());
+                    let label = format!("{}, page {}", section_of(&book, chapter), from + 1);
+                    back_drawn.replace(Some(back_sign(ui, &mut chrome, width, height, &label)));
+                    back = Some(Back {
+                        chapter,
+                        anchor,
+                        page: from,
+                        label,
+                        turns: 0,
+                    });
+                    shown = draw(
+                        screen,
+                        &mut renderer,
+                        &t.pages[reader.page],
+                        false,
+                        &rules(reader.page),
+                    );
+                    book.remember(chapter, reader.page);
+                }
+                Effect::Bookmark => {
+                    let numbers = &numbered.on_page[reader.page];
+                    let Some(&first) = numbers.first() else {
+                        continue;
+                    };
+                    let here = tools
+                        .marks
+                        .borrow()
+                        .bookmarks_in(path)
+                        .into_iter()
+                        .filter(|b| b.chapter == chapter)
+                        .find(|b| {
+                            numbered
+                                .anchors
+                                .iter()
+                                .position(|a| *a == b.anchor)
+                                .is_some_and(|n| numbers.contains(&n))
+                        })
+                        .map(|b| b.id.clone());
+                    let done = match here {
+                        Some(id) => tools.marks.borrow_mut().remove(&id),
+                        None => {
+                            // The page's first words, to list it by.
+                            let mut text = String::new();
+                            // Words, not the stand-ins for pictures.
+                            let words = t.pages[reader.page]
+                                .words
+                                .iter()
+                                .filter(|w| !w.text.starts_with('['))
+                                .take(9);
+                            for w in words {
+                                if !text.is_empty() && !w.continues {
+                                    text.push(' ');
+                                }
+                                text.push_str(&w.text);
+                            }
+                            tools.marks.borrow_mut().bookmark(Bookmark {
+                                id: String::new(),
+                                time: 0,
+                                book: book.title(),
+                                path: path.to_string(),
+                                chapter,
+                                anchor: numbered.anchors[first].clone(),
+                                text,
+                                section: Some(section_of(&book, chapter)),
+                            })
+                        }
+                    };
+                    if let Err(e) = done {
+                        eprintln!("ribbon: {e}");
+                    }
+                    shown = draw(
+                        screen,
+                        &mut renderer,
+                        &t.pages[reader.page],
+                        false,
+                        &rules(reader.page),
+                    );
+                }
                 Effect::Page { flash } => {
+                    // The way back fades after ten pages read on.
+                    if let Some(b) = back.as_mut() {
+                        b.turns += 1;
+                        if b.turns >= 10 {
+                            back = None;
+                            back_drawn.replace(None);
+                        }
+                    }
                     shown = draw(
                         screen,
                         &mut renderer,
@@ -2270,7 +2517,19 @@ fn read(
                     screen.draw(rows, width, bottom - top, 0, top, false);
                 }
                 Effect::Menu => {
-                    let (bar, bar_h) = ui.reading_bar(&book.title());
+                    // Where the page is: its part of the book, the pages
+                    // left in its chapter, and how far through the book.
+                    let section = section_of(&book, chapter);
+                    let left = t.pages.len().saturating_sub(reader.page + 1);
+                    let left = match left {
+                        0 => "the chapter's last page".to_string(),
+                        1 => "1 page left".to_string(),
+                        n => format!("{n} pages left"),
+                    };
+                    let through = (progress(reader.page) * 100.0).round() as u32;
+                    let place = format!("{section} · {left} · {through} per cent");
+                    let (bar, bar_h) =
+                        ui.reading_bar(&book.title(), &place, &clock(), screen.battery());
                     let pixels = chrome.page(&bar.page, width, bar_h);
                     screen.draw(&pixels, width, bar_h, 0, 0, false);
                     let action = match screen.next() {
@@ -2302,8 +2561,54 @@ fn read(
                             }
                         }
                         Some(Action::Contents) => {
-                            match contents(screen, &book, ui, &mut chrome, chapter, &search_text) {
-                                Some(Ok((k, at))) => break Step::Jump(k, at),
+                            let ribbons: Vec<(String, usize, Anchor)> = tools
+                                .marks
+                                .borrow()
+                                .bookmarks_in(path)
+                                .iter()
+                                .map(|b| {
+                                    let section = b.section.clone().unwrap_or_default();
+                                    (
+                                        format!("{section}: “{}…”", b.text),
+                                        b.chapter,
+                                        b.anchor.clone(),
+                                    )
+                                })
+                                .collect();
+                            match contents(
+                                screen,
+                                &book,
+                                ui,
+                                &mut chrome,
+                                chapter,
+                                &search_text,
+                                &ribbons,
+                            ) {
+                                Some(Ok((k, at))) => {
+                                    // The way back is to this page.
+                                    let label = format!(
+                                        "{}, page {}",
+                                        section_of(&book, chapter),
+                                        reader.page + 1
+                                    );
+                                    back_drawn.replace(Some(back_sign(
+                                        ui,
+                                        &mut chrome,
+                                        width,
+                                        height,
+                                        &label,
+                                    )));
+                                    back = Some(Back {
+                                        chapter,
+                                        anchor: numbered.on_page[reader.page]
+                                            .first()
+                                            .map(|&n| numbered.anchors[n].clone()),
+                                        page: reader.page,
+                                        label,
+                                        turns: 0,
+                                    });
+                                    break Step::Jump(k, at);
+                                }
                                 Some(Err(leave)) => break Step::Leave(leave),
                                 None => {
                                     shown = draw(
@@ -2338,8 +2643,14 @@ fn read(
             Step::Next => {
                 chapter += 1;
                 page = 0;
+                if let Some(b) = back.as_mut() {
+                    b.turns += 1;
+                }
             }
             Step::Previous => {
+                if let Some(b) = back.as_mut() {
+                    b.turns += 1;
+                }
                 chapter -= 1;
                 // The previous chapter opens at its last page.
                 page = usize::MAX;
@@ -2356,6 +2667,12 @@ fn read(
                 find_anchor = at;
                 flash = true;
             }
+            Step::Return(k, anchor, p) => {
+                chapter = k;
+                page = p;
+                find_anchor = anchor.map(|a| (a, Vec::new()));
+                flash = true;
+            }
         }
     }
 }
@@ -2369,6 +2686,7 @@ fn contents(
     chrome: &mut Renderer,
     current: usize,
     text: &crate::search::Text,
+    ribbons: &[(String, usize, Anchor)],
 ) -> Option<Result<(usize, Arrival), Leave>> {
     let (width, height) = screen.size();
     let entries = book.contents();
@@ -2388,7 +2706,27 @@ fn contents(
         action: Action::Search,
         depth: 0,
     };
+    // Then the ribbons, if any, under their heading.
+    let row = |title: String, action: Action, depth: usize| Row {
+        title,
+        detail: Vec::new(),
+        cover: None,
+        progress: None,
+        count: None,
+        mark: false,
+        action,
+        depth,
+    };
+    let mut marked: Vec<Row> = Vec::new();
+    if !ribbons.is_empty() {
+        marked.push(row("Bookmarks".into(), Action::Heading, 0));
+        for (k, (label, _, _)) in ribbons.iter().enumerate() {
+            marked.push(row(label.clone(), Action::Ribbon(k), 1));
+        }
+    }
+    let before = 1 + marked.len();
     let rows: Vec<Row> = std::iter::once(search_row)
+        .chain(marked)
         .chain(
             entries
                 .iter()
@@ -2411,7 +2749,7 @@ fn contents(
         .len()
         .saturating_sub(1)
         .max(1);
-    let mut page = (at + 1) / per_page;
+    let mut page = (at + before) / per_page;
     // What was last searched for, to start from again.
     let mut query = String::new();
     loop {
@@ -2431,6 +2769,10 @@ fn contents(
                 }
                 Gesture::Tap(x, y) => match s.hit(x as f32, y as f32) {
                     Some(Action::Chapter(k)) => return Some(Ok((*k, None))),
+                    Some(Action::Ribbon(k)) => {
+                        let (_, chapter, anchor) = &ribbons[*k];
+                        return Some(Ok((*chapter, Some((anchor.clone(), Vec::new())))));
+                    }
                     Some(Action::Back) => return None,
                     Some(Action::Search) => {
                         match search_book(screen, book, ui, chrome, &mut query, text) {
@@ -2759,6 +3101,22 @@ fn draw(
     rule(&mut pixels, width, height, &decor.rules);
     for stroke in &decor.strokes {
         ink_into(&mut pixels, width, height, stroke);
+    }
+    if let Some(r) = &decor.ribbon {
+        ribbon_into(&mut pixels, width, height, r);
+    }
+    if let Some((block, r)) = &decor.overlay {
+        let bw = (r.x1 - r.x0) as usize;
+        for (row, line) in block.chunks(bw.max(1)).enumerate() {
+            let y = r.y0 as usize + row;
+            if y >= height as usize {
+                break;
+            }
+            for (col, &v) in line.iter().enumerate() {
+                let p = &mut pixels[y * width as usize + r.x0 as usize + col];
+                *p = (*p).min(v);
+            }
+        }
     }
     let rendered = started.elapsed();
     screen.draw(&pixels, width, height, 0, 0, flash);

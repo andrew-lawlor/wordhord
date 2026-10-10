@@ -430,6 +430,18 @@ impl Platform for Kobo {
         }
     }
 
+    fn battery(&self) -> Option<(u8, bool)> {
+        // The first supply that says it's a battery.
+        let dir = std::fs::read_dir("/sys/class/power_supply").ok()?;
+        dir.flatten().find_map(|e| {
+            let get = |leaf: &str| std::fs::read_to_string(e.path().join(leaf)).ok();
+            (get("type")?.trim() == "Battery").then_some(())?;
+            let level = get("capacity")?.trim().parse::<u8>().ok()?;
+            let charging = get("status").is_some_and(|s| s.trim() == "Charging");
+            Some((level, charging))
+        })
+    }
+
     fn draw_ink(&mut self, grey: &[u8], w: u32, h: u32, x: u32, y: u32) {
         // DU, as the Pencil plugin found best on the Libra Colour: A2 is
         // quicker on paper, but untried here.
