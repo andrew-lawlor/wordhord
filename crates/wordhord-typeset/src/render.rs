@@ -165,22 +165,27 @@ pub fn picture(bytes: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
     if w == 0 || h == 0 {
         return None;
     }
-    let decoded = image::load_from_memory(bytes).ok()?.to_luma_alpha8();
-    // Shrinking, the usual case, by averaging boxes of pixels: fast, and
-    // smooth enough for 16 greys. Enlarging, bilinear.
-    let scaled = if w <= decoded.width() && h <= decoded.height() {
-        image::imageops::thumbnail(&decoded, w, h)
-    } else {
-        image::imageops::resize(&decoded, w, h, image::imageops::FilterType::Triangle)
+    let mut grey = match svg(bytes) {
+        Some(tree) => svg_grey(&tree, w, h)?,
+        None => {
+            let decoded = image::load_from_memory(bytes).ok()?.to_luma_alpha8();
+            // Shrinking, the usual case, by averaging boxes of pixels: fast,
+            // and smooth enough for 16 greys. Enlarging, bilinear.
+            let scaled = if w <= decoded.width() && h <= decoded.height() {
+                image::imageops::thumbnail(&decoded, w, h)
+            } else {
+                image::imageops::resize(&decoded, w, h, image::imageops::FilterType::Triangle)
+            };
+            scaled
+                .pixels()
+                .map(|p| {
+                    let [l, a] = p.0;
+                    let a = a as f32 / 255.0;
+                    l as f32 * a + 255.0 * (1.0 - a)
+                })
+                .collect()
+        }
     };
-    let mut grey: Vec<f32> = scaled
-        .pixels()
-        .map(|p| {
-            let [l, a] = p.0;
-            let a = a as f32 / 255.0;
-            l as f32 * a + 255.0 * (1.0 - a)
-        })
-        .collect();
     let (w, h) = (w as usize, h as usize);
     let mut out = vec![0u8; w * h];
     for y in 0..h {
@@ -246,8 +251,42 @@ pub fn picture_path(dir: &Path, src: &str, w: u32, h: u32) -> PathBuf {
     dir.join(format!("{name}-{w}x{h}.grey"))
 }
 
-/// An image's size in pixels, from its header, without decoding it.
+/// An SVG, parsed, if `bytes` are one.
+fn svg(bytes: &[u8]) -> Option<resvg::usvg::Tree> {
+    let head = &bytes[..bytes.len().min(1024)];
+    if !head.windows(4).any(|w| w == b"<svg") {
+        return None;
+    }
+    resvg::usvg::Tree::from_data(bytes, &resvg::usvg::Options::default()).ok()
+}
+
+/// An SVG drawn at `w`×`h`, as greys on white.
+fn svg_grey(tree: &resvg::usvg::Tree, w: u32, h: u32) -> Option<Vec<f32>> {
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h)?;
+    let size = tree.size();
+    let scale =
+        resvg::tiny_skia::Transform::from_scale(w as f32 / size.width(), h as f32 / size.height());
+    resvg::render(tree, scale, &mut pixmap.as_mut());
+    // Premultiplied: the colour's share is already scaled by its alpha.
+    Some(
+        pixmap
+            .data()
+            .chunks_exact(4)
+            .map(|p| {
+                let (r, g, b, a) = (p[0] as f32, p[1] as f32, p[2] as f32, p[3] as f32);
+                0.299 * r + 0.587 * g + 0.114 * b + (255.0 - a)
+            })
+            .collect(),
+    )
+}
+
+/// An image's size in pixels, from its header, without decoding it; an
+/// SVG's from its own width and height, or its view box.
 pub fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    if let Some(tree) = svg(bytes) {
+        let size = tree.size();
+        return Some((size.width().ceil() as u32, size.height().ceil() as u32));
+    }
     image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
         .ok()?

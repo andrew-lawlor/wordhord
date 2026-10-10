@@ -56,7 +56,7 @@ A normal e-reader for stylus Kobos. Smaller and faster than KOReader. Built arou
 
 Wordhord lays out text on the device. The typesetter from draft 1 moves onto the Kobo: Knuth–Plass line breaking, hyphenation, real kerning and ligatures through rustybuzz, glyphs drawn with swash. It already runs there for drawing.
 
-**EPUB to blocks.** Each chapter's XHTML becomes Wordhord's block model: headings, paragraphs, quotes, lists, verse, tables, figures, notes. CSS is read only for what carries meaning: italics, bold, small caps, alignment, indents, page breaks, hidden text. The rest is dropped. Draft 1's importer does most of this already, one book at a time, by recipe. Here it must work without a recipe, on any reasonable EPUB.
+**EPUB to blocks.** Each chapter's XHTML becomes Wordhord's block model: headings, paragraphs, quotes, lists, verse, tables, figures, notes. CSS is read only for what carries meaning: italics, bold, small caps, alignment, indents, page breaks, hidden text. Text hidden for the eye but kept for screen readers, moved far off the page (`left: -999em`) or clipped to nothing, is hidden here too: a title page's title, under its drawing of it. The rest is dropped. Draft 1's importer does most of this already, one book at a time, by recipe. Here it must work without a recipe, on any reasonable EPUB.
 
 **Our own engine.** Decided 2026-10-07: no Plato, no crengine. Wordhord stays GPL-3.0, and its pages are set the way its typesetter sets them.
 
@@ -68,7 +68,7 @@ Wordhord lays out text on the device. The typesetter from draft 1 moves onto the
 
 **Footnotes** open in the panel. EPUB 3's `epub:type="noteref"` is used where present. Otherwise, links into a notes section are recognised by shape.
 
-**Images** are dithered to 16 greys on the Elipsa and drawn in colour on the Libra Colour.
+**Images** are dithered to 16 greys on the Elipsa and drawn in colour on the Libra Colour. SVG too, as title pages and publishers' marks often are (Standard Ebooks' all are): drawn by resvg, paths only, with no text or fonts of its own.
 
 ## 6. Pen
 
@@ -90,7 +90,7 @@ The Kobo Stylus 2 has a tip, a button and an eraser end. Wordhord reads the pen'
 
 **The book's language picks the pack.** It comes from the EPUB's `dc:language`, or from an element's `lang`, so a Latin phrase in an English book opens the Latin pack.
 
-**Etymology trail.** In an entry's etymology, an ancestor in a language with a pack installed is set in italic: the word straight after the language's name, *hate* → Old English *hatian*, Old Norse *hatr*. Not a reconstruction (*\*hataz*), which no pack holds, and not after a longer name: Middle English isn't English. A tap opens its entry from its own pack, in the panel, with *‹ hate* at the top to go back; its etymology may go on. An ancestor isn't hoarded from there: the sentence it would be kept with isn't its.
+**Etymology trail.** In an entry's etymology, an ancestor in a language with a pack installed is set in italic: the word straight after the language's name, *hate* → Old English *hatian*, Old Norse *hatr*. Not a reconstruction (*\*hataz*), which no pack holds, and not after a longer name: Middle English isn't English. A hairline under it says it can be followed. A tap opens its entry from its own pack, in the panel, with *‹ hate* at the top to go back; its etymology may go on. An ancestor isn't hoarded from there: the sentence it would be kept with isn't its.
 
 **Corrections.** A small file per pack, `corrections.toml`, fixes or adds entries. Yours, versioned, merged when the pack is built.
 

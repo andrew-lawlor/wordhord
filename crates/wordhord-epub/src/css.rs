@@ -711,6 +711,25 @@ fn attr_name(name: &str) -> String {
     name.trim_end_matches('\\').to_ascii_lowercase()
 }
 
+/// A length far off the page to the left or top: -999em, -9999px.
+fn far_off(v: &str) -> bool {
+    let Some(v) = v.strip_prefix('-') else {
+        return false;
+    };
+    let end = v
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(v.len());
+    let Ok(n) = v[..end].parse::<f32>() else {
+        return false;
+    };
+    match &v[end..] {
+        "em" | "rem" => n >= 50.0,
+        "px" => n >= 1000.0,
+        "%" | "vw" | "vh" => n >= 100.0,
+        _ => false,
+    }
+}
+
 fn parse_decls(body: &str) -> Vec<(Decl, bool)> {
     let mut out = Vec::new();
     for part in body.split(';') {
@@ -744,6 +763,13 @@ fn decls_for(prop: &str, v: &str) -> Vec<Decl> {
             _ => None,
         }),
         "visibility" if v == "hidden" => vec![Decl::Display(Display::None)],
+        // Hidden for the eye but read aloud: moved far off the page, or
+        // clipped to nothing. A reader shows it no more than a browser.
+        "left" | "top" | "text-indent" if far_off(v) => vec![Decl::Display(Display::None)],
+        "clip" if v.replace([' ', ','], "") == "rect(0000)" => vec![Decl::Display(Display::None)],
+        "clip" if v.replace(' ', "") == "rect(1px,1px,1px,1px)" => {
+            vec![Decl::Display(Display::None)]
+        }
         "font-style" => one(match v {
             "italic" | "oblique" => Some(Decl::Italic(true)),
             "normal" => Some(Decl::Italic(false)),
@@ -956,6 +982,16 @@ mod tests {
             style = sheet.style(n, &style);
         }
         style
+    }
+
+    #[test]
+    fn text_moved_off_the_page_is_hidden() {
+        let html = "<section xmlns:epub=\"http://www.idpf.org/2007/ops\" epub:type=\"titlepage\"><h1 id=\"t\">Beowulf</h1><p id=\"i\">Image</p></section>";
+        let css = "section[epub|type~=\"titlepage\"] h1 { left: -999em; position: absolute }\n\
+                   p { text-indent: -1.5em }";
+        assert_eq!(style_of(css, html, "t").display, Display::None);
+        // A hanging indent isn't hiding anything.
+        assert_ne!(style_of(css, html, "i").display, Display::None);
     }
 
     #[test]

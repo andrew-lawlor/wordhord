@@ -473,11 +473,15 @@ fn trail_hits(
     at: usize,
     packs: &[&str],
 ) -> (Vec<(Rect, String, String)>, Option<Rect>) {
-    let box_of = |w: &wordhord_typeset::page::Word| Rect {
-        x0: w.x0,
-        y0: w.y0,
-        x1: w.x1,
-        y1: w.y1,
+    // Its letters, not the punctuation around them.
+    let box_of = |w: &wordhord_typeset::page::Word| {
+        let (x0, x1) = w.letters.unwrap_or((w.x0, w.x1));
+        Rect {
+            x0,
+            y0: w.y0,
+            x1,
+            y1: w.y1,
+        }
     };
     // The etymology's words through every page, as one, without the
     // label; and which are on this page.
@@ -497,15 +501,7 @@ fn trail_hits(
     let links = lexicon::etymology_links(&texts, packs)
         .into_iter()
         .filter(|(k, _, _)| words[*k].0 == at)
-        .map(|(k, word, pack)| {
-            let mut r = box_of(words[k].1);
-            // Generous to tap.
-            r.x0 -= 12.0;
-            r.x1 += 12.0;
-            r.y0 -= 8.0;
-            r.y1 += 8.0;
-            (r, word, pack)
-        })
+        .map(|(k, word, pack)| (box_of(words[k].1), word, pack))
         .collect();
     let back = pages
         .get(at)
@@ -3100,6 +3096,21 @@ fn read(
                                 }
                             }
                         }
+                        // Ancestors to follow, each underlined with a
+                        // hairline, as a link; and the way back from one.
+                        let (links, back) = trail_hits(&pages, at, &tools.lexicon.languages());
+                        for (r, _, _) in &links {
+                            let baseline = r.y0 + (r.y1 - r.y0) * ascent / (ascent + descent);
+                            let y = (baseline + (r.y1 - baseline) * 0.4).round() as u32;
+                            let thick = ((r.y1 - r.y0) * 0.025).round().max(1.0) as u32;
+                            let (x0, x1) = (r.x0.max(0.0) as u32, (r.x1 as u32).min(w_px));
+                            for row in y..(y + thick).min(h) {
+                                let at = (row * w_px) as usize;
+                                for p in &mut pixels[at + x0 as usize..at + x1 as usize] {
+                                    *p = (*p).min(68);
+                                }
+                            }
+                        }
                         // Which page of how many, at the foot, if more than
                         // one: so the rest, the etymology often, is found.
                         if pages.len() > 1 {
@@ -3124,7 +3135,6 @@ fn read(
                         }
                         screen.draw(&pixels, w, h, area.x as u32, area.y as u32, false);
                         // Ancestors to follow, and the way back from one.
-                        let (links, back) = trail_hits(&pages, at, &tools.lexicon.languages());
                         // In the panel, the right half pages on and the left
                         // back; anything else closes it.
                         let inside = |y: i32| (area.y..area.y + area.height).contains(&(y as f32));
@@ -3132,9 +3142,16 @@ fn read(
                             match screen.next() {
                                 Gesture::Tap(x, y) if inside(y) => {
                                     let (px, py) = (x as f32, y as f32 - area.y);
+                                    // Generous to tap.
+                                    let near = |r: &Rect| {
+                                        px >= r.x0 - 12.0
+                                            && px <= r.x1 + 12.0
+                                            && py >= r.y0 - 8.0
+                                            && py <= r.y1 + 8.0
+                                    };
                                     let follow = links
                                         .iter()
-                                        .find(|(r, _, _)| r.contains(px, py))
+                                        .find(|(r, _, _)| near(r))
                                         .map(|(_, w, l)| (w.clone(), l.clone()));
                                     let went_back = back.is_some_and(|r| r.contains(px, py));
                                     if follow.is_some() || went_back {
