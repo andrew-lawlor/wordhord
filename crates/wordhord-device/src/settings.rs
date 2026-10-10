@@ -185,23 +185,22 @@ impl Settings {
         let fonts = Fonts::load(&p.dir, &p.fonts)?;
         let chars = Settings::pick(&MEASURES, &self.measure, 3);
         if chars > 0.0 {
-            let alphabet: f32 = fonts
-                .shape(
-                    "abcdefghijklmnopqrstuvwxyz",
-                    wordhord_typeset::fonts::Face::Regular,
-                    p.pt(p.body_size),
-                    &[],
-                )
-                .iter()
-                .map(|s| s.width)
-                .sum();
-            let measure = alphabet / 26.0 * chars;
+            let measure = letter(&p, &fonts) * chars;
             let side_px = (p.width as f32 - measure) / 2.0;
             let side = side_px * 25.4 / p.ppi;
             p.margins.left = p.margins.left.max(side);
             p.margins.right = p.margins.right.max(side);
         }
         Ok((p, fonts))
+    }
+
+    /// Whether a measure of `chars` would narrow the line on `base`'s page,
+    /// set as `profile` and `fonts` are: on a small screen, or in large
+    /// type, the page's own margins already make a line shorter than the
+    /// wider measures.
+    pub fn narrows(base: &Profile, profile: &Profile, fonts: &Fonts, chars: f32) -> bool {
+        let full = base.width as f32 - base.mm(base.margins.left) - base.mm(base.margins.right);
+        chars > 0.0 && letter(profile, fonts) * chars < full
     }
 
     /// What tells one layout from another, for the page cache.
@@ -224,6 +223,21 @@ pub fn languages(fonts: &Fonts) -> Vec<&'static str> {
         .filter(|(_, letters)| letters.chars().all(|c| fonts.covers(c)))
         .map(|(name, _)| *name)
         .collect()
+}
+
+/// A lower-case letter's mean width at the body size, in pixels.
+fn letter(p: &Profile, fonts: &Fonts) -> f32 {
+    let alphabet: f32 = fonts
+        .shape(
+            "abcdefghijklmnopqrstuvwxyz",
+            wordhord_typeset::fonts::Face::Regular,
+            p.pt(p.body_size),
+            &[],
+        )
+        .iter()
+        .map(|s| s.width)
+        .sum();
+    alphabet / 26.0
 }
 
 #[cfg(test)]

@@ -3547,6 +3547,7 @@ pub fn say(screen: &mut dyn Platform, fonts: &Path, lines: &[&str]) {
                 x,
                 y,
                 glyphs: s.glyphs.iter().map(|g| (g.id, g.x, g.y)).collect(),
+                grey: 0,
             });
             x += s.width;
         }
@@ -3738,7 +3739,17 @@ fn type_settings(
                     .join(" ")
             )
         });
-        let ts = ui.type_screen(&rows, &picked, &languages, note.as_deref());
+        // Measures no narrower than the page already is, in grey: kept, for
+        // a smaller size, but changing nothing at this one.
+        let faint: Vec<(Choice, usize)> = settings::MEASURES
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, chars))| {
+                *chars > 0.0 && !Settings::narrows(&base, &profile, &fonts, *chars)
+            })
+            .map(|(k, _)| (Choice::Measure, k))
+            .collect();
+        let ts = ui.type_screen(&rows, &picked, &faint, &languages, note.as_deref());
         let mut pixels = chrome.page(&ts.screen.page, width, height);
         // The specimen, from the top of a page set as chosen.
         let set = wordhord_typeset::lay_out(
@@ -3783,6 +3794,7 @@ fn type_settings(
                     x: cx,
                     y: size * 1.4,
                     glyphs: s.glyphs.iter().map(|g| (g.id, g.x, g.y)).collect(),
+                    grey: 0,
                 });
                 cx += s.width;
             }

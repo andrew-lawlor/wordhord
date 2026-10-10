@@ -186,6 +186,7 @@ struct Type {
     size: f32,
     caps: bool,
     track: f32,
+    grey: u8,
 }
 
 impl Type {
@@ -195,7 +196,12 @@ impl Type {
             size,
             caps: false,
             track: 0.0,
+            grey: 0,
         }
+    }
+
+    fn grey(self, grey: u8) -> Type {
+        Type { grey, ..self }
     }
 
     /// Small caps, spaced by `track` ems. Capitals stay full height; set
@@ -287,6 +293,7 @@ impl<'f> Ui<'f> {
                 x,
                 y: 0.0,
                 glyphs,
+                grey: t.grey,
             });
             x += s.width + extra;
         }
@@ -356,6 +363,7 @@ impl<'f> Ui<'f> {
             x: 0.0,
             y,
             glyphs,
+            grey: 0,
         });
     }
 
@@ -1429,11 +1437,13 @@ impl<'f> Ui<'f> {
     /// The type screen: a specimen passage, set as chosen; then the
     /// faces, each marked with the old languages it can set; then size,
     /// measure, leading and setting, each a row of names to tap, the one
-    /// chosen in italic. `chosen` is each row's choice, in `Choice` order.
+    /// chosen in italic. `chosen` is each row's choice, in `Choice` order;
+    /// `faint`, the options that would change nothing now, set in grey.
     pub fn type_screen(
         &self,
         rows: &[(Choice, &str, Vec<&str>)],
         chosen: &[usize],
+        faint: &[(Choice, usize)],
         faces: &[Vec<&str>],
         note: Option<&str>,
     ) -> TypeScreen {
@@ -1454,7 +1464,7 @@ impl<'f> Ui<'f> {
                 pages: 1,
             };
             let mut names = Vec::new();
-            let end = self.type_choices(&mut scratch, &mut names, 0.0, rows, chosen, faces, tight);
+            let end = self.type_choices(&mut scratch, &mut names, 0.0, rows, chosen, faint, faces, tight);
             self.h - self.mm(4.0) - top - end
         };
         let tight = fits(false) < self.mm(30.0);
@@ -1473,7 +1483,7 @@ impl<'f> Ui<'f> {
             self.centred(&mut s.page, note, t, y + self.mm(2.0) + t.size);
         }
         let mut names = Vec::new();
-        self.type_choices(&mut s, &mut names, y, rows, chosen, faces, tight);
+        self.type_choices(&mut s, &mut names, y, rows, chosen, faint, faces, tight);
         TypeScreen {
             screen: s,
             specimen,
@@ -1493,6 +1503,7 @@ impl<'f> Ui<'f> {
         mut y: f32,
         rows: &[(Choice, &str, Vec<&str>)],
         chosen: &[usize],
+        faint: &[(Choice, usize)],
         faces: &[Vec<&str>],
         tight: bool,
     ) -> f32 {
@@ -1548,6 +1559,11 @@ impl<'f> Ui<'f> {
                     Type::new(Face::Italic, word.size)
                 } else {
                     word
+                };
+                let t = if faint.contains(&(*choice, o)) {
+                    t.grey(153)
+                } else {
+                    t
                 };
                 let w = self.width(option, t);
                 if o > 0 {

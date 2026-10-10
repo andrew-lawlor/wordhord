@@ -116,6 +116,13 @@ pub struct Run {
     pub y: f32,
     /// Glyph ID, and its offset from the run's origin.
     pub glyphs: Vec<(u16, f32, f32)>,
+    /// Its grey, from 0 (black) to 255 (white).
+    #[serde(default, skip_serializing_if = "is_black")]
+    pub grey: u8,
+}
+
+fn is_black(grey: &u8) -> bool {
+    *grey == 0
 }
 
 /// A word on the page: its text, its box, and the block it's in.

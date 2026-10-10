@@ -1979,6 +1979,7 @@ fn run(f: &Frag, x: f32, baseline: f32) -> Run {
         x: x + f.x,
         y: baseline + f.dy,
         glyphs: f.glyphs.iter().map(|g| (g.id, g.x, g.y)).collect(),
+        grey: 0,
     }
 }
 
