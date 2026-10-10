@@ -749,35 +749,49 @@ impl<'f> Ui<'f> {
         )
     }
 
-    /// The way back after a jump, in the foot of the page at the left, in
-    /// italic: "back to Book II, page 23", then "stay", to put it away.
-    /// The page, and where each of the two is.
-    pub fn back_line(&self, label: &str) -> (Page, Rect, Rect) {
+    /// The way back after a jump, in the foot of the page where its folio
+    /// is, centred, in italic: "back to Book II, page 23 · stay". The page,
+    /// where it all goes (the whole foot, to cover the folio), then where
+    /// "back to" and "stay" are.
+    pub fn back_line(&self, label: &str) -> (Page, Rect, Rect, Rect) {
         let mut page = Page::default();
         let t = Type::new(Face::Italic, self.pt(9.5));
-        let m = self.margin();
-        let baseline = self.h - self.mm(4.0);
-        let back = format!("back to {label}");
-        let bw = self.text(&mut page, &back, t, m, baseline, self.w / 2.0);
         let dot = Type::new(Face::Regular, self.pt(9.5));
-        let dx = m + bw + self.mm(2.5);
-        let dw = self.text(&mut page, "·", dot, dx, baseline, self.mm(3.0));
-        let sx = dx + dw + self.mm(2.5);
-        let sw = self.text(&mut page, "stay", t, sx, baseline, self.mm(20.0));
-        let (top, bottom) = (baseline - t.size - self.mm(3.0), self.h);
+        let baseline = self.h - self.mm(4.5);
+        let back = format!("back to {label}");
+        let (bw, dw, sw) = (
+            self.width(&back, t),
+            self.width("·", dot),
+            self.width("stay", t),
+        );
+        let gap = self.mm(2.5);
+        let total = bw + gap + dw + gap + sw;
+        let x = (self.w - total) / 2.0;
+        self.text(&mut page, &back, t, x, baseline, bw + 1.0);
+        let dx = x + bw + gap;
+        self.text(&mut page, "·", dot, dx, baseline, dw + 1.0);
+        let sx = dx + dw + gap;
+        self.text(&mut page, "stay", t, sx, baseline, sw + 1.0);
+        let top = baseline - t.size - self.mm(3.0);
         (
             page,
             Rect {
                 x0: 0.0,
                 y0: top,
+                x1: self.w,
+                y1: self.h,
+            },
+            Rect {
+                x0: 0.0,
+                y0: top,
                 x1: dx + dw / 2.0,
-                y1: bottom,
+                y1: self.h,
             },
             Rect {
                 x0: dx + dw / 2.0,
                 y0: top,
-                x1: sx + sw + self.mm(6.0),
-                y1: bottom,
+                x1: self.w,
+                y1: self.h,
             },
         )
     }
@@ -1450,47 +1464,54 @@ impl<'f> Ui<'f> {
             },
             Action::Contents,
         ));
-        // A hairline between, then the title, centred, with the time and
-        // the battery at its ends.
-        self.hairline(&mut s.page, controls.round(), 204);
-        let t = Type::new(Face::Italic, self.pt(11.5));
-        let figures = Type::new(Face::Regular, self.pt(10.0));
-        let baseline = controls + self.mm(7.5);
-        let tw_time = self.text(&mut s.page, time, figures, m, baseline, self.w / 4.0);
-        let mut right_w = 0.0;
-        if let Some((level, charging)) = battery {
-            // The level, and a hairline filled as far as it: as the light's
-            // gauge, and the library's bars, are drawn.
-            let gauge = self.mm(7.0);
-            let x1 = self.w - m;
-            let gx = x1 - gauge;
-            let gy = baseline - figures.size * 0.3;
-            self.rule(&mut s.page, gx, gy.round(), gauge, 1.0, 170);
-            let t2 = self.mm(0.5).max(2.0);
-            let fill = gauge * level.min(100) as f32 / 100.0;
-            self.rule(&mut s.page, gx, (gy - t2 / 2.0).round(), fill, t2, 0);
+        // The time and the battery, between the controls, where the row
+        // is otherwise empty: in old-style figures, the battery a figure and
+        // a hairline filled as far as it, as the light's gauge is drawn.
+        let figures = Type::new(Face::Regular, self.pt(9.5));
+        let time_w = self.width(time, figures);
+        let mut gauge = self.mm(6.0);
+        let level = battery.map(|(level, charging)| {
             let figure = if charging {
                 format!("+{level}")
             } else {
                 level.to_string()
             };
-            let fw = self.width(&figure, figures);
-            self.text(
-                &mut s.page,
-                &figure,
-                figures,
-                gx - self.mm(1.5) - fw,
-                baseline,
-                fw + 1.0,
-            );
-            right_w = gauge + self.mm(1.5) + fw;
+            (level, figure)
+        });
+        let dot = " · ";
+        let dot_w = self.width(dot, figures);
+        let total = |gauge: f32| {
+            time_w
+                + level.as_ref().map_or(0.0, |(_, f)| {
+                    dot_w + self.width(f, figures) + self.mm(1.5) + gauge
+                })
+        };
+        // Centred in the room the controls leave, not the page's middle;
+        // on a narrow screen without the hairline, if it won't fit.
+        let (from, to) = (m + lw + self.mm(5.0), yx - self.mm(5.0));
+        if total(gauge) > to - from {
+            gauge = 0.0;
         }
-        // The title has the width the time and battery leave it, centred if
-        // it can be.
-        let side = tw_time.max(right_w) + self.mm(4.0);
-        let room = self.w - 2.0 * (m + side);
+        let mut x = from + ((to - from) - total(gauge)).max(0.0) / 2.0;
+        x += self.text(&mut s.page, time, figures, x, baseline, time_w + 1.0);
+        if let Some((level, figure)) = &level {
+            x += self.text(&mut s.page, dot, figures, x, baseline, dot_w + 1.0);
+            x += self.text(&mut s.page, figure, figures, x, baseline, self.w) + self.mm(1.5);
+            let gy = baseline - figures.size * 0.3;
+            let gauge = gauge.max(0.0);
+            self.rule(&mut s.page, x, gy.round(), gauge, 1.0, 170);
+            let t2 = self.mm(0.5).max(2.0);
+            let fill = gauge * (*level).min(100) as f32 / 100.0;
+            self.rule(&mut s.page, x, (gy - t2 / 2.0).round(), fill, t2, 0);
+        }
+        // A hairline between, then the title, centred, the whole width.
+        self.hairline(&mut s.page, controls.round(), 204);
+        let t = Type::new(Face::Italic, self.pt(11.5));
+        let title_base = controls + self.mm(7.5);
+        let room = self.w - 2.0 * m;
         let tw = self.width(title, t).min(room);
-        self.text(&mut s.page, title, t, (self.w - tw) / 2.0, baseline, room);
+        self.text(&mut s.page, title, t, (self.w - tw) / 2.0, title_base, room);
+        let baseline = title_base;
         let caps = Type::new(Face::Regular, self.pt(8.5)).caps(0.12);
         let pw = self.width(place, caps).min(self.w - 2.0 * m);
         self.text(

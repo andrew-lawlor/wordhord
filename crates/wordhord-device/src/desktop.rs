@@ -415,6 +415,15 @@ impl Script {
 }
 
 impl Platform for Script {
+    // A battery to draw, for trying the bar: WORDHORD_BATTERY=80.
+    fn battery(&self) -> Option<(u8, bool)> {
+        std::env::var("WORDHORD_BATTERY")
+            .ok()?
+            .parse()
+            .ok()
+            .map(|l| (l, false))
+    }
+
     fn size(&self) -> (u32, u32) {
         self.size
     }

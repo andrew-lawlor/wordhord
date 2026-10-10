@@ -765,11 +765,11 @@ struct Back {
 type BackSign = (Vec<u8>, Rect, Rect, Rect);
 
 fn back_sign(ui: &Ui, chrome: &mut Renderer, width: u32, height: u32, label: &str) -> BackSign {
-    let (page, back, stay) = ui.back_line(label);
+    let (page, whole, back, stay) = ui.back_line(label);
     let r = Rect {
         x0: 0.0,
-        y0: back.y0.max(0.0).round(),
-        x1: stay.x1.min(width as f32).round(),
+        y0: whole.y0.max(0.0).round(),
+        x1: width as f32,
         y1: height as f32,
     };
     let full = chrome.page(&page, width, height);
@@ -3112,10 +3112,9 @@ fn draw(
             if y >= height as usize {
                 break;
             }
-            for (col, &v) in line.iter().enumerate() {
-                let p = &mut pixels[y * width as usize + r.x0 as usize + col];
-                *p = (*p).min(v);
-            }
+            // Laid over what's there: the folio gives way to it.
+            let at = y * width as usize + r.x0 as usize;
+            pixels[at..at + line.len()].copy_from_slice(line);
         }
     }
     let rendered = started.elapsed();
