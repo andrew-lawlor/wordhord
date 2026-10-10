@@ -431,7 +431,9 @@ impl Platform for Kobo {
     }
 
     fn draw_ink(&mut self, grey: &[u8], w: u32, h: u32, x: u32, y: u32) {
-        let rc = unsafe { wh_draw(self.fd, grey.as_ptr(), w, h, x, y, 3) };
+        // DU, as the Pencil plugin found best on the Libra Colour: A2 is
+        // quicker on paper, but untried here.
+        let rc = unsafe { wh_draw(self.fd, grey.as_ptr(), w, h, x, y, 2) };
         if rc < 0 {
             eprintln!("drawing failed: {rc}");
         }
