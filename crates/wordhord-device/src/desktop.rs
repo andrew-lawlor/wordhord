@@ -457,6 +457,20 @@ impl Platform for Script {
 
     fn next(&mut self) -> Gesture {
         let g = self.gestures.next().unwrap_or(Gesture::Power);
+        // At a person's pace, for a recording: WORDHORD_PACE=900 waits that
+        // many milliseconds before each gesture, and the pen moves at a
+        // hand's speed.
+        if let Some(pace) = std::env::var("WORDHORD_PACE")
+            .ok()
+            .and_then(|p| p.parse::<u64>().ok())
+        {
+            let ms = match g {
+                Gesture::Ink(..) | Gesture::Drag(..) => 16,
+                Gesture::InkUp(..) | Gesture::Release(..) => 60,
+                _ => pace,
+            };
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+        }
         if let Gesture::Ink(..) | Gesture::InkUp(..) = g {
             let (ink, tool) = self.strokes.pop_front().unwrap_or_default();
             self.ink = ink;

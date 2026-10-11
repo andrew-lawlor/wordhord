@@ -25,6 +25,7 @@ mod light;
 mod marks;
 mod platform;
 mod reader;
+mod record;
 mod search;
 mod settings;
 // Raw input events are the Kobo's; the desktop only needs gestures.

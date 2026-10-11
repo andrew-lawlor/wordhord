@@ -20,6 +20,7 @@ serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 libc = "0.2"
 png = "0.17"
+miniz_oxide = "0.8"
 
 [build-dependencies]
 cc = "1"

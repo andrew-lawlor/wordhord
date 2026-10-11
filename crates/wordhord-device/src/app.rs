@@ -38,6 +38,15 @@ enum Leave {
 }
 
 pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), String> {
+    // Recorded, for a demonstration, if the app folder asks.
+    if crate::record::Recorder::wanted(app) {
+        let mut recorder = crate::record::Recorder::new(screen, app)?;
+        return run_on(&mut recorder, root, app);
+    }
+    run_on(screen, root, app)
+}
+
+fn run_on(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), String> {
     let fonts_dir = app.join("fonts");
     let (width, height) = screen.size();
     let started = Instant::now();

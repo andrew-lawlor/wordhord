@@ -183,6 +183,8 @@ Three backends:
 
 **PineNote** (later). The same 10.3" 1404×1872 panel as the Elipsa 2E, so layouts and cached pages carry over unchanged. It runs ordinary Linux, so Wordhord is a normal program there: no host app to pause. The pen is a Wacom digitiser, a standard input device. The work is the display: the `rockchip_ebc` e-ink driver, which is still changing. Check its state before starting.
 
+**Recording**, for demonstrations. With a file named `record` in the app folder, each session is recorded to `recordings/`: every draw with its pixels, every gesture, every point of the pen, each with its time. The pixels are deflated on a thread of their own, so the recording doesn't slow what it records. `scripts/replay.py` makes a video of it at the speed it happened, with a soft dot where a finger touched and a fine ring where the pen wrote, long pauses cut short and a full refresh's flash shown. On the desktop, `WORDHORD_PACE` gives a script a person's pace, for recording one.
+
 **Desktop** (for development). A window that behaves like the device: the same pixels, mouse clicks as taps, drags as swipes, a tablet as the pen. Most testing happens here, without copying anything to a Kobo. Waveforms are simulated, slowly, so a missed refresh shows.
 
 ## 14. Spice
