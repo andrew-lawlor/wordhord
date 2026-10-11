@@ -24,7 +24,7 @@ It runs beside Kobo's own software. You open it from NickelMenu. Nickel pauses w
 
 **Writes with the pen.** The pen only writes. A full stop is a full stop, never a page turn. Ink belongs to the words it was written by, so it moves with them when you change the type. The other end of the stylus rubs out. Hold its button and a stroke under a line underlines it. Hold an underline and *write* puts a note in your own hand on it. While the pen is near, your hand can rest on the page. A manicule, ☚, tells you so.
 
-**Searches.** A book, the library, the commonplace book. The keyboard has a row of the old letters: þ ð æ ǫ ȝ ƿ œ ø.
+**Searches.** A book, the library, the commonplace book. The keyboard's top row has the old letters, a language at a time: Old English, Old Norse, Latin's long vowels, or Greek, which turns the whole alphabet Greek.
 
 **Sleeps under a painting.** Knud Baade's *Scene from the Era of Norwegian Sagas* (1850): the warden on his cliff.
 

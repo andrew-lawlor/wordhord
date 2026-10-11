@@ -34,6 +34,8 @@ impl Shelf {
 /// What a tap on a place does.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
+    /// The keyboard's top row: the next old language's letters.
+    Letters,
     /// The key to the type screen's short names for languages, opened or
     /// closed.
     Legend,
@@ -536,18 +538,34 @@ impl<'f> Ui<'f> {
         }
         lines
     }
+}
 
+/// The old languages' letters the keyboard's top row offers, by the short
+/// names the type screen uses: Old English's, with its long vowels as
+/// editions mark them; Old Norse's; Latin's long vowels; and Greek's
+/// accented vowels, its alphabet in the rows below.
+pub const LETTERS: [(&str, &str); 4] = [
+    ("oe", "þðæƿȝāǣēīōūȳ"),
+    ("on", "þðæǫøœáéíóúý"),
+    ("lat", "āēīōūȳæœ"),
+    ("gk", "άέήίόύώϊϋ"),
+];
+
+impl Ui<'_> {
     /// Typing: the text so far under the header, with a cursor; and the
-    /// keyboard at the foot. Over the alphabet, a row of the old letters:
-    /// þ ð æ ǫ ȝ ƿ œ ø, there on both layers. `shift`: the next letter is a
-    /// capital. `figures`: the figures and stops, not the alphabet. A
-    /// `note` is set on ruled lines that wrap, and is done, not searched.
+    /// keyboard at the foot. Over the alphabet, a row of one old
+    /// language's letters, `letters` of `LETTERS`, there on both layers,
+    /// changed by a key beside *123*; Greek's turns the alphabet Greek
+    /// too. `shift`: the next letter is a capital. `figures`: the figures
+    /// and stops, not the alphabet. A `note` is set on ruled lines that
+    /// wrap, and is done, not searched.
     pub fn typing(
         &self,
         title: &str,
         text: &str,
         shift: bool,
         figures: bool,
+        letters: usize,
         note: bool,
     ) -> Screen {
         let mut s = Screen {
@@ -643,15 +661,20 @@ impl<'f> Ui<'f> {
                 c
             }
         };
+        let (set, own) = LETTERS[letters % LETTERS.len()];
         let rows: [&str; 4] = if figures {
-            ["þðæǫȝƿœø", "1234567890", "-/:;()'\"@", ".,?!–—…"]
+            [own, "1234567890", "-/:;()'\"@", ".,?!–—…"]
+        } else if set == "gk" {
+            [own, "ςερτυθιοπ", "ασδφγηξκλ", "ζχψωβνμ"]
         } else {
-            ["þðæǫȝƿœø", "qwertyuiop", "asdfghjkl", "zxcvbnm"]
+            [own, "qwertyuiop", "asdfghjkl", "zxcvbnm"]
         };
         for (r, row) in rows.iter().enumerate() {
             let y = top + r as f32 * kh;
             self.rule(&mut s.page, side, y.round(), self.w - 2.0 * side, 1.0, 204);
             let n = row.chars().count() as f32;
+            // A row longer than ten keys, narrower ones.
+            let kw = kw.min((self.w - 2.0 * side) / n);
             let left = (self.w - n * kw) / 2.0;
             let baseline = y + (kh + letter.size * 0.62) / 2.0;
             for (k, c) in row.chars().enumerate() {
@@ -734,7 +757,36 @@ impl<'f> Ui<'f> {
             },
             Action::Figures,
         ));
-        let (sx0, sx1) = (side + 1.5 * kw, side + 7.0 * kw);
+        // Which old language's letters are on the top row: tapped, the
+        // next.
+        let (lx0, lx1) = (side + 1.5 * kw, side + 3.0 * kw);
+        let sw = self.width(set, label);
+        self.text(
+            &mut s.page,
+            set,
+            label,
+            (lx0 + lx1 - sw) / 2.0,
+            lb,
+            lx1 - lx0,
+        );
+        self.rule(
+            &mut s.page,
+            ((lx0 + lx1 - sw) / 2.0).round(),
+            (lb + self.mm(1.2)).round(),
+            sw.round(),
+            1.0,
+            0,
+        );
+        s.hits.push((
+            Rect {
+                x0: lx0,
+                y0: y,
+                x1: lx1,
+                y1: y + kh,
+            },
+            Action::Letters,
+        ));
+        let (sx0, sx1) = (side + 3.0 * kw, side + 7.0 * kw);
         let sw = self.width("space", label);
         self.text(
             &mut s.page,

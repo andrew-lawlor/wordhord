@@ -3639,6 +3639,10 @@ fn passages_here_screen(
     }
 }
 
+/// Which old language's letters the keyboard last offered: the next
+/// keyboard opens with them.
+static LETTERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// What typing came to.
 enum Typed {
     Done,
@@ -3659,13 +3663,14 @@ fn type_in(
     let (width, height) = screen.size();
     let mut shift = false;
     let mut figures = false;
+    let mut letters = LETTERS.load(std::sync::atomic::Ordering::Relaxed);
     // The whole screen at first and when the keys change; else only the
     // line of text.
     let mut whole = true;
     // A key tapped, shown pressed until the screen catches up.
     let mut pressed: Option<Rect> = None;
     loop {
-        let s = ui.typing(title, text, shift, figures, note);
+        let s = ui.typing(title, text, shift, figures, letters, note);
         let pixels = chrome.page(&s.page, width, height);
         if whole {
             screen.draw(&pixels, width, height, 0, 0, true);
@@ -3702,7 +3707,12 @@ fn type_in(
             // or delete show little.
             if let Some((
                 r,
-                Action::Key(_) | Action::Delete | Action::Shift | Action::Done | Action::Figures,
+                Action::Key(_)
+                | Action::Delete
+                | Action::Shift
+                | Action::Done
+                | Action::Figures
+                | Action::Letters,
             )) = &hit
             {
                 let r = Rect {
@@ -3741,6 +3751,12 @@ fn type_in(
                 }
                 Some(Action::Shift) => {
                     shift = !shift;
+                    whole = true;
+                }
+                Some(Action::Letters) => {
+                    letters = (letters + 1) % crate::ui::LETTERS.len();
+                    LETTERS.store(letters, std::sync::atomic::Ordering::Relaxed);
+                    shift = false;
                     whole = true;
                 }
                 Some(Action::Done) if !text.trim().is_empty() => return Typed::Done,
