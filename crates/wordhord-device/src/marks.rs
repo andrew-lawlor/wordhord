@@ -70,6 +70,24 @@ pub struct Ink {
     /// on the card's ruled lines.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub underline: Option<String>,
+    /// The page of its chapter it was written on, as the type was then:
+    /// so a note in the commonplace book is one page's strokes, never two
+    /// pages' laid over each other.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<usize>,
+}
+
+impl Ink {
+    /// What a note's strokes share: their chapter and page; or, for
+    /// strokes kept before their place on the page was, their word, as
+    /// they can only be drawn from it.
+    fn sheet(&self) -> (usize, Option<usize>, Option<&Anchor>) {
+        if self.drawn.is_empty() {
+            (self.chapter, None, Some(&self.anchor))
+        } else {
+            (self.chapter, self.page, None)
+        }
+    }
 }
 
 /// A ribbon put in a page: anchored to the page's first word, so it marks
@@ -252,7 +270,7 @@ impl Marks {
 
     /// A book's handwritten notes: its strokes, in the order of its
     /// chapters and as written, gathered into notes where they were written
-    /// in one chapter with no more than two minutes between them.
+    /// on one page with no more than two minutes between them.
     pub fn ink_notes(&self, path: &str) -> Vec<Vec<&Ink>> {
         let mut inks: Vec<&Ink> = self
             .inks
@@ -265,7 +283,7 @@ impl Marks {
             match notes.last_mut() {
                 Some(note)
                     if note.last().is_some_and(|l| {
-                        l.chapter == ink.chapter && ink.time.saturating_sub(l.time) <= 120
+                        l.sheet() == ink.sheet() && ink.time.saturating_sub(l.time) <= 120
                     }) =>
                 {
                     note.push(ink)
@@ -510,6 +528,7 @@ mod tests {
             context: None,
             section: None,
             underline: None,
+            page: None,
         };
         m.ink(ink.clone()).unwrap();
         m.ink(Ink {
@@ -525,6 +544,38 @@ mod tests {
         let again = Marks::load(&dir);
         assert!(again.written(&id).is_empty());
         assert_eq!(again.ink_in("b.epub", 2).count(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_handwritten_note_keeps_to_its_page() {
+        let dir = std::env::temp_dir().join(format!("wordhord-sheets-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut m = Marks::load(&dir);
+        let stroke = |page: usize| Ink {
+            id: String::new(),
+            time: 0,
+            book: "Beowulf".into(),
+            path: "b.epub".into(),
+            chapter: 2,
+            anchor: Anchor {
+                block: "b7".into(),
+                word: 3,
+            },
+            margin: None,
+            points: vec![[1.0, 2.0, 0.1]],
+            drawn: vec![[10.0, 20.0, 1.5]],
+            context: None,
+            section: None,
+            underline: None,
+            page: Some(page),
+        };
+        // Written within seconds, but over a page turn and back.
+        for page in [4, 4, 5, 5, 4] {
+            m.ink(stroke(page)).unwrap();
+        }
+        let sizes: Vec<usize> = m.ink_notes("b.epub").iter().map(Vec::len).collect();
+        assert_eq!(sizes, [2, 2, 1]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -2403,6 +2403,7 @@ fn read(
                             },
                             section: Some(section_of(&book, chapter)),
                             underline: None,
+                            page: Some(reader.page),
                         });
                         match done {
                             Ok(()) => eprintln!("ink: {} points by {:?}", stroke.len(), w.text),
@@ -3905,6 +3906,7 @@ fn write_note(
                     context: None,
                     section: u.section.clone(),
                     underline: Some(u.id.clone()),
+                    page: None,
                 });
                 match done {
                     Ok(()) => eprintln!("note: a stroke of {} points", stroke.len()),
