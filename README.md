@@ -1,6 +1,6 @@
 # Wordhord
 
-An opinionated e-reader for Kobos with a pen.
+An opinionated e-reader for Kobo. Better still with a pen.
 
 In *Beowulf*, a warden stands on the sea-cliffs and asks the strangers who they are. Beowulf answers him, and the poet says *wordhord onleac*: he unlocked his word-hoard. Wordhord is a reader built around that idea. You read, you keep the words you meet, and you write in the margins.
 
@@ -43,6 +43,8 @@ It runs beside Kobo's own software. You open it from NickelMenu. Nickel pauses w
 
 ## The pen
 
+On a Kobo with a pen:
+
 **The pen only writes.** A full stop is a full stop, never a page turn. While the pen is near, your hand can rest on the page, and a pointing hand, ☛, at the top left says so. The other end of the stylus rubs out.
 
 **Ink belongs to its words.** Each stroke is kept with the words it was written by. Change the type and the ink moves with them.
@@ -79,7 +81,7 @@ No store, no account, no cloud. No copy and paste, since a Kobo has no clipboard
 
 ## Status
 
-Early, and in daily use on a Kobo Elipsa 2E and a Kobo Libra Colour. Other Kobos with a pen should work but haven't been tried. EPUB only, and DRM-free: books bought from the Kobo store are locked to Kobo's own reader, and stay there. Wordhord counts them at the foot of *All books*, so you know they weren't lost. [SPEC.md](SPEC.md) says what's done, what's next, and why.
+Early, and in daily use on a Kobo Elipsa 2E and a Kobo Libra Colour. A Kobo without a pen gets everything but the ink: you underline with a finger and type your notes. Wordhord lays out pages for the screens it knows, so a Kobo with the same screen as one of those, such as the Libra 2, should work but hasn't been tried. Other screens, like the Clara's or the Sage's, need a profile first; [SPEC.md](SPEC.md) says how. EPUB only, and DRM-free: books bought from the Kobo store are locked to Kobo's own reader, and stay there. Wordhord counts them at the foot of *All books*, so you know they weren't lost. The SPEC also says what's done, what's next, and why.
 
 ## Install
 
