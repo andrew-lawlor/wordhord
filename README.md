@@ -81,7 +81,7 @@ No store, no account, no cloud. No copy and paste, since a Kobo has no clipboard
 
 ## Status
 
-Early, and in daily use on a Kobo Elipsa 2E and a Kobo Libra Colour. A Kobo without a pen gets everything but the ink: you underline with a finger and type your notes. Wordhord lays out pages for the screens it knows, so a Kobo with the same screen as one of those, such as the Libra 2, should work but hasn't been tried. Other screens, like the Clara's or the Sage's, need a profile first; [SPEC.md](SPEC.md) says how. EPUB only, and DRM-free: books bought from the Kobo store are locked to Kobo's own reader, and stay there. Wordhord counts them at the foot of *All books*, so you know they weren't lost. The SPEC also says what's done, what's next, and why.
+Early, and in daily use on a Kobo Elipsa 2E and a Kobo Libra Colour. A Kobo without a pen gets everything but the ink: you underline with a finger and type your notes. Wordhord lays out pages for the screens it knows, so a Kobo with the same screen as one of those, such as the Libra 2, should work but hasn't been tried. Other screens, like the Clara's or the Sage's, need a profile first: a few lines in `profiles/` giving the screen's size, its resolution and the margins. EPUB only, and DRM-free: books bought from the Kobo store are locked to Kobo's own reader, and stay there. Wordhord counts them at the foot of *All books*, so you know they weren't lost. [SPEC.md](SPEC.md) says what's done, what's next, and why.
 
 ## Install
 
