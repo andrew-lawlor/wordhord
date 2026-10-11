@@ -312,13 +312,28 @@ fn anchor_keys(on: &str) -> Vec<String> {
     keys
 }
 
+/// The hyphenation patterns for a book's language, however it names it
+/// (`en`, `eng`, `en-GB`; `grc`; `la`, `lat`): English, Ancient Greek and
+/// classical Latin. Others aren't hyphenated.
+fn hyphenator(lang: &str) -> Option<Standard> {
+    const GREEK: &[u8] = include_bytes!("../hyphenation/grc.standard.bincode");
+    const LATIN: &[u8] = include_bytes!("../hyphenation/la-x-classic.standard.bincode");
+    let base = lang
+        .split(['-', '_'])
+        .next()
+        .unwrap_or(lang)
+        .to_ascii_lowercase();
+    match base.as_str() {
+        "en" | "eng" => Standard::from_embedded(Language::EnglishUS).ok(),
+        "grc" => Standard::from_reader(Language::GreekAncient, &mut &GREEK[..]).ok(),
+        "la" | "lat" => Standard::from_reader(Language::LatinClassic, &mut &LATIN[..]).ok(),
+        _ => None,
+    }
+}
+
 impl<'a> Layout<'a> {
     pub fn new(fonts: &'a Fonts, profile: &'a Profile, lang: &str) -> Layout<'a> {
-        // English, however the book names it: `eng`, `en`, `en-GB`.
-        let english = lang == "eng" || lang == "en" || lang.starts_with("en-");
-        let hyphenator = english
-            .then(|| Standard::from_embedded(Language::EnglishUS).ok())
-            .flatten();
+        let hyphenator = hyphenator(lang);
         let measure = profile.width as f32
             - profile.mm(profile.margins.left)
             - profile.mm(profile.margins.right);
@@ -2105,5 +2120,17 @@ mod tests {
         lines.push(line(false, false));
         lines.push(line(false, false));
         assert_eq!(plan(&lines, 0.0, 0.0, 55.0), [4]);
+    }
+
+    #[test]
+    fn greek_and_latin_books_are_hyphenated_by_their_own_patterns() {
+        let breaks = |lang: &str, word: &str| -> Vec<usize> {
+            hyphenator(lang).map_or(Vec::new(), |h| h.hyphenate(word).breaks)
+        };
+        assert!(!breaks("la", "arma virumque cano").is_empty());
+        assert!(!breaks("lat", "imperium").is_empty());
+        assert!(!breaks("grc", "ἀνθρώπων").is_empty());
+        assert!(!breaks("en-GB", "hyphenation").is_empty());
+        assert!(hyphenator("fr").is_none());
     }
 }

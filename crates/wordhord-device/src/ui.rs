@@ -34,6 +34,9 @@ impl Shelf {
 /// What a tap on a place does.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
+    /// The key to the type screen's short names for languages, opened or
+    /// closed.
+    Legend,
     Shelf(Shelf),
     /// One author, series or tag of a shelf, by its place in the shelf.
     Group(Shelf, usize),
@@ -1546,7 +1549,8 @@ impl<'f> Ui<'f> {
     }
 
     /// The type screen: a specimen passage, set as chosen; then the
-    /// faces, each marked with the old languages it can set; then size,
+    /// faces, each marked with the languages it can set, by short names
+    /// `key` spells out above them when it's open; then size,
     /// measure, leading and setting, each a row of names to tap, the one
     /// chosen in italic. `chosen` is each row's choice, in `Choice` order;
     /// `faint`, the options that would change nothing now, set in grey.
@@ -1556,6 +1560,7 @@ impl<'f> Ui<'f> {
         chosen: &[usize],
         faint: &[(Choice, usize)],
         faces: &[Vec<&str>],
+        key: Option<&[(&str, &str)]>,
         note: Option<&str>,
     ) -> TypeScreen {
         let mut s = Screen {
@@ -1583,6 +1588,7 @@ impl<'f> Ui<'f> {
                 chosen,
                 faint,
                 faces,
+                key,
                 tight,
             );
             self.h - self.mm(4.0) - top - end
@@ -1603,7 +1609,9 @@ impl<'f> Ui<'f> {
             self.centred(&mut s.page, note, t, y + self.mm(2.0) + t.size);
         }
         let mut names = Vec::new();
-        self.type_choices(&mut s, &mut names, y, rows, chosen, faint, faces, tight);
+        self.type_choices(
+            &mut s, &mut names, y, rows, chosen, faint, faces, key, tight,
+        );
         TypeScreen {
             screen: s,
             specimen,
@@ -1625,6 +1633,7 @@ impl<'f> Ui<'f> {
         chosen: &[usize],
         faint: &[(Choice, usize)],
         faces: &[Vec<&str>],
+        key: Option<&[(&str, &str)]>,
         tight: bool,
     ) -> f32 {
         let m = self.margin();
@@ -1633,9 +1642,45 @@ impl<'f> Ui<'f> {
         let label = Type::new(Face::Regular, self.pt(9.0)).caps(0.14);
         let face_choice = chosen.first().copied().unwrap_or(0);
         self.text(&mut s.page, "face", label, m, y, self.w);
+        let small = Type::new(Face::Regular, self.pt(8.5)).caps(0.06);
+        // At the right, the key to the languages' short names: tapped, it
+        // opens under the heading, and closes.
+        let kw = self.width("key", label);
+        self.text(&mut s.page, "key", label, self.w - m - kw, y, kw + 1.0);
+        if key.is_some() {
+            self.rule(&mut s.page, self.w - m - kw, y + self.mm(1.2), kw, 1.0, 0);
+        }
+        s.hits.push((
+            Rect {
+                x0: self.w - m - kw - self.mm(8.0),
+                y0: y - label.size - self.mm(4.0),
+                x1: self.w,
+                y1: y + self.mm(3.0),
+            },
+            Action::Legend,
+        ));
+        if let Some(key) = key {
+            // Each short name, then what it stands for, in italic; as
+            // many to a line as fit.
+            let long = Type::new(Face::Italic, self.pt(10.0));
+            let gap = self.mm(1.5);
+            let between = self.mm(5.0);
+            let mut baseline = y + self.mm(7.0 * k);
+            let mut x = m;
+            for (short, name) in key {
+                let (sw, nw) = (self.width(short, small), self.width(name, long));
+                if x > m && x + sw + gap + nw > self.w - m {
+                    baseline += self.mm(6.0 * k);
+                    x = m;
+                }
+                self.text(&mut s.page, short, small, x, baseline, sw + 1.0);
+                self.text(&mut s.page, name, long, x + sw + gap, baseline, nw + 1.0);
+                x += sw + gap + nw + between;
+            }
+            y = baseline;
+        }
         y += self.mm(2.0);
         let row = self.mm(9.0 * k);
-        let small = Type::new(Face::Regular, self.pt(8.5)).caps(0.06);
         for (n, languages) in faces.iter().enumerate() {
             let baseline = y + row * 0.68;
             names.push((m, baseline, self.pt(13.0)));

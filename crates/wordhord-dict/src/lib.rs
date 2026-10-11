@@ -241,12 +241,16 @@ impl Dictionary {
     }
 
     fn all_readings(&self, word: &str) -> Vec<Reading> {
-        let mut readings = self.readings("key", &key(word));
-        if readings.is_empty() {
-            readings = self.readings("fold", &fold(word));
+        let out = self.resolved(self.readings("key", &key(word)));
+        if !out.is_empty() {
+            return out;
         }
-        // A form's own entry ("accusative plural of mǫgr") leads to the
-        // headword's.
+        self.resolved(self.readings("fold", &fold(word)))
+    }
+
+    /// Readings with a form's own entry ("accusative plural of mǫgr")
+    /// taken to the headword's.
+    fn resolved(&self, readings: Vec<Reading>) -> Vec<Reading> {
         let mut out: Vec<Reading> = Vec::new();
         for r in readings {
             let targets: Vec<(String, String)> = r
@@ -288,13 +292,32 @@ impl Dictionary {
         rows.map(|r| r.flatten().collect()).unwrap_or_default()
     }
 
+    /// The entries for a headword. A form's entry may name it with marks
+    /// the headword is filed without (*amō* for *amo*, *ᾰ̓́νθρωπος* for
+    /// *ἄνθρωπος*): then the headwords that match loosely, as long as
+    /// they're words of their own, not forms again.
     fn entries_named(&self, word: &str) -> Vec<Entry> {
-        let Ok(mut q) = self.db.prepare_cached(
-            "SELECT word, pos, head, senses, etymology FROM entry WHERE word = ?1 ORDER BY id",
-        ) else {
+        let exact = self.entries_where("entry.word = ?1", word);
+        if !exact.is_empty() {
+            return exact;
+        }
+        self.entries_where(
+            "entry.id IN (SELECT form.entry FROM form WHERE form.fold = ?1 AND form.tags = '')",
+            &fold(word),
+        )
+        .into_iter()
+        .filter(|e| e.senses.iter().any(|s| s.form_of.is_none()) && fold(&e.word) == fold(word))
+        .collect()
+    }
+
+    fn entries_where(&self, condition: &str, value: &str) -> Vec<Entry> {
+        let sql = format!(
+            "SELECT word, pos, head, senses, etymology FROM entry WHERE {condition} ORDER BY id"
+        );
+        let Ok(mut q) = self.db.prepare_cached(&sql) else {
             return Vec::new();
         };
-        let rows = q.query_map(params![word], |row| entry_from(row, 0));
+        let rows = q.query_map(params![value], |row| entry_from(row, 0));
         rows.map(|r| r.flatten().collect()).unwrap_or_default()
     }
 
@@ -610,7 +633,9 @@ mod tests {
     const RECORDS: &str = r#"{"word":"mǫgr","pos":"noun","etymology_text":"From Proto-Germanic *maguz.","head_templates":[{"expansion":"mǫgr m"}],"senses":[{"glosses":["son, boy, youth"],"tags":["masculine"],"examples":[{"text":"mǫgu Heimdallar","english":"sons of Heimdall","ref":"Vǫluspá 1"}]}],"forms":[{"form":"non-decl-m-u","tags":["inflection-template"]},{"form":"mǫgu","tags":["accusative","indefinite","plural"]},{"form":"megir","tags":["indefinite","nominative","plural"]}]}
 {"word":"kind","pos":"noun","head_templates":[{"expansion":"kind f"}],"senses":[{"glosses":["kin, kindred"]}],"forms":[{"form":"kindir","tags":["nominative","plural"]},{"form":"kindir","tags":["accusative","plural"]}]}
 {"word":"grœnn","pos":"adj","senses":[{"glosses":["green"]}],"forms":[{"form":"grœnum","tags":["dative","plural"]}]}
-{"word":"megir","pos":"noun","senses":[{"glosses":["nominative plural of mǫgr"],"tags":["form-of","nominative","plural"],"form_of":[{"word":"mǫgr"}]}]}"#;
+{"word":"megir","pos":"noun","senses":[{"glosses":["nominative plural of mǫgr"],"tags":["form-of","nominative","plural"],"form_of":[{"word":"mǫgr"}]}]}
+{"word":"amo","pos":"verb","senses":[{"glosses":["to love"]}],"forms":[{"form":"amāvī","tags":["perfect","active"]}]}
+{"word":"amavi","pos":"verb","senses":[{"glosses":["first-person singular perfect of amō"],"tags":["form-of"],"form_of":[{"word":"amō"}]}]}"#;
 
     fn pack() -> (Dictionary, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("wordhord-dict-{}", std::process::id()));
@@ -619,7 +644,7 @@ mod tests {
         std::fs::write(&src, RECORDS).unwrap();
         let out = dir.join(format!("non-{:?}.sqlite", std::thread::current().id()));
         let (entries, _) = build(&src, "non", &out).unwrap();
-        assert_eq!(entries, 4);
+        assert_eq!(entries, 6);
         (Dictionary::open(&out).unwrap(), out)
     }
 
@@ -660,6 +685,14 @@ mod tests {
         let r = d.look_up("megir");
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].entry.word, "mǫgr");
+    }
+
+    #[test]
+    fn a_form_naming_its_headword_with_marks_still_leads_to_it() {
+        let (d, _) = pack();
+        // "amavi" is an entry of its own pointing at "amō", filed as "amo".
+        let r = d.look_up("amavi");
+        assert!(r.iter().any(|r| r.entry.word == "amo"));
     }
 
     #[test]

@@ -57,9 +57,25 @@ impl Lexicon {
         let wanted = three_letter(lang);
         let first = self.packs.iter().filter(|(l, _)| *l == wanted);
         let rest = self.packs.iter().filter(|(l, _)| *l != wanted);
-        first.chain(rest).find_map(|(l, d)| {
-            let r = d.look_up(word);
-            (!r.is_empty()).then_some((l.as_str(), r))
+        first
+            .chain(rest)
+            .find_map(|(l, d)| {
+                let r = d.look_up(word);
+                (!r.is_empty()).then_some((l.as_str(), r))
+            })
+            .or_else(|| self.enclitic(word))
+    }
+
+    /// A Latin word with *-que* ("and") or *-ne* (a question) joined to
+    /// it, as *virumque*, which no dictionary lists: the word without it,
+    /// in the Latin pack only, if nothing else knew the whole.
+    fn enclitic(&self, word: &str) -> Option<(&str, Vec<Reading>)> {
+        let (lang, latin) = self.packs.iter().find(|(l, _)| l == "lat")?;
+        let bare = wordhord_dict::key(word);
+        ["que", "ne"].iter().find_map(|end| {
+            let stem = bare.strip_suffix(end).filter(|s| s.chars().count() >= 2)?;
+            let r = latin.look_up(stem);
+            (!r.is_empty()).then_some((lang.as_str(), r))
         })
     }
 }
@@ -380,6 +396,14 @@ mod tests {
                 ("hatr".into(), "non".into())
             ]
         );
+        // Latin and Ancient Greek, and not Late Latin.
+        let ety = "from Latin lynx, from Ancient Greek λύγξ (lúnx), from Late Latin lynce";
+        let words: Vec<&str> = ety.split_whitespace().collect();
+        let found: Vec<String> = etymology_links(&words, &["grc", "lat"])
+            .into_iter()
+            .map(|(_, w, _)| w)
+            .collect();
+        assert_eq!(found, ["lynx", "λύγξ"]);
         // English alone is a pack's language; Middle English isn't.
         let words = ["borrowed", "from", "English", "loan,"];
         assert_eq!(etymology_links(&words, &["eng"])[0].1, "loan");

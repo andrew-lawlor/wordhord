@@ -94,13 +94,27 @@ pub const LEADINGS: [(&str, f32); 3] = [("close", 1.25), ("book", 1.35), ("open"
 /// How prose is set: justified, or ragged right.
 pub const SETTINGS: [(&str, bool); 2] = [("justified", true), ("ragged", false)];
 
-/// The letters a language needs, for saying which faces can set it. Rare
-/// marks an edition might use (the Tironian ⁊) are left to the check of a
-/// book's own letters.
-pub const LANGUAGES: [(&str, &str); 3] = [
-    ("old english", "æÆþÞðÐƿǷȝȜāēīōūȳǣĀĒĪŌŪȲǢċĊġĠ"),
-    ("old norse", "ǫǪøØœŒęĘǿǾáéíóúýÁÉÍÓÚÝǽ"),
-    ("greek", "αβγδεζηθικλμνξοπρσςτυφχψωΑΒΓΔΩάέήίόύώἀἁὰᾶῆῶ"),
+/// The languages a face can set, by the short names philologists use
+/// (the OED's *OE*, *ON*, *Gk.*, *L.*), what they stand for, and the
+/// letters each needs. European is the Latin alphabet with the accents of
+/// Western and Central Europe; Latin, its long vowels marked as editions
+/// mark them; Greek, with its accents and breathings. Rare marks an
+/// edition might use (the Tironian ⁊) are left to the check of a book's
+/// own letters.
+pub const LANGUAGES: [(&str, &str, &str); 5] = [
+    (
+        "eur",
+        "European",
+        "àâäçéèêëîïôöùûüÿñßœæąćęłńóśźżčďěňřšťůžőűÀÉÇÜŁŠŽ",
+    ),
+    ("lat", "Latin", "āēīōūȳĀĒĪŌŪæœ"),
+    (
+        "gk",
+        "Greek",
+        "αβγδεζηθικλμνξοπρσςτυφχψωΑΒΓΔΩάέήίόύώἀἁἄἅὰᾶᾳᾷἐἑἠἡῆῃἰἱῖὀὁὐὑῦὠὡῶῳῥ",
+    ),
+    ("oe", "Old English", "æÆþÞðÐƿǷȝȜāēīōūȳǣĀĒĪŌŪȲǢċĊġĠ"),
+    ("on", "Old Norse", "ǫǪøØœŒęĘǿǾáéíóúýÁÉÍÓÚÝǽ"),
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -216,12 +230,12 @@ impl Settings {
     }
 }
 
-/// The languages `fonts` can set, by name.
+/// The languages `fonts` can set, by their short names.
 pub fn languages(fonts: &Fonts) -> Vec<&'static str> {
     LANGUAGES
         .iter()
-        .filter(|(_, letters)| letters.chars().all(|c| fonts.covers(c)))
-        .map(|(name, _)| *name)
+        .filter(|(_, _, letters)| letters.chars().all(|c| fonts.covers(c)))
+        .map(|(short, _, _)| *short)
         .collect()
 }
 

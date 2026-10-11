@@ -4343,6 +4343,8 @@ fn type_settings(
         ),
     ];
     let mut flash = true;
+    // Whether the key to the languages' short names is open.
+    let mut legend = false;
     loop {
         let started = Instant::now();
         let at = |names: &[&str], name: &str| names.iter().position(|n| *n == name).unwrap_or(0);
@@ -4383,7 +4385,15 @@ fn type_settings(
             })
             .map(|(k, _)| (Choice::Measure, k))
             .collect();
-        let ts = ui.type_screen(&rows, &picked, &faint, &languages, note.as_deref());
+        let key: Vec<(&str, &str)> = settings::LANGUAGES.iter().map(|l| (l.0, l.1)).collect();
+        let ts = ui.type_screen(
+            &rows,
+            &picked,
+            &faint,
+            &languages,
+            legend.then_some(key.as_slice()),
+            note.as_deref(),
+        );
         let mut pixels = chrome.page(&ts.screen.page, width, height);
         // The specimen, from the top of a page set as chosen.
         let set = wordhord_typeset::lay_out(
@@ -4461,6 +4471,7 @@ fn type_settings(
         let name = |list: &[&str], k: usize| list.get(k).map(|n| n.to_string());
         match action {
             Action::Back => break,
+            Action::Legend => legend = !legend,
             Action::Choose(Choice::Face, k) => {
                 chosen.face = settings::FACES.get(k).map_or(chosen.face, |f| f.key.into())
             }

@@ -14,9 +14,9 @@ It runs beside Kobo's own software. You open it from NickelMenu. Nickel pauses w
 
 ## What it does
 
-**Sets pages like a book.** Wordhord has its own typesetter. It breaks lines the way TeX does, a whole paragraph at a time. Figures are old-style. Verse keeps its lines. There are five faces, each marked with the old languages it can set, and sizes named as printers named them, long primer to great primer.
+**Sets pages like a book.** Wordhord has its own typesetter. It breaks lines the way TeX does, a whole paragraph at a time. Figures are old-style. Verse keeps its lines. There are five faces, each marked with the languages it can set: European, Latin, Greek with its accents, Old English, Old Norse; and sizes named as printers named them, long primer to great primer.
 
-**Looks up any word you tap.** The dictionary is Wiktionary, offline, and it knows inflected forms: tap *mǫgu* and get *mǫgr*. English, Old English and Old Norse so far. Etymologies lead on: from *hate*, tap Old English *hatian* and it opens too.
+**Looks up any word you tap.** The dictionary is Wiktionary, offline, and it knows inflected forms: tap *mǫgu* and get *mǫgr*. English, Latin, Ancient Greek, Old English and Old Norse so far. Accents and long marks needn't match, and Latin's *-que* comes off: tap *virumque* and get *vir*. Etymologies lead on: from *hate*, tap Old English *hatian* and it opens too.
 
 **Keeps the words you hoard.** One tap keeps a word with the sentence you found it in. *Unlock the hoard* brings them back as cards, spaced out the way Anki spaces them, so they stay. A word you're still learning has a faint dotted line under it wherever you meet it again, and its entry says where you first did.
 
