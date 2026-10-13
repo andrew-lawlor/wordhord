@@ -11,7 +11,9 @@ Options:
     --fps N          frames a second (30)
     --width N        the video's width; height keeps the screen's shape (1080)
     --max-pause S    no pause longer than this, in seconds (1.5)
-    --from S --to S  only this stretch, in seconds of the recording
+    --from S --to S  only this stretch, in seconds of the video
+    --raw            --from and --to in seconds of the recording itself,
+                     before pauses are cut short
     --no-flash       a full refresh without its flash
     --frames DIR     write PNG frames there instead of a video
 
@@ -92,12 +94,21 @@ def main():
     ap.add_argument("--max-pause", type=float, default=1.5)
     ap.add_argument("--from", dest="start", type=float, default=0.0)
     ap.add_argument("--to", dest="end", type=float, default=None)
+    ap.add_argument("--raw", action="store_true")
     ap.add_argument("--no-flash", action="store_true")
     ap.add_argument("--frames")
     a = ap.parse_args()
 
     w, h, events = read(a.recording)
+    raw = [t / 1e6 for t, _, _ in events]
     events = timeline(events, a.max_pause)
+    if a.raw:
+        # The recording's own seconds, as the video's: the first event
+        # at or after each.
+        at = lambda s: next((e[0] for e, r in zip(events, raw) if r >= s), events[-1][0])
+        a.start = at(a.start)
+        if a.end is not None:
+            a.end = at(a.end)
     if not events:
         sys.exit("nothing recorded")
     end = a.end if a.end is not None else events[-1][0] + 1.0
