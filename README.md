@@ -36,9 +36,9 @@ It runs beside Kobo's own software. You open it from NickelMenu. Nickel pauses w
 **Meet them again.** A word you're still learning has a faint dotted line under it wherever it turns up, in any book, in any of its forms. Tap it, and its entry says where you first met it. Once you know a word, the line goes. Forget it, and the line comes back.
 
 <p>
-<img src="docs/trail.png" width="32%" alt="The panel after following templum: the Latin entry, with '‹ temple' at the top to go back, and its own etymology leading on to Old Norse">
-<img src="docs/met.png" width="32%" alt="The next page: 'fierce', a word kept in the hoard, looked up; the entry begins 'Met before, in The Aeneid' with the line it was kept from">
-<img src="docs/unlock.png" width="32%" alt="Unlocking the hoard: the word 'presage' in its line from the Aeneid, its definition, and four grades from again to easy">
+<img src="docs/etymology-trail.gif" width="32%" alt="Moby-Dick's first page: 'spleen' is tapped; its etymology names Latin splēn, which opens, and then Ancient Greek σπλήν; back again, and the word is hoarded">
+<img src="docs/met-before.gif" width="32%" alt="'leviathan' is hoarded, then met again in chapter III with a dotted line under it; tapped, its entry begins 'Met before, in Moby-Dick'">
+<img src="docs/unlock-the-hoard.gif" width="32%" alt="Unlocking the hoard: a card shows 'spleen' in its line from Moby-Dick, the entry is shown, and the card is graded">
 </p>
 
 ## The pen
@@ -54,7 +54,12 @@ On a Kobo with a pen:
 **Notes on underlines.** Hold an underline for its card. *Note* types one on ruled lines. *Write* takes one in your own hand. Either way, a sideline in the margin marks it. Like a sticky note, but kept with its passage, and in your hand if you like.
 
 <p>
-<img src="docs/card.png" width="32%" alt="An underline held: its card shows the handwritten note 'cf. VI' over the choices note, write, remove underline and look up">
+<img src="docs/pen-underline.gif" width="32%" alt="The pen, its button held, draws a rough line under 'Circumambulate the city of a dreamy Sabbath afternoon', and it becomes a clean underline">
+<img src="docs/written-note.gif" width="32%" alt="The underline is held, write is chosen, and 'cf. Job 41.' is written by hand; the underline's card then shows it">
+<img src="docs/latin-coda.gif" width="32%" alt="Virgil's Latin: 'virumque' in the first line of the Aeneid is tapped, and its entry is vir, man, with the example 'Arma virumque cano'">
+</p>
+
+<p>
 <img src="docs/keyboard.png" width="32%" alt="Searching the book with the keyboard in Greek: the accented vowels on the top row, the Greek alphabet below">
 <img src="docs/home.png" width="32%" alt="The library's home: four books being read, the shelves, the hoard with four words, and the commonplace book">
 </p>
@@ -124,6 +129,6 @@ Wordhord is free software under the [GNU GPL, version 3](LICENSE).
 
 It draws the screen with [FBInk](https://github.com/NiLuJe/FBInk), by NiLuJe. Its faces are Junicode, EB Garamond, Cardo, Literata and Atkinson Hyperlegible, with Noto fonts for Hebrew, Arabic and Devanagari, all under the SIL Open Font License; see [fonts/README.md](fonts/README.md). The dictionaries come from Wiktionary, under CC BY-SA. Greek and Latin are hyphenated by TeX's own patterns; see [crates/wordhord-typeset/hyphenation/README.md](crates/wordhord-typeset/hyphenation/README.md). The sleep screen is made from a photograph of Baade's painting, CC BY-SA 3.0; see [art/README.md](art/README.md). The editions in `books/` carry their own licences; see [books/README.md](books/README.md).
 
-The screenshots show [Standard Ebooks](https://standardebooks.org/)' editions of Dryden's *Aeneid* and other books in the public domain. Their careful work is worth your support.
+The screenshots show [Standard Ebooks](https://standardebooks.org/)' editions of Dryden's *Aeneid* and other books in the public domain. Their careful work is worth your support. The moving pictures show their *Moby-Dick*, and Virgil's Latin from [Project Gutenberg](https://www.gutenberg.org/ebooks/227), recorded on a Kobo Elipsa 2E as it was used.
 
 Much of how Wordhord talks to a Kobo was learned from [KOReader](https://github.com/koreader/koreader).
