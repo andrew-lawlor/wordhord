@@ -17,3 +17,8 @@ bold = "../fonts/junicode/Junicode-Bold.otf"
 bold_italic = "../fonts/junicode/Junicode-BoldItalic.otf"
 mono = "../fonts/dejavu/DejaVuSansMono.ttf"
 fallback = "../fonts/dejavu/DejaVuSerif.ttf"
+fallbacks = [
+    "../fonts/noto/NotoSerifHebrew-Regular.ttf",
+    "../fonts/noto/NotoNaskhArabic-Regular.ttf",
+    "../fonts/noto/NotoSerifDevanagari-Regular.ttf",
+]

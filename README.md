@@ -122,7 +122,7 @@ cargo run -q --bin wordhord -- align books/edda-pettit
 
 Wordhord is free software under the [GNU GPL, version 3](LICENSE).
 
-It draws the screen with [FBInk](https://github.com/NiLuJe/FBInk), by NiLuJe. Its faces are Junicode, EB Garamond, Cardo, Literata and Atkinson Hyperlegible, all under the SIL Open Font License; see [fonts/README.md](fonts/README.md). The dictionaries come from Wiktionary, under CC BY-SA. Greek and Latin are hyphenated by TeX's own patterns; see [crates/wordhord-typeset/hyphenation/README.md](crates/wordhord-typeset/hyphenation/README.md). The sleep screen is made from a photograph of Baade's painting, CC BY-SA 3.0; see [art/README.md](art/README.md). The editions in `books/` carry their own licences; see [books/README.md](books/README.md).
+It draws the screen with [FBInk](https://github.com/NiLuJe/FBInk), by NiLuJe. Its faces are Junicode, EB Garamond, Cardo, Literata and Atkinson Hyperlegible, with Noto fonts for Hebrew, Arabic and Devanagari, all under the SIL Open Font License; see [fonts/README.md](fonts/README.md). The dictionaries come from Wiktionary, under CC BY-SA. Greek and Latin are hyphenated by TeX's own patterns; see [crates/wordhord-typeset/hyphenation/README.md](crates/wordhord-typeset/hyphenation/README.md). The sleep screen is made from a photograph of Baade's painting, CC BY-SA 3.0; see [art/README.md](art/README.md). The editions in `books/` carry their own licences; see [books/README.md](books/README.md).
 
 The screenshots show [Standard Ebooks](https://standardebooks.org/)' editions of Dryden's *Aeneid* and other books in the public domain. Their careful work is worth your support.
 

@@ -4337,6 +4337,7 @@ fn type_settings(
                 bold_italic: file,
                 mono: None,
                 fallback: None,
+                fallbacks: Vec::new(),
             };
             Fonts::load(&base.dir, &paths).ok()
         })

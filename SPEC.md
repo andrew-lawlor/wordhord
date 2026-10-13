@@ -90,6 +90,8 @@ The Kobo Stylus 2 has a tip, a button and an eraser end. Wordhord reads the pen'
 
 **The book's language picks the pack.** It comes from the EPUB's `dc:language`, or from an element's `lang`, so a Latin phrase in an English book opens the Latin pack.
 
+**Other scripts.** Etymologies cite words in scripts no face has. After DejaVu, a profile lists fonts for them, tried in order: Noto Serif Hebrew, Noto Naskh Arabic and Noto Serif Devanagari, so Hebrew *לִוְיָתָן*, Arabic and Sanskrit *वीर* show as themselves. A word in a script written right to left is shaped so; a phrase of several such words would want the bidirectional algorithm, which isn't here yet. Chinese, Japanese and Korean, in some eight thousand English entries, aren't covered: their fonts are some twenty megabytes.
+
 **Etymology trail.** In an entry's etymology, an ancestor in a language with a pack installed is set in italic: the word straight after the language's name, *hate* → Old English *hatian*, Old Norse *hatr*. Not a reconstruction (*\*hataz*), which no pack holds, and not after a longer name: Middle English isn't English. A hairline under it says it can be followed. A tap opens its entry from its own pack, in the panel, with *‹ hate* at the top to go back; its etymology may go on. An ancestor isn't hoarded from there: the sentence it would be kept with isn't its.
 
 **Corrections.** A small file per pack, `corrections.toml`, fixes or adds entries. Yours, versioned, merged when the pack is built.

@@ -46,6 +46,10 @@ pub struct FontPaths {
     /// For code.
     pub mono: Option<String>,
     pub fallback: Option<String>,
+    /// After the fallback, fonts for scripts it lacks (Hebrew, Arabic,
+    /// Devanagari), tried in order.
+    #[serde(default)]
+    pub fallbacks: Vec<String>,
 }
 
 fn justified() -> bool {

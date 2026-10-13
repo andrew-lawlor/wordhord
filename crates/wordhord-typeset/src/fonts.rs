@@ -46,13 +46,14 @@ pub struct FontFile {
     pub data: &'static [u8],
 }
 
-/// The family's four faces and a fallback, as indices into `files`.
+/// The family's four faces and the fallbacks, as indices into `files`.
 pub struct Fonts {
     pub files: Vec<FontFile>,
     /// Each file parsed once: parsing per lookup made shaping crawl.
     parsed: Vec<rustybuzz::Face<'static>>,
     faces: [usize; 5],
-    fallback: Option<usize>,
+    /// Tried in order for a character the face lacks.
+    fallback: Vec<usize>,
 }
 
 /// One glyph, positioned relative to the start of its run, in pixels.
@@ -102,7 +103,12 @@ impl Fonts {
                 None => regular,
             },
         ];
-        let fallback = paths.fallback.as_deref().map(&mut add).transpose()?;
+        let fallback = paths
+            .fallback
+            .iter()
+            .chain(&paths.fallbacks)
+            .map(|p| add(p))
+            .collect::<Result<Vec<_>, _>>()?;
         let parsed = files
             .iter()
             .map(|f| rustybuzz::Face::from_slice(f.data, 0).expect("checked when read"))
@@ -130,7 +136,7 @@ impl Fonts {
             files,
             parsed,
             faces: [0, 1.min(last), 2.min(last), 3.min(last), 0],
-            fallback: None,
+            fallback: Vec::new(),
         })
     }
 
@@ -156,7 +162,9 @@ impl Fonts {
 
     /// Shapes `text` in `face` at `size` pixels, with OpenType `features`
     /// (`smcp` for small caps). Returns one run per font used: characters
-    /// the face lacks go to the fallback.
+    /// the face lacks go to the first fallback that has them. A run in a
+    /// script written right to left (a Hebrew or Arabic word) is shaped
+    /// so, its glyphs in the order they're seen.
     pub fn shape(&self, text: &str, face: Face, size: f32, features: &[&str]) -> Vec<Shaped> {
         let text = visible(text);
         if text.is_empty() {
@@ -168,9 +176,14 @@ impl Fonts {
         // Split into runs by font.
         let mut runs: Vec<(usize, String)> = Vec::new();
         for c in text.chars() {
-            let file = match self.fallback {
-                Some(fb) if !has(primary, c) && has(fb, c) => fb,
-                _ => primary,
+            let file = if has(primary, c) {
+                primary
+            } else {
+                self.fallback
+                    .iter()
+                    .copied()
+                    .find(|&fb| has(fb, c))
+                    .unwrap_or(primary)
             };
             match runs.last_mut() {
                 Some((f, s)) if *f == file => s.push(c),
@@ -186,7 +199,10 @@ impl Fonts {
                 let scale = size / face.units_per_em() as f32;
                 let mut buffer = rustybuzz::UnicodeBuffer::new();
                 buffer.push_str(&s);
-                buffer.set_direction(rustybuzz::Direction::LeftToRight);
+                buffer.guess_segment_properties();
+                if buffer.direction() != rustybuzz::Direction::RightToLeft {
+                    buffer.set_direction(rustybuzz::Direction::LeftToRight);
+                }
                 let out = rustybuzz::shape(face, &features, buffer);
                 let mut x = 0.0;
                 let mut glyphs = Vec::with_capacity(out.len());
