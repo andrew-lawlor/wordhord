@@ -1,96 +1,85 @@
 # Wordhord
 
-An opinionated e-reader for Kobo. Better still with a pen.
+An e-reader for Kobo, made the way books were. Better still with a pen.
 
-In *Beowulf*, a warden stands on the sea-cliffs and asks the strangers who they are. Beowulf answers him, and the poet says *wordhord onleac*: he unlocked his word-hoard. Wordhord is a reader built around that idea. You read, you keep the words you meet, and you write in the margins.
+In *Beowulf*, a warden on the sea-cliffs asks the strangers who they are. Beowulf answers, and the poet says *wordhord onleac*: he unlocked his word-hoard. Wordhord is a reading app built around that idea. You read, you keep the words you meet, and you write in the margins.
 
-Print spent five hundred years learning how to set a page, gloss a word and make room for a reader's hand. E-readers kept little of it. Wordhord puts it back.
+It runs on your Kobo alongside Kobo's own reading app, and puts it back when you close it. It reads your EPUB books. It has no store, no account and no cloud. Everything stays on your Kobo.
 
 <p>
-<img src="docs/page.png" width="32%" alt="A page of Dryden's Aeneid: two passages underlined, one with a sideline for its note, a word ringed in ink, a tick in the margin, a ribbon hanging from the top, and a pointing hand at the top left">
-<img src="docs/lookup.png" width="32%" alt="The word 'temple' looked up in a panel at the foot, its etymology naming Old English templ and Latin templum, each underlined to follow">
-<img src="docs/commonplace.png" width="32%" alt="The book's page in the commonplace book: four passages, one with a typed note after a pilcrow, one with a handwritten note under it">
+<img src="docs/etymology-trail.gif" width="32%" alt="Moby-Dick's first page: 'spleen' is tapped; its history names Latin splēn, which opens, and then Ancient Greek σπλήν; back again, and the word is saved">
+<img src="docs/pen-underline.gif" width="32%" alt="The pen draws a rough line under 'Circumambulate the city of a dreamy Sabbath afternoon', and it becomes a clean underline">
+<img src="docs/page.png" width="32%" alt="A page of Dryden's Aeneid with two passages underlined, a word circled in ink, a tick in the margin and a ribbon bookmark">
 </p>
 
-It runs beside Kobo's own software. You open it from NickelMenu. Nickel pauses while it runs and comes back when you close it. Nothing on the Kobo is replaced.
+## Reading
 
-## The page
+**Pages set like a printed book.** Wordhord lays out each paragraph as a whole, the way fine printing does, so the spaces between words stay even. Kobo's own app fills one line at a time, which can leave gaps. Verse keeps its lines. Numbers and small capitals look as they would in a good book.
 
-**Set like a book.** Wordhord has its own typesetter. It breaks lines the way TeX does, a whole paragraph at a time, so the spacing stays even. Kobo's own reader and KOReader fill one line at a time. Figures are old-style. Small caps are real small caps. Verse keeps its lines.
+**Type you choose by eye.** Pick a typeface, size and line spacing, and see a sample page change as you go. Each typeface is marked with the languages it can show.
 
-**Type, chosen against a specimen.** Five faces, each marked with what it can set: *eur* for the languages of Europe, *lat* for Latin's long vowels, *gk* for Greek with its accents and breathings, *oe* for Old English, *on* for Old Norse. A key above the faces spells them out. Sizes have the printers' old names, long primer to great primer. A measure that can't make the line any narrower on your screen is set in grey.
+**The rest of a reader.** Search a book or your library. Bookmark a page with a ribbon. Slide a finger up or down the page to change the light: the left side for brightness, the right for warmth. When the Kobo sleeps, it shows a painting of the warden on his cliff.
 
 <p>
-<img src="docs/detail.png" width="66%" alt="A close view of the page: an underline with a sideline beside it, a ring of ink round 'venerable', a tick in the margin, and faint dotted lines under 'omen' and 'brazen', words kept in the hoard">
-<img src="docs/type.png" width="32%" alt="The type screen: a specimen passage, then the faces with their language tags and the key open above them, then size, measure, leading and setting">
+<img src="docs/type.png" width="32%" alt="The type screen: a sample passage, then the typefaces, each with the languages it can show, then size, line length, spacing and alignment">
+<img src="docs/home.png" width="32%" alt="The library's home: books being read, the shelves, saved words, and the commonplace book">
+<img src="docs/sleep.png" width="32%" alt="The sleep screen: Knud Baade's painting of a warden on a sea-cliff under a stormy moon, with WORDHORD over the sky">
 </p>
 
 ## Words
 
-**Tap a word and Wiktionary answers.** Offline, from packs built from Wiktionary. It knows inflected forms: tap *mǫgu* and get *mǫgr*, tap *ἀνθρώπων* and get *ἄνθρωπος*. English, Latin, Ancient Greek, Old English and Old Norse, for reading. Accents and long marks needn't match. Latin's *-que* comes off: tap *virumque* and get *vir*.
+**Tap any word to look it up.** The dictionary is Wiktionary, kept on your Kobo, so it works offline. It understands word forms: tap *went* and it finds *go*.
 
-**Follow a word back.** An etymology names a word's ancestors. Where Wordhord has a dictionary for the ancestor's language, the word is underlined, and a tap opens it. *Temple* leads to Latin *templum*, and *templum* on to Old Norse *þǫmb*. *‹ temple* takes you back. Fifteen more languages are there to follow: Middle English, Old French, Middle French, Old High German, Old Saxon, Old Frisian, Middle Dutch, Gothic, Old Irish, Old Church Slavonic and Sanskrit, and the reconstructed Proto-Germanic, Proto-West Germanic, Proto-Italic and Proto-Indo-European. Latin *vir* leads to *\*wiHrós*, "man". Tap your way down a word's whole line, four thousand years.
+**Follow a word's history.** A dictionary entry tells where a word came from. Where that's another language Wordhord knows, the older word is underlined. Tap it to open it. *Spleen* leads to Latin, then to Greek. Latin *vir*, "man", leads back to Proto-Indo-European, about six thousand years.
 
-**Keep the words you meet.** One tap hoards a word with the sentence you found it in. *Unlock the hoard* brings them back as cards, spaced the way Anki spaces them, so they stay.
+**Keep the words you meet.** One tap saves a word with the sentence you found it in. Wordhord brings saved words back as flashcards, spaced out so you remember them, the way Anki does it.
 
-**Meet them again.** A word you're still learning has a faint dotted line under it wherever it turns up, in any book, in any of its forms. Tap it, and its entry says where you first met it. Once you know a word, the line goes. Forget it, and the line comes back.
+**Meet them again.** A word you're still learning gets a faint dotted line wherever it turns up, in any book. Tap it, and it reminds you where you first met it. Once you know the word, the line goes.
 
-<p>
-<img src="docs/etymology-trail.gif" width="32%" alt="Moby-Dick's first page: 'spleen' is tapped; its etymology names Latin splēn, which opens, and then Ancient Greek σπλήν; back again, and the word is hoarded">
-<img src="docs/met-before.gif" width="32%" alt="'leviathan' is hoarded, then met again in chapter III with a dotted line under it; tapped, its entry begins 'Met before, in Moby-Dick'">
-<img src="docs/unlock-the-hoard.gif" width="32%" alt="Unlocking the hoard: a card shows 'spleen' in its line from Moby-Dick, the entry is shown, and the card is graded">
-</p>
-
-## The pen
-
-On a Kobo with a pen:
-
-**The pen only writes.** A full stop is a full stop, never a page turn. While the pen is near, your hand can rest on the page, and a pointing hand, ☛, at the top left says so. The other end of the stylus rubs out.
-
-**Ink belongs to its words.** Each stroke is kept with the words it was written by. Change the type and the ink moves with them.
-
-**Underline by hand.** Hold a word until it turns grey, drag, and lift. A loupe above your finger shows the word your fingertip hides. Or hold the pen's button and draw under a line.
-
-**Notes on underlines.** Hold an underline for its card. *Note* types one on ruled lines. *Write* takes one in your own hand. Either way, a sideline in the margin marks it. Like a sticky note, but kept with its passage, and in your hand if you like.
+**Old languages too.** Read Latin, Ancient Greek, Old English or Old Norse, and look words up in them. The on-screen keyboard has their letters.
 
 <p>
-<img src="docs/pen-underline.gif" width="32%" alt="The pen, its button held, draws a rough line under 'Circumambulate the city of a dreamy Sabbath afternoon', and it becomes a clean underline">
-<img src="docs/written-note.gif" width="32%" alt="The underline is held, write is chosen, and 'cf. Job 41.' is written by hand; the underline's card then shows it">
+<img src="docs/met-before.gif" width="32%" alt="'leviathan' is saved, then met again in a later chapter with a dotted line under it; tapped, its entry begins 'Met before, in Moby-Dick'">
+<img src="docs/unlock-the-hoard.gif" width="32%" alt="Reviewing saved words: a card shows 'spleen' in its line from Moby-Dick, the definition is shown, and the card is graded">
 <img src="docs/latin-coda.gif" width="32%" alt="Virgil's Latin: 'virumque' in the first line of the Aeneid is tapped, and its entry is vir, man, with the example 'Arma virumque cano'">
 </p>
 
-<p>
-<img src="docs/keyboard.png" width="32%" alt="Searching the book with the keyboard in Greek: the accented vowels on the top row, the Greek alphabet below">
-<img src="docs/home.png" width="32%" alt="The library's home: four books being read, the shelves, the hoard with four words, and the commonplace book">
-</p>
+## Writing with the pen
 
-## Everything else
+For Kobos with a stylus, such as the Elipsa and the Libra Colour.
 
-**The commonplace book.** Every underline gathers there, by book and by day, with its notes, typed or written. Ink from the page is there too, under the line it was written by. Search it. Open it from the library, or from a book's contents.
+**The pen only writes.** A dot is a dot, never a page turn. Rest your hand on the screen while you write. A small pointing hand at the top of the page shows Wordhord knows the pen is near. Turn the stylus over to erase.
 
-**Search.** A book, the library, the commonplace book. The keyboard's top row has a language's own letters: Old English, Old Norse, Latin, or Greek, which turns the whole keyboard Greek.
+**Underline as you would on paper.** Hold the pen's button and draw under a line, and it snaps to a clean underline. No pen? Hold a word with your finger and drag.
 
-**Ribbons.** Tap the top right corner and a ribbon hangs into the margin, forked like a hardback's silk.
+**Notes on what you underline.** Hold an underline to add a note, typed or in your own hand. A mark in the margin shows which passages have one.
 
-**Sleeps under a painting.** Knud Baade's *Scene from the Era of Norwegian Sagas* (1850): the warden on his cliff.
-
-**Keeps your notes as plain files.** Words kept, underlines, notes and ink go into logs in the app's folder, one record a line. Nothing is ever overwritten. Support in [Kollate](https://github.com/andrew-lawlor/kollate), to read them on the desktop, is under way.
+**Your writing stays with the words.** Make the text bigger or smaller, and your notes in the margin move with the lines they belong to.
 
 <p>
-<img src="docs/sleep.png" width="32%" alt="The sleep screen: Baade's warden on a sea-cliff under a stormy moon, with WORDHORD over the sky">
+<img src="docs/written-note.gif" width="32%" alt="An underline is held, write is chosen, and 'cf. Job 41.' is written by hand; the underline then shows it">
+<img src="docs/detail.png" width="64%" alt="A close view of a page: an underline with a mark in the margin beside it, a word circled in ink, a tick in the margin, and faint dotted lines under saved words">
 </p>
 
-## What it won't do
+## Your notes
 
-No store, no account, no cloud. No copy and paste, since a Kobo has no clipboard. No settings for things that have a right answer. If something can't be done as well as a good printed book does it, it waits.
+**A commonplace book.** Everything you underline gathers in one place, by book and by day, with your notes, typed or handwritten. Search it. Open it from your library or from a book's contents.
 
-## Status
+**Kept as plain files.** Your saved words, underlines, notes and handwriting are ordinary files on your Kobo, never sent anywhere, and nothing is ever overwritten. [Kollate](https://github.com/andrew-lawlor/kollate), a desktop app, will read them.
 
-Early, and in daily use on a Kobo Elipsa 2E and a Kobo Libra Colour. A Kobo without a pen gets everything but the ink: you underline with a finger and type your notes. Wordhord lays out pages for the screens it knows, so a Kobo with the same screen as one of those, such as the Libra 2, should work but hasn't been tried. Other screens, like the Clara's or the Sage's, need a profile first: a few lines in `profiles/` giving the screen's size, its resolution and the margins. EPUB only, and DRM-free: books bought from the Kobo store are locked to Kobo's own reader, and stay there. Wordhord counts them at the foot of *All books*, so you know they weren't lost. [SPEC.md](SPEC.md) says what's done, what's next, and why.
+<p>
+<img src="docs/commonplace.png" width="32%" alt="A book's page in the commonplace book: passages underlined, one with a typed note, one with a handwritten note">
+</p>
 
-## Install
+## Which Kobos
 
-You need a Kobo with [NickelMenu](https://pgaskin.net/NickelMenu/), and Wordhord built from source. Building needs Rust with the `armv7-unknown-linux-musleabihf` target, [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) and zig.
+Wordhord is early, and in daily use on a Kobo Elipsa 2E and a Kobo Libra Colour. A Kobo with the same screen, such as the Libra 2, should work but hasn't been tried. Other models need a small settings file for their screen first. Without a pen, you get everything but the handwriting.
+
+It reads EPUB books without DRM. Books bought from the Kobo store are locked to Kobo's own app and stay there. Wordhord tells you how many it can't open, so you know they weren't lost.
+
+## Getting started
+
+You need [NickelMenu](https://pgaskin.net/NickelMenu/), a free add-on that puts a menu in Kobo's own app, and Wordhord built from its source:
 
 ```
 git clone --recursive https://github.com/andrew-lawlor/wordhord
@@ -98,33 +87,26 @@ cd wordhord
 scripts/package-kobo.sh
 ```
 
-Plug in the Kobo and copy `dist/kobo/.adds/` into the `.adds` folder at its root. Eject it. *Wordhord* is now in NickelMenu. It finds the books already on the Kobo.
+Building needs Rust with the `armv7-unknown-linux-musleabihf` target, [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) and zig. Plug in your Kobo, copy `dist/kobo/.adds/` into the `.adds` folder at its root, and eject it. *Wordhord* is now in NickelMenu.
 
-Dictionaries come as packs, one a language, from the [dictionary release](https://github.com/andrew-lawlor/wordhord/releases/tag/dictionaries-2026-10). Unzip the ones you want into `.adds/wordhord/dictionaries/` on the Kobo. English is the big one, 310 MB unzipped, Latin 470 MB; most of the old languages are a few megabytes. Every one is built from Wiktionary, by way of [kaikki.org](https://kaikki.org/), under CC BY-SA.
+Dictionaries are separate downloads, one a language, from the [dictionary release](https://github.com/andrew-lawlor/wordhord/releases/tag/dictionaries-2026-10). Unzip the ones you want into `.adds/wordhord/dictionaries/` on your Kobo. English is the largest, at about 300 MB. Most of the old languages are a few megabytes.
 
-To build them yourself instead, `scripts/build-dictionaries.sh` downloads each language from kaikki.org and builds its pack in `~/.cache/wordhord-tools/kaikki/`, where `scripts/package-kobo.sh` finds it.
+## How it works
 
-To try Wordhord on the desktop, with any folder of EPUBs as its library:
+Wordhord is written in Rust. NickelMenu starts it. It pauses Nickel, Kobo's reading app, saves the screen, and restores both when it closes. It draws with [FBInk](https://github.com/NiLuJe/FBInk) and reads the touch screen and pen directly, so palm rejection, the pen's buttons and the eraser are its own.
 
-```
-scripts/try-desktop.sh ~/Books
-```
+It opens EPUBs with its own engine, which keeps only the styling that carries meaning: italics, small caps, alignment, verse. Its typesetter breaks lines with the Knuth–Plass algorithm from TeX, a paragraph at a time, with hyphenation for English, Latin and Greek. Each chapter is laid out once and cached, so pages turn quickly. Fonts are bundled (Junicode, EB Garamond, Cardo, Literata, Atkinson Hyperlegible), with Noto fonts for the Hebrew, Arabic and Sanskrit words that dictionaries cite.
 
-## Old texts
+Dictionaries are SQLite packs, built by `scripts/build-dictionaries.sh` from [kaikki.org](https://kaikki.org/)'s extracts of Wiktionary. There are twenty: English, Latin, Ancient Greek, Old English and Old Norse for reading, and fifteen older languages, back to Proto-Indo-European, for following etymologies. Saved words are reviewed with the FSRS algorithm.
 
-Wordhord began as a reader for old texts: the original and the translation, line by line. That work lives on as *editions*, compiled on the desktop. `books/` holds five, among them Pettit's *Poetic Edda* in Old Norse and English, aligned stanza by stanza. [VOCABULARY.md](VOCABULARY.md) describes their markup.
+Notes and saved words are append-only JSON Lines logs. Underlines and ink are anchored to the words they belong to, not to page positions, so they survive any change of type. A desktop build runs the same app in a window, for development, and can record a session for a video (`scripts/replay.py`). Wordhord also compiles parallel editions of old texts, an original and its translation aligned stanza by stanza; `books/` has five.
 
-```
-cargo run -q --bin wordhord -- check books/edda-pettit
-cargo run -q --bin wordhord -- align books/edda-pettit
-```
+[SPEC.md](SPEC.md) has the full design: what's done, what's next, and why.
 
 ## Credits and licence
 
 Wordhord is free software under the [GNU GPL, version 3](LICENSE).
 
-It draws the screen with [FBInk](https://github.com/NiLuJe/FBInk), by NiLuJe. Its faces are Junicode, EB Garamond, Cardo, Literata and Atkinson Hyperlegible, with Noto fonts for Hebrew, Arabic and Devanagari, all under the SIL Open Font License; see [fonts/README.md](fonts/README.md). The dictionaries come from Wiktionary, under CC BY-SA. Greek and Latin are hyphenated by TeX's own patterns; see [crates/wordhord-typeset/hyphenation/README.md](crates/wordhord-typeset/hyphenation/README.md). The sleep screen is made from a photograph of Baade's painting, CC BY-SA 3.0; see [art/README.md](art/README.md). The editions in `books/` carry their own licences; see [books/README.md](books/README.md).
+Its typefaces are free fonts, most under the SIL Open Font License; see [fonts/README.md](fonts/README.md). The dictionaries come from Wiktionary, under CC BY-SA. The sleep screen is made from a photograph of Knud Baade's *Scene from the Era of Norwegian Sagas* (1850), CC BY-SA 3.0; see [art/README.md](art/README.md).
 
-The screenshots show [Standard Ebooks](https://standardebooks.org/)' editions of Dryden's *Aeneid* and other books in the public domain. Their careful work is worth your support. The moving pictures show their *Moby-Dick*, and Virgil's Latin from [Project Gutenberg](https://www.gutenberg.org/ebooks/227), recorded on a Kobo Elipsa 2E as it was used.
-
-Much of how Wordhord talks to a Kobo was learned from [KOReader](https://github.com/koreader/koreader).
+The screenshots and recordings show [Standard Ebooks](https://standardebooks.org/)' public-domain editions of Dryden's *Aeneid* and Melville's *Moby-Dick*, and Virgil's Latin from [Project Gutenberg](https://www.gutenberg.org/ebooks/227). Much of how Wordhord talks to a Kobo was learned from [KOReader](https://github.com/koreader/koreader).
