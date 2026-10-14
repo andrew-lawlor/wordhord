@@ -15,6 +15,8 @@ for face in junicode ebgaramond cardo literata atkinson noto; do
 	cp fonts/$face/*.otf fonts/$face/*.ttf "$APP/fonts/" 2>/dev/null || true
 	cp fonts/$face/OFL.txt "$APP/fonts/$face-OFL.txt"
 done
+# Wordhord's own licence, the GPL, goes with it.
+cp LICENSE "$APP/LICENSE.txt"
 # The sleep screen: Knud Baade's painting, with its credit.
 cp art/sleep-*.png "$APP/"
 cp art/README.md "$APP/sleep-credit.txt"

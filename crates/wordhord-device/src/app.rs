@@ -38,6 +38,7 @@ enum Leave {
 }
 
 pub fn run(screen: &mut dyn Platform, root: &Path, app: &Path) -> Result<(), String> {
+    eprintln!("wordhord {}", env!("CARGO_PKG_VERSION"));
     // Recorded, for a demonstration, if the app folder asks.
     if crate::record::Recorder::wanted(app) {
         let mut recorder = crate::record::Recorder::new(screen, app)?;
