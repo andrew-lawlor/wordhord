@@ -27,9 +27,9 @@ It runs beside Kobo's own software. You open it from NickelMenu. Nickel pauses w
 
 ## Words
 
-**Tap a word and Wiktionary answers.** Offline, from packs built from Wiktionary. It knows inflected forms: tap *mǫgu* and get *mǫgr*, tap *ἀνθρώπων* and get *ἄνθρωπος*. English, Latin, Ancient Greek, Old English and Old Norse so far. Accents and long marks needn't match. Latin's *-que* comes off: tap *virumque* and get *vir*.
+**Tap a word and Wiktionary answers.** Offline, from packs built from Wiktionary. It knows inflected forms: tap *mǫgu* and get *mǫgr*, tap *ἀνθρώπων* and get *ἄνθρωπος*. English, Latin, Ancient Greek, Old English and Old Norse, for reading. Accents and long marks needn't match. Latin's *-que* comes off: tap *virumque* and get *vir*.
 
-**Follow a word back.** An etymology names a word's ancestors. Where Wordhord has a dictionary for the ancestor's language, the word is underlined, and a tap opens it. *Temple* leads to Latin *templum*, and *templum* on to Old Norse *þǫmb*. *‹ temple* takes you back. Tap your way down a word's whole line.
+**Follow a word back.** An etymology names a word's ancestors. Where Wordhord has a dictionary for the ancestor's language, the word is underlined, and a tap opens it. *Temple* leads to Latin *templum*, and *templum* on to Old Norse *þǫmb*. *‹ temple* takes you back. Fifteen more languages are there to follow: Middle English, Old French, Middle French, Old High German, Old Saxon, Old Frisian, Middle Dutch, Gothic, Old Irish, Old Church Slavonic and Sanskrit, and the reconstructed Proto-Germanic, Proto-West Germanic, Proto-Italic and Proto-Indo-European. Latin *vir* leads to *\*wiHrós*, "man". Tap your way down a word's whole line, four thousand years.
 
 **Keep the words you meet.** One tap hoards a word with the sentence you found it in. *Unlock the hoard* brings them back as cards, spaced the way Anki spaces them, so they stay.
 
@@ -100,13 +100,9 @@ scripts/package-kobo.sh
 
 Plug in the Kobo and copy `dist/kobo/.adds/` into the `.adds` folder at its root. Eject it. *Wordhord* is now in NickelMenu. It finds the books already on the Kobo.
 
-Dictionary packs are built from [kaikki.org](https://kaikki.org/)'s extracts of Wiktionary:
+Dictionaries come as packs, one a language, from the [dictionary release](https://github.com/andrew-lawlor/wordhord/releases/tag/dictionaries-2026-10). Unzip the ones you want into `.adds/wordhord/dictionaries/` on the Kobo. English is the big one, 310 MB unzipped, Latin 470 MB; most of the old languages are a few megabytes. Every one is built from Wiktionary, by way of [kaikki.org](https://kaikki.org/), under CC BY-SA.
 
-```
-cargo run -q --bin wordhord -- dictionary non.jsonl non non.sqlite
-```
-
-Packs go in `.adds/wordhord/dictionaries/` on the Kobo. `scripts/package-kobo.sh` takes any it finds in `~/.cache/wordhord-tools/kaikki/`. They're large: Latin is about 500 MB, English about 330 MB. Take only the ones you read.
+To build them yourself instead, `scripts/build-dictionaries.sh` downloads each language from kaikki.org and builds its pack in `~/.cache/wordhord-tools/kaikki/`, where `scripts/package-kobo.sh` finds it.
 
 To try Wordhord on the desktop, with any folder of EPUBs as its library:
 

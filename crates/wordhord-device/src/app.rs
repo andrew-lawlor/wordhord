@@ -480,7 +480,7 @@ fn block(kind: wordhord_book::model::BlockKind) -> wordhord_book::model::Block {
 fn trail_hits(
     pages: &[Page],
     at: usize,
-    packs: &[&str],
+    lexicon: &Lexicon,
 ) -> (Vec<(Rect, String, String)>, Option<Rect>) {
     // Its letters, not the punctuation around them.
     let box_of = |w: &wordhord_typeset::page::Word| {
@@ -507,7 +507,8 @@ fn trail_hits(
         words.remove(0);
     }
     let texts: Vec<&str> = words.iter().map(|(_, w)| w.text.as_str()).collect();
-    let links = lexicon::etymology_links(&texts, packs)
+    let links = lexicon
+        .ancestors(&texts)
         .into_iter()
         .filter(|(k, _, _)| words[*k].0 == at)
         .map(|(k, word, pack)| (box_of(words[k].1), word, pack))
@@ -711,7 +712,7 @@ fn entry_of(
     } else if readings.iter().any(|r| r.entry.word == head) {
         readings.retain(|r| r.entry.word == head);
     }
-    Some(lexicon::entry_blocks(head, &readings, &[]))
+    Some(lexicon::entry_blocks(head, &readings, None))
 }
 
 /// The sign that the pen is in hand and fingers are ignored: a manicule,
@@ -2963,7 +2964,7 @@ fn read(
                                 .take(lexicon::SHOWN)
                                 .map(|r| (r.entry.word.clone(), r.entry.pos.clone()))
                                 .collect();
-                            lexicon::entry_blocks(&shown_as, &readings, &tools.lexicon.languages())
+                            lexicon::entry_blocks(&shown_as, &readings, Some(tools.lexicon))
                         }
                         None => lexicon::not_found(&shown_as, &lang, !tools.lexicon.is_empty()),
                     };
@@ -3113,7 +3114,7 @@ fn read(
                         }
                         // Ancestors to follow, each underlined with a
                         // hairline, as a link; and the way back from one.
-                        let (links, back) = trail_hits(&pages, at, &tools.lexicon.languages());
+                        let (links, back) = trail_hits(&pages, at, tools.lexicon);
                         for (r, _, _) in &links {
                             let baseline = r.y0 + (r.y1 - r.y0) * ascent / (ascent + descent);
                             let y = (baseline + (r.y1 - baseline) * 0.4).round() as u32;
@@ -3186,17 +3187,19 @@ fn read(
                                             shown.extend(if readings.is_empty() {
                                                 lexicon::not_found(&ancestor, &in_lang, true)
                                             } else {
+                                                // As the etymology spells it:
+                                                // a PIE laryngeal, H, isn't h.
                                                 lexicon::entry_blocks(
-                                                    &wordhord_dict::key(&ancestor),
+                                                    &ancestor,
                                                     &readings,
-                                                    &tools.lexicon.languages(),
+                                                    Some(tools.lexicon),
                                                 )
                                             });
                                             eprintln!(
                                                 "etymology: {ancestor:?} in {in_lang}, {} readings",
                                                 readings.len()
                                             );
-                                            trail.push((wordhord_dict::key(&ancestor), shown));
+                                            trail.push((ancestor.clone(), shown));
                                         } else {
                                             trail.pop();
                                         }

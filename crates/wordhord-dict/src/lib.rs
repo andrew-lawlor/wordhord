@@ -334,6 +334,17 @@ impl Dictionary {
         rows.map(|r| r.flatten().collect()).unwrap_or_default()
     }
 
+    /// Whether the pack has a word, as written or loosely.
+    pub fn knows(&self, word: &str) -> bool {
+        let Ok(mut q) = self
+            .db
+            .prepare_cached("SELECT 1 FROM form WHERE key = ?1 OR fold = ?2 LIMIT 1")
+        else {
+            return false;
+        };
+        q.exists(params![key(word), fold(word)]).unwrap_or(false)
+    }
+
     /// What the pack says about itself: language, source, licence.
     pub fn about(&self, key: &str) -> Option<String> {
         self.db

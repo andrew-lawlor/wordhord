@@ -56,7 +56,12 @@ impl Lexicon {
     pub fn look_up(&self, word: &str, lang: &str) -> Option<(&str, Vec<Reading>)> {
         let wanted = three_letter(lang);
         let first = self.packs.iter().filter(|(l, _)| *l == wanted);
-        let rest = self.packs.iter().filter(|(l, _)| *l != wanted);
+        // Not a reconstructed language: no book is written in one, and
+        // they're for following etymologies.
+        let rest = self
+            .packs
+            .iter()
+            .filter(|(l, _)| *l != wanted && !reconstructed(l));
         first
             .chain(rest)
             .find_map(|(l, d)| {
@@ -84,6 +89,23 @@ impl Lexicon {
     /// The packs installed, by language code.
     pub fn languages(&self) -> Vec<&str> {
         self.packs.iter().map(|(l, _)| l.as_str()).collect()
+    }
+
+    /// Whether a pack has a word: an ancestor worth linking to.
+    pub fn knows(&self, lang: &str, word: &str) -> bool {
+        self.packs
+            .iter()
+            .find(|(l, _)| l == lang)
+            .is_some_and(|(_, d)| d.knows(word))
+    }
+
+    /// The ancestors an etymology names, as `etymology_links` finds them,
+    /// that a pack here has.
+    pub fn ancestors(&self, words: &[&str]) -> Vec<(usize, String, String)> {
+        etymology_links(words, &self.languages())
+            .into_iter()
+            .filter(|(_, word, lang)| self.knows(lang, word))
+            .collect()
     }
 
     /// A word's readings in one pack only: an ancestor in an etymology.
@@ -145,6 +167,17 @@ pub fn language_name(code: &str) -> &str {
         "goh" => "Old High German",
         "got" => "Gothic",
         "sga" => "Old Irish",
+        "fro" => "Old French",
+        "frm" => "Middle French",
+        "osx" => "Old Saxon",
+        "ofs" => "Old Frisian",
+        "dum" => "Middle Dutch",
+        "chu" => "Old Church Slavonic",
+        "san" => "Sanskrit",
+        "gem-pro" => "Proto-Germanic",
+        "gmw-pro" => "Proto-West Germanic",
+        "itc-pro" => "Proto-Italic",
+        "ine-pro" => "Proto-Indo-European",
         other => other,
     }
 }
@@ -184,7 +217,7 @@ pub const SHOWN: usize = 4;
 ///
 /// An etymology's ancestors with a pack in `links` are set in italic, for
 /// the panel to follow; its paragraph has the id `etymology`.
-pub fn entry_blocks(word: &str, readings: &[Reading], links: &[&str]) -> Vec<Block> {
+pub fn entry_blocks(word: &str, readings: &[Reading], links: Option<&Lexicon>) -> Vec<Block> {
     let mut blocks = Vec::new();
     let shown: Vec<&Reading> = readings.iter().take(SHOWN).collect();
     for (k, r) in shown.iter().enumerate() {
@@ -296,7 +329,7 @@ pub fn entry_blocks(word: &str, readings: &[Reading], links: &[&str]) -> Vec<Blo
                 ety.to_string()
             };
             let words: Vec<&str> = ety.split_whitespace().collect();
-            let linked = etymology_links(&words, links);
+            let linked = links.map(|l| l.ancestors(&words)).unwrap_or_default();
             let mut inlines = vec![small_caps("etymology"), text(".")];
             let mut plain = String::new();
             for (k, w) in words.iter().enumerate() {
@@ -304,6 +337,7 @@ pub fn entry_blocks(word: &str, readings: &[Reading], links: &[&str]) -> Vec<Blo
                 match linked.iter().find(|l| l.0 == k) {
                     // The word in italic, its punctuation not.
                     Some((_, bare, _)) => {
+                        // A reconstruction's star stays outside the italic.
                         let at = w.find(bare.as_str()).unwrap_or(0);
                         plain.push_str(&w[..at]);
                         inlines.push(text(std::mem::take(&mut plain)));
@@ -333,15 +367,21 @@ pub fn entry_blocks(word: &str, readings: &[Reading], links: &[&str]) -> Vec<Blo
 /// "English"). Each by its place among the words, with the word and the
 /// pack.
 pub fn etymology_links(words: &[&str], packs: &[&str]) -> Vec<(usize, String, String)> {
-    let names: Vec<(Vec<&str>, &str)> = packs
+    let mut names: Vec<(Vec<&str>, &str)> = packs
         .iter()
         .map(|&p| (language_name(p).split(' ').collect(), p))
         .filter(|(n, p): &(Vec<&str>, &str)| n.len() > 1 || n[0] != *p)
         .collect();
+    // Wiktionary files Late, Medieval and New Latin words as Latin.
+    if packs.contains(&"lat") {
+        for variety in LATINS {
+            names.push((variety.split(' ').collect(), "lat"));
+        }
+    }
     let mut out = Vec::new();
     for (i, w) in words.iter().enumerate() {
         let bare = w.trim_matches(|c: char| !c.is_alphanumeric() && c != '-' && c != '*');
-        if bare.is_empty() || bare.starts_with('*') || bare.starts_with('-') {
+        if bare.is_empty() || bare.starts_with('-') {
             continue;
         }
         let named = names.iter().find(|(name, _)| {
@@ -356,10 +396,35 @@ pub fn etymology_links(words: &[&str], packs: &[&str]) -> Vec<(usize, String, St
                         .is_some_and(char::is_uppercase))
         });
         if let Some((_, pack)) = named {
-            out.push((i, bare.to_string(), pack.to_string()));
+            // A reconstruction, *wiHrós, only in a reconstructed language.
+            match bare.strip_prefix('*') {
+                Some(r) if reconstructed(pack) && !r.is_empty() => {
+                    out.push((i, r.to_string(), pack.to_string()))
+                }
+                Some(_) => {}
+                None if !reconstructed(pack) => out.push((i, bare.to_string(), pack.to_string())),
+                None => {}
+            }
         }
     }
     out
+}
+
+/// The Latins Wiktionary files under Latin itself.
+const LATINS: [&str; 8] = [
+    "Late Latin",
+    "Medieval Latin",
+    "New Latin",
+    "Ecclesiastical Latin",
+    "Classical Latin",
+    "Old Latin",
+    "Renaissance Latin",
+    "Contemporary Latin",
+];
+
+/// A language known only by reconstruction, as Proto-Indo-European.
+pub fn reconstructed(code: &str) -> bool {
+    code.ends_with("-pro")
 }
 
 /// What to say when nothing was found.
@@ -396,14 +461,29 @@ mod tests {
                 ("hatr".into(), "non".into())
             ]
         );
-        // Latin and Ancient Greek, and not Late Latin.
+        // Latin and Ancient Greek; Late Latin, as Wiktionary files it, Latin.
         let ety = "from Latin lynx, from Ancient Greek λύγξ (lúnx), from Late Latin lynce";
         let words: Vec<&str> = ety.split_whitespace().collect();
         let found: Vec<String> = etymology_links(&words, &["grc", "lat"])
             .into_iter()
             .map(|(_, w, _)| w)
             .collect();
-        assert_eq!(found, ["lynx", "λύγξ"]);
+        assert_eq!(found, ["lynx", "λύγξ", "lynce"]);
+        // Late Latin is Latin; a reconstruction only into a reconstructed
+        // language, and without its star.
+        let ety = "from Late Latin leviathan, from Proto-Italic *wiros, from Latin *uiros";
+        let words: Vec<&str> = ety.split_whitespace().collect();
+        let found: Vec<(String, String)> = etymology_links(&words, &["lat", "itc-pro"])
+            .into_iter()
+            .map(|(_, w, p)| (w, p))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("leviathan".into(), "lat".into()),
+                ("wiros".into(), "itc-pro".into())
+            ]
+        );
         // English alone is a pack's language; Middle English isn't.
         let words = ["borrowed", "from", "English", "loan,"];
         assert_eq!(etymology_links(&words, &["eng"])[0].1, "loan");
