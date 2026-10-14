@@ -79,17 +79,12 @@ It reads EPUB books without DRM. Books bought from the Kobo store are locked to 
 
 ## Getting started
 
-You need [NickelMenu](https://pgaskin.net/NickelMenu/), a free add-on that puts a menu in Kobo's own app, and Wordhord built from its source:
+1. Install [NickelMenu](https://pgaskin.net/NickelMenu/), a free add-on that puts a menu in Kobo's own app.
+2. Download Wordhord from the [latest release](https://github.com/andrew-lawlor/wordhord/releases/latest). Plug in your Kobo and unzip it onto the Kobo, at its root. It goes in the `.adds` folder, which some computers hide.
+3. Download the dictionaries you want from the [dictionary release](https://github.com/andrew-lawlor/wordhord/releases/tag/dictionaries-2026-10), and unzip them into `.adds/wordhord/dictionaries/`. English is the largest, at about 300 MB. Most of the old languages are a few megabytes.
+4. Eject your Kobo, and open *Wordhord* from NickelMenu.
 
-```
-git clone --recursive https://github.com/andrew-lawlor/wordhord
-cd wordhord
-scripts/package-kobo.sh
-```
-
-Building needs Rust with the `armv7-unknown-linux-musleabihf` target, [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) and zig. Plug in your Kobo, copy `dist/kobo/.adds/` into the `.adds` folder at its root, and eject it. *Wordhord* is now in NickelMenu.
-
-Dictionaries are separate downloads, one a language, from the [dictionary release](https://github.com/andrew-lawlor/wordhord/releases/tag/dictionaries-2026-10). Unzip the ones you want into `.adds/wordhord/dictionaries/` on your Kobo. English is the largest, at about 300 MB. Most of the old languages are a few megabytes.
+To upgrade, unzip a new release over the old one. Your words, notes and settings are kept.
 
 ## How it works
 
@@ -100,6 +95,8 @@ It opens EPUBs with its own engine, which keeps only the styling that carries me
 Dictionaries are SQLite packs, built by `scripts/build-dictionaries.sh` from [kaikki.org](https://kaikki.org/)'s extracts of Wiktionary. There are twenty: English, Latin, Ancient Greek, Old English and Old Norse for reading, and fifteen older languages, back to Proto-Indo-European, for following etymologies. Saved words are reviewed with the FSRS algorithm.
 
 Notes and saved words are append-only JSON Lines logs. Underlines and ink are anchored to the words they belong to, not to page positions, so they survive any change of type. A desktop build runs the same app in a window, for development, and can record a session for a video (`scripts/replay.py`). Wordhord also compiles parallel editions of old texts, an original and its translation aligned stanza by stanza; `books/` has five.
+
+To build it yourself, you need Rust with the `armv7-unknown-linux-musleabihf` target, [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) and zig. Then `git clone --recursive` this repository and run `scripts/package-kobo.sh`; copy `dist/kobo/.adds/` onto the Kobo. `scripts/release-kobo.sh` builds a release from a clean checkout.
 
 [SPEC.md](SPEC.md) has the full design: what's done, what's next, and why.
 
